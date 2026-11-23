@@ -3,3 +3,4 @@ waitress==3.0.2
 paho-mqtt==2.2.0
 gpiozero==2.0.1
 requests>=2.32,<3
+pyzbar>=0.1.9,<0.2

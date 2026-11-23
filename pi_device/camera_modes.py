@@ -66,7 +66,7 @@ def parse_v4l2_modes(output: str) -> list[dict[str, Any]]:
     """Parse discrete resolution/FPS entries from v4l2-ctl --list-formats-ext."""
     found: dict[tuple[int, int], float] = {}
     pattern = re.compile(
-        r"Size:\\s*Discrete\\s+(\\d+)\\s*x\\s*(\\d+)(.*?)(?=\\n\\s*(?:Size:|\\[\\d+\\]:)|\\Z)",
+        r"Size:\s*Discrete\s+(\d+)\s*x\s*(\d+)(.*?)(?=\n\s*(?:Size:|\[\d+\]:)|\Z)",
         re.IGNORECASE | re.DOTALL,
     )
     for match in pattern.finditer(str(output or "")):
@@ -78,14 +78,14 @@ def parse_v4l2_modes(output: str) -> list[dict[str, Any]]:
         rates = [
             float(value)
             for value in re.findall(
-                r"\\(([0-9]+(?:\\.[0-9]+)?)\\s*fps\\)",
+                r"\(([0-9]+(?:\.[0-9]+)?)\s*fps\)",
                 section,
                 re.IGNORECASE,
             )
         ]
         if not rates:
             intervals = re.findall(
-                r"Interval:\\s*Discrete\\s+([0-9]+(?:\\.[0-9]+)?)s",
+                r"Interval:\s*Discrete\s+([0-9]+(?:\.[0-9]+)?)s",
                 section,
                 re.IGNORECASE,
             )

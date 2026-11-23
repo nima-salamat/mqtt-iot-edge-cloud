@@ -40,16 +40,23 @@
     <article class="metric-card"><span>FPS واقعی YOLO</span><strong id="inference-fps">—</strong><small>فریم‌های تکمیل‌شده در ثانیه</small></article>
     <article class="metric-card"><span>پردازه‌های مدل</span><strong id="model-status">در حال بررسی</strong><small id="inference-workers">YOLOv5n · NCNN</small></article>
     <article class="metric-card"><span>ارسال زنده به سرور</span><strong id="rtsp-status">قطع</strong><small>RTSPS / H.264</small></article>
+    <article class="metric-card"><span>دمای پردازنده Pi</span><strong id="system-temperature">—</strong><small id="system-temperature-note">در انتظار داده سخت‌افزاری</small></article>
+    <article class="metric-card"><span>مصرف RAM</span><strong id="memory-usage">—</strong><small id="memory-usage-note">در انتظار داده سیستم</small></article>
+    <article class="metric-card"><span>فضای ذخیره‌سازی</span><strong id="storage-usage">—</strong><div class="metric-progress"><span id="storage-progress"></span></div><small id="storage-usage-note">فضای آزاد حافظه</small></article>
   </section>
 
   <section class="main-grid">
     <article class="panel camera-panel">
-      <div class="panel-heading">
+      <div class="panel-heading camera-heading">
         <div><span class="eyebrow">LIVE CAMERA</span><h2>پیش‌نمایش دوربین</h2></div>
-        <span class="live-indicator" id="preview-status"><i></i> آماده‌سازی تصویر</span>
+        <div class="preview-actions">
+          <span class="live-indicator" id="preview-status"><i></i> آماده‌سازی تصویر</span>
+          <button class="utility-btn" id="preview-reconnect" type="button" title="درخواست مجدد تصویر زنده">بازیابی تصویر</button>
+          <button class="utility-btn" id="preview-fullscreen" type="button" title="نمایش پیش‌نمایش در تمام صفحه">تمام‌صفحه</button>
+        </div>
       </div>
       <div class="preview-frame">
-        <img id="camera-preview" src="{{ url_for('preview') }}" alt="پیش‌نمایش زنده دوربین Raspberry Pi">
+        <img id="camera-preview" src="{{ url_for('preview') }}" data-preview-url="{{ url_for('preview') }}" alt="پیش‌نمایش زنده دوربین Raspberry Pi">
         <div class="preview-overlay"><span>LOCAL PREVIEW</span><b id="preview-clock">LIVE</b></div>
       </div>
       <div class="recording-controls">
@@ -146,58 +153,98 @@
       <div><span class="eyebrow">LOCAL STORAGE & EDGE AI</span><h2>تنظیمات دستگاه</h2><p class="hint">ذخیره‌سازی این بخش روی خود Raspberry Pi است و از سیاست نگهداری سرور مستقل است.</p></div>
       <span class="settings-mark">LOCAL CONFIG</span>
     </div>
-    <form id="settings-form" class="settings-grid">
-      <label>نگهداری ویدئوی ارسال‌شده (دقیقه)
-        <input name="local_video_retention_minutes" type="number" min="0" max="1440" value="{{ settings.local_video_retention_minutes }}">
-        <small>صفر یعنی حذف نسخه محلی پس از آپلود موفق</small>
-      </label>
-      <label>مهلت نگهداری صف آفلاین (ساعت)
-        <input name="upload_queue_retention_hours" type="number" min="1" max="168" value="{{ settings.upload_queue_retention_hours }}">
-        <small>فایل‌های ارسال‌نشده تا این مدت برای تلاش مجدد می‌مانند</small>
-      </label>
-      <label>حداکثر صف ویدئو (GB)
-        <input name="upload_queue_max_gb" type="number" min="1" max="64" value="{{ settings.upload_queue_max_gb }}">
-        <small>در پرشدن فضا، قدیمی‌ترین ویدئوی ارسال‌نشده حذف می‌شود</small>
-      </label>
-      <label>نرخ فریم ویدئو
-        <input name="video_fps" type="number" min="5" max="30" value="{{ settings.video_fps }}">
-        <small>۵ تا ۳۰ FPS؛ برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد</small>
-      </label>
-      <label>بیت‌ریت ویدئوی H.264 (بیت بر ثانیه)
-        <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" value="{{ settings.video_bitrate }}">
-        <small>پیشنهاد: ۱٬۰۰۰٬۰۰۰؛ encoder سخت‌افزاری Pi 4، با حجم کمتر. برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد.</small>
-      </label>
-      <label>حداکثر نرخ نمونه‌برداری مدل
-        <input name="inference_fps" type="number" min="1" max="10" value="{{ settings.inference_fps }}">
-        <small>حداکثر فریم ارسالی به Workerها در ثانیه؛ FPS واقعی با توجه به سرعت مدل و تعداد Workerها اندازه‌گیری می‌شود.</small>
-      </label>
-      <label>تعداد پردازه‌های YOLO
-        <input name="inference_workers" type="number" min="1" max="3" value="{{ settings.inference_workers }}">
-        <small>۱ تا ۳ پردازه مستقل NCNN؛ برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد. هر پردازه مدل جداگانه بارگذاری می‌کند.</small>
-      </label>
-      <label>آستانه اطمینان تشخیص انسان
-        <input name="alert_confidence" type="number" min="0.1" max="0.95" step="0.01" value="{{ settings.alert_confidence }}">
-        <small>مقدار بالاتر هشدارهای کاذب را کاهش می‌دهد</small>
-      </label>
-      <label>فاصله بین هشدارهای متوالی (ثانیه)
-        <input name="alert_cooldown_seconds" type="number" min="1" max="300" value="{{ settings.alert_cooldown_seconds }}">
-        <small>برای جلوگیری از تولید هشدار تکراری</small>
-      </label>
-      <label>نگهداری تصویر هشدار محلی (روز)
-        <input name="local_alarm_retention_days" type="number" min="1" max="90" value="{{ settings.local_alarm_retention_days }}">
-        <small>نسخه محلی پس از تکمیل ارسال و پایان این مدت حذف می‌شود</small>
-      </label>
-      <label>نگهداری لاگ محلی (روز)
-        <input name="local_log_retention_days" type="number" min="1" max="90" value="{{ settings.local_log_retention_days }}">
-        <small>نسخه محلی لاگ‌های ارسال‌شده</small>
-      </label>
-      <label>مدت هر قطعه ویدئو (ثانیه)
-        <input name="segment_seconds" type="number" min="2" max="15" value="{{ settings.segment_seconds }}">
-        <small>برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد</small>
-      </label>
-      <div class="settings-submit">
-        <button class="primary-btn" type="submit">ذخیره تنظیمات</button>
-        <span id="settings-result" role="status"></span>
+    <form id="settings-form" class="settings-form">
+      <div class="settings-groups">
+        <details class="settings-group" open>
+          <summary>
+            <span><b>تصویر و ضبط ویدئو</b><small>کیفیت استریم، نرخ فریم و مدیریت فایل‌های ویدئویی</small></span>
+            <span class="group-count">۴ تنظیم</span>
+          </summary>
+          <div class="settings-grid">
+            <label>نرخ فریم ویدئو
+              <input name="video_fps" type="number" min="5" max="30" step="1" inputmode="numeric" required value="{{ settings.video_fps }}">
+              <small>۵ تا ۳۰ FPS؛ تغییر این گزینه به راه‌اندازی مجدد سرویس نیاز دارد.</small>
+            </label>
+            <label>بیت‌ریت H.264 (بیت بر ثانیه)
+              <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" inputmode="numeric" required value="{{ settings.video_bitrate }}">
+              <small>بیت‌ریت بالاتر جزئیات بیشتری نگه می‌دارد اما حجم ذخیره و مصرف شبکه را افزایش می‌دهد. نیازمند راه‌اندازی مجدد.</small>
+            </label>
+            <label>مدت هر قطعه ویدئو (ثانیه)
+              <input name="segment_seconds" type="number" min="2" max="15" step="1" inputmode="numeric" required value="{{ settings.segment_seconds }}">
+              <small>قطعه کوتاه‌تر، تأخیر ارسال را کم می‌کند اما تعداد فایل و درخواست‌ها را بیشتر می‌کند. نیازمند راه‌اندازی مجدد.</small>
+            </label>
+            <label>نگهداری ویدئوی ارسال‌شده روی Pi (دقیقه)
+              <input name="local_video_retention_minutes" type="number" min="0" max="1440" step="1" inputmode="numeric" required value="{{ settings.local_video_retention_minutes }}">
+              <small>فقط نسخه‌ای که با موفقیت آپلود شده حذف می‌شود؛ صفر یعنی حذف بلافاصله پس از آپلود موفق.</small>
+            </label>
+          </div>
+        </details>
+
+        <details class="settings-group" open>
+          <summary>
+            <span><b>هوش مصنوعی و تشخیص انسان</b><small>سرعت نمونه‌برداری، منابع پردازشی و حساسیت هشدار</small></span>
+            <span class="group-count">۵ تنظیم</span>
+          </summary>
+          <div class="settings-grid">
+            <label>حداکثر نرخ نمونه‌برداری YOLO
+              <input name="inference_fps" type="number" min="1" max="10" step="1" inputmode="numeric" required value="{{ settings.inference_fps }}">
+              <small>حداکثر فریم ورودی مدل در هر ثانیه؛ FPS واقعی بر اساس نتایج تکمیل‌شده اندازه‌گیری می‌شود.</small>
+            </label>
+            <label>تعداد پردازه‌های YOLO
+              <input name="inference_workers" type="number" min="1" max="3" step="1" inputmode="numeric" required value="{{ settings.inference_workers }}">
+              <small>۱ تا ۳ مدل مستقل. هر Worker حافظه و CPU جداگانه مصرف می‌کند؛ روی Pi 4 تعداد بیشتر الزاماً سریع‌تر نیست. نیازمند راه‌اندازی مجدد.</small>
+            </label>
+            <label class="setting-range">آستانه اطمینان تشخیص انسان
+              <span class="range-value"><output id="confidence-output" for="alert-confidence">{{ (settings.alert_confidence * 100)|round|int }}٪</output></span>
+              <input id="alert-confidence" name="alert_confidence" type="range" min="0.10" max="0.95" step="0.01" value="{{ settings.alert_confidence }}">
+              <small>مقدار بالاتر حساسیت را کم و احتمال هشدار کاذب را کاهش می‌دهد؛ مقدار پایین‌تر افراد بیشتری را ثبت می‌کند.</small>
+            </label>
+            <label>فاصله بین هشدارهای متوالی (ثانیه)
+              <input name="alert_cooldown_seconds" type="number" min="1" max="300" step="1" inputmode="numeric" required value="{{ settings.alert_cooldown_seconds }}">
+              <small>پس از ثبت هشدار، تا پایان این زمان هشدار جدید برای همان جریان ساخته نمی‌شود.</small>
+            </label>
+            <label>زمان پاک‌شدن وضعیت تشخیص (ثانیه)
+              <input name="alert_clear_seconds" type="number" min="1" max="60" step="1" inputmode="numeric" required value="{{ settings.alert_clear_seconds }}">
+              <small>اگر در این مدت فردی دیده نشود، وضعیت تشخیص فعال پاک می‌شود و رخداد بعدی می‌تواند هشدار تازه بسازد.</small>
+            </label>
+          </div>
+        </details>
+
+        <details class="settings-group">
+          <summary>
+            <span><b>ذخیره‌سازی و صف ارسال</b><small>سقف حافظه، تلاش مجدد آفلاین و نگهداری فایل‌های محلی</small></span>
+            <span class="group-count">۴ تنظیم</span>
+          </summary>
+          <div class="settings-grid">
+            <label>مهلت نگهداری صف آفلاین (ساعت)
+              <input name="upload_queue_retention_hours" type="number" min="1" max="168" step="1" inputmode="numeric" required value="{{ settings.upload_queue_retention_hours }}">
+              <small>حداکثر عمر فایل‌های ارسال‌نشده؛ فایل‌های قدیمی‌تر از این مدت از صف حذف می‌شوند.</small>
+            </label>
+            <label>حداکثر حجم صف ویدئو (GB)
+              <input name="upload_queue_max_gb" type="number" min="1" max="64" step="1" inputmode="numeric" required value="{{ settings.upload_queue_max_gb }}">
+              <small>در عبور از سقف، قدیمی‌ترین ویدئوی ارسال‌نشده حذف می‌شود؛ نسخه‌های آپلودشده مشمول این صف نیستند.</small>
+            </label>
+            <label>نگهداری تصویر هشدار محلی (روز)
+              <input name="local_alarm_retention_days" type="number" min="1" max="90" step="1" inputmode="numeric" required value="{{ settings.local_alarm_retention_days }}">
+              <small>نسخه محلی تصاویر پس از ارسال کامل، تا پایان این مدت نگه داشته می‌شوند.</small>
+            </label>
+            <label>نگهداری لاگ محلی (روز)
+              <input name="local_log_retention_days" type="number" min="1" max="90" step="1" inputmode="numeric" required value="{{ settings.local_log_retention_days }}">
+              <small>مدت نگهداری آرشیو لاگ‌های ارسال‌شده روی Raspberry Pi.</small>
+            </label>
+          </div>
+        </details>
+      </div>
+      <div class="settings-form-footer">
+        <div class="settings-save-copy">
+          <b id="settings-dirty" aria-live="polite">همه تنظیمات ذخیره‌اند</b>
+          <small id="settings-restart-hint">گزینه‌هایی که به راه‌اندازی مجدد نیاز دارند، بعد از ذخیره مشخص می‌شوند.</small>
+        </div>
+        <div class="settings-save-actions">
+          <button class="utility-btn" id="settings-discard" type="button" disabled>لغو تغییرات</button>
+          <button class="primary-btn" type="submit" disabled>ذخیره تغییرات</button>
+        </div>
+        <span id="settings-result" role="status" aria-live="polite"></span>
       </div>
     </form>
   </section>
@@ -213,6 +260,17 @@
     <p class="footnote">قطع اینترنت، ضبط محلی و تشخیص انسان را متوقف نمی‌کند. قطعه‌های کامل‌شده و هشدارها در صف پایدار می‌مانند و پس از بازگشت ارتباط، ارسال مجدد انجام می‌شود. محدودیت حجم و مدت صف برای جلوگیری از پرشدن حافظه در قطعی‌های طولانی اعمال می‌شود.</p>
   </section>
 </main>
+<dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-title">
+  <form method="dialog">
+    <span class="eyebrow">تأیید عملیات</span>
+    <h2 id="confirm-title">تأیید</h2>
+    <p id="confirm-message"></p>
+    <div class="confirm-actions">
+      <button class="utility-btn" id="confirm-cancel" type="button">انصراف</button>
+      <button class="danger-btn" id="confirm-accept" type="button">ادامه</button>
+    </div>
+  </form>
+</dialog>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

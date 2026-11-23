@@ -722,7 +722,18 @@ class CameraPipeline:
                         self._process_detections(frame, detections, now)
 
                 values = self.settings_store.get()
-                interval = 1.0 / max(1.0, float(values["inference_fps"]))
+                pool_stats = pool.snapshot()
+                estimated_capacity = float(pool_stats.get("estimated_capacity_fps", 0.0))
+                configured_cap = max(1.0, float(values["inference_fps"]))
+                # Recompute the dispatch interval continuously from the EWMA
+                # service time of every worker. This starts conservatively,
+                # ramps up as real throughput is measured, and backs off after
+                # thermal throttling or CPU contention.
+                effective_rate = min(
+                    configured_cap,
+                    max(0.5, estimated_capacity) if estimated_capacity > 0 else configured_cap,
+                )
+                interval = 1.0 / effective_rate
                 now = time.monotonic()
                 if now >= next_dispatch_at:
                     with self._frames_lock:

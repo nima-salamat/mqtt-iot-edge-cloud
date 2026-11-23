@@ -84,7 +84,7 @@ class DurableUploader:
                 "The server revoked this camera pairing; local credentials were cleared.",
                 response=response,
             )
-        self._check_response(response)
+        response.raise_for_status()
 
     def disconnect_from_server(self):
         """Revoke server access first, then clear the local saved API token."""

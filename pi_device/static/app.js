@@ -241,7 +241,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'ذخیره تنظیمات ناموفق بود.');
       text('settings-result', result.restart_required?.length
-        ? 'ذخیره شد؛ برای اعمال نرخ فریم یا قطعه‌بندی، سرویس را راه‌اندازی مجدد کن.'
+        ? 'ذخیره شد؛ برای اعمال نرخ فریم، بیت‌ریت یا قطعه‌بندی، سرویس را راه‌اندازی مجدد کن.'
         : 'تنظیمات ذخیره شد.');
       for (const [key, value] of Object.entries(result.settings || {})) {
         const input = form.elements.namedItem(key);

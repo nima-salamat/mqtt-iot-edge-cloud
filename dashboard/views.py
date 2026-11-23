@@ -111,7 +111,6 @@ def acknowledge_alarm(request, alarm_id):
 @login_required
 def dashboard_overview(request):
     devices = list(_visible_devices(request.user).order_by("name", "device_id"))
-    alarms = Alarm.objects.filter(device__in=devices).select_related("device")[:12]
     return JsonResponse({
         "devices": [
             {
@@ -131,18 +130,6 @@ def dashboard_overview(request):
                 "pending_video_segments": int(device.current_state.get("pending_video_segments", 0) or 0),
             }
             for device in devices
-        ],
-        "alarms": [
-            {
-                "id": alarm.pk,
-                "device_id": alarm.device_id,
-                "device_name": alarm.device.name,
-                "confidence": round(alarm.confidence, 3),
-                "detected_at": alarm.detected_at.isoformat(),
-                "acknowledged": alarm.acknowledged,
-                "has_snapshot": bool(alarm.snapshot),
-            }
-            for alarm in alarms
         ],
     })
 

@@ -164,10 +164,19 @@
       const readyWorkers = Number(pool.ready_workers || 0);
       const busyWorkers = Number(pool.busy_workers || 0);
       const latency = Number(pool.average_latency_ms || state.inference_latency_ms || 0);
+      const workerLatencies = Array.isArray(pool.worker_latency_ms)
+        ? pool.worker_latency_ms
+        : [];
+      const workerBreakdown = workerLatencies.map((value, index) =>
+        'W' + (index + 1) + ' ' + Number(value || 0).toFixed(0) + 'ms'
+      ).join(' · ');
+      const estimatedCapacity = Number(pool.estimated_capacity_fps || 0);
       text('inference-workers',
         readyWorkers.toLocaleString('fa-IR') + '/' + workers.toLocaleString('fa-IR') +
         ' Worker آماده · ' + busyWorkers.toLocaleString('fa-IR') +
-        ' مشغول · میانگین ' + latency.toFixed(0) + ' ms'
+        ' مشغول · میانگین ' + latency.toFixed(0) + ' ms' +
+        (workerBreakdown ? ' · ' + workerBreakdown : '') +
+        (estimatedCapacity ? ' · ظرفیت تخمینی ' + estimatedCapacity.toFixed(1) + ' FPS' : '')
       );
       const recordingEnabled = !!state.recording_enabled;
       const recordingButton = $('toggle-recording');

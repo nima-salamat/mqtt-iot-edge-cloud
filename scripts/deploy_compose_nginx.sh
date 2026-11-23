@@ -127,4 +127,4 @@ echo "Create the first administrator with:"
 echo "  docker compose ${COMPOSE_FILES[*]} exec api python manage.py createsuperuser"
 echo
 echo "Install deploy/nginx/server.echonode.website.conf in the host Nginx sites-enabled directory,"
-echo "adjust ssl_certificate paths if needed, then run nginx -t and reload Nginx."
+echo "then run nginx -t and reload Nginx. Certbot renewals reload Nginx and restart MediaMTX via the deploy hook."

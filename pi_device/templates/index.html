@@ -171,12 +171,14 @@
               </select>
               <small>Picamera2 برای دوربین CSI و ضبط H.264 سخت‌افزاری؛ OpenCV برای وب‌کم USB و منابع ویدئویی شبکه.</small>
             </label>
-            <label>شماره یا آدرس دوربین
-              <input name="camera_source" type="text" list="camera-sources" dir="ltr" autocomplete="off" maxlength="2048" value="{{ settings.camera_source }}">
-              <datalist id="camera-sources"></datalist>
+            <div class="camera-source-field">
+              <label>شماره یا آدرس دوربین
+                <input name="camera_source" type="text" list="camera-sources" dir="ltr" autocomplete="off" maxlength="2048" value="{{ settings.camera_source }}">
+                <datalist id="camera-sources"></datalist>
+                <small>Picamera2: شماره دوربین مثل ۰؛ OpenCV: مثل /dev/video0، شماره ۰ یا نشانی RTSP/HTTP.</small>
+              </label>
               <button class="utility-btn" id="camera-discover" type="button">جست‌وجوی دوربین‌ها</button>
-              <small>Picamera2: شماره دوربین مثل ۰؛ OpenCV: مثل /dev/video0، شماره ۰ یا نشانی RTSP/HTTP.</small>
-            </label>
+            </div>
             <label>انتخاب نرخ فریم
               <select name="video_fps_auto">
                 <option value="true" {% if settings.video_fps_auto %}selected{% endif %}>خودکار؛ سریع‌ترین mode سازگار سنسور</option>

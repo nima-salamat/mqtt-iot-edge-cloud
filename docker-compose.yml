@@ -1,6 +1,13 @@
+x-app-image: &app-image
+  image: ${DOCKER_REGISTRY:-docker.io}/nima-salamat/mqtt-iot-edge-cloud:${IMAGE_TAG:-latest}
+  build:
+    context: .
+    args:
+      DOCKER_REGISTRY: ${DOCKER_REGISTRY:-docker.io}
+
 services:
   db:
-    image: postgres:17-alpine
+    image: ${DOCKER_REGISTRY:-docker.io}/library/postgres:17-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iotlab}
@@ -17,7 +24,7 @@ services:
     networks: [iot-internal]
 
   broker:
-    image: eclipse-mosquitto:2.1.2
+    image: ${DOCKER_REGISTRY:-docker.io}/eclipse-mosquitto:2.1.2
     restart: unless-stopped
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
     volumes:
@@ -28,7 +35,7 @@ services:
     networks: [iot-internal]
 
   api:
-    build: .
+    <<: *app-image
     restart: unless-stopped
     command: >
       sh -c "python manage.py migrate --noinput &&
@@ -67,7 +74,7 @@ services:
     networks: [iot-internal]
 
   web:
-    build: .
+    <<: *app-image
     restart: unless-stopped
     command: ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
     environment:
@@ -89,7 +96,7 @@ services:
     networks: [iot-internal]
 
   listener:
-    build: .
+    <<: *app-image
     restart: unless-stopped
     command: ["python", "manage.py", "mqtt_listener"]
     environment: *django-env
@@ -101,7 +108,7 @@ services:
     networks: [iot-internal]
 
   retention:
-    build: .
+    <<: *app-image
     restart: unless-stopped
     command: ["python", "manage.py", "prune_iot_data", "--interval", "15"]
     environment: *django-env
@@ -112,7 +119,7 @@ services:
     networks: [iot-internal]
 
   mediamtx:
-    image: ${MEDIAMTX_IMAGE:-bluenviron/mediamtx:1.21.4}
+    image: ${MEDIAMTX_IMAGE:-${DOCKER_REGISTRY:-docker.io}/bluenviron/mediamtx:1.21.4}
     restart: unless-stopped
     command: ["/mediamtx.yml"]
     environment:
@@ -134,7 +141,7 @@ services:
 
   caddy:
     profiles: ["standalone"]
-    image: caddy:2.11.9-alpine
+    image: ${DOCKER_REGISTRY:-docker.io}/library/caddy:2.11.9-alpine
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN:-server.echonode.website}

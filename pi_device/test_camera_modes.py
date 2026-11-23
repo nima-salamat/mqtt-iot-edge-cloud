@@ -57,6 +57,8 @@ class SensorModeSelectionTests(unittest.TestCase):
         self.assertEqual(by_size[(1920, 1080)], 60.0)
         self.assertEqual(by_size[(1280, 720)], 60.0)
         self.assertEqual(by_size[(640, 480)], 30.0)
+        self.assertTrue(all(mode["fourcc"] in {"MJPG", "YUYV"} for mode in modes))
+        self.assertEqual(modes[0]["fourcc"], "MJPG")
 
 
 if __name__ == "__main__":

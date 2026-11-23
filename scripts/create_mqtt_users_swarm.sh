@@ -14,7 +14,7 @@ docker run --rm --user root --entrypoint sh \
   -e MQTT_CAMERA_EDGE_USERNAME -e MQTT_CAMERA_EDGE_PASSWORD \
   -e MQTT_SERVER_USERNAME -e MQTT_SERVER_PASSWORD \
   -v "${VOLUME_NAME}:/mosquitto/data" \
-  "${MOSQUITTO_IMAGE:-${DOCKER_REGISTRY:-docker.io}/eclipse-mosquitto:2.1.2-alpine}" -c '
+  "${MOSQUITTO_IMAGE:-${DOCKER_REGISTRY:-docker.io}/eclipse-mosquitto:2.1.4-alpine}" -c '
     set -eu
     mosquitto_passwd -b -c /mosquitto/data/password_file "$MQTT_CAMERA_EDGE_USERNAME" "$MQTT_CAMERA_EDGE_PASSWORD"
     mosquitto_passwd -b    /mosquitto/data/password_file "$MQTT_SERVER_USERNAME" "$MQTT_SERVER_PASSWORD"

@@ -230,6 +230,7 @@ class CameraPipeline:
         self.latest_jpeg = None
         self.latest_frame_at = 0.0
         self._latest_bgr = None
+        self._latest_bgr_at = 0.0
         self._last_detection_at = 0.0
         self._last_preview_at = 0.0
         self._last_encoder_count = 0
@@ -297,6 +298,17 @@ class CameraPipeline:
             self.latest_jpeg = None
             self.latest_frame_at = 0.0
             self._latest_bgr = None
+            self._latest_bgr_at = 0.0
+            self._frame_sequence = 0
+            self._latest_frame_sequence = 0
+            self._last_processed_frame_sequence = 0
+            self._inflight_frames.clear()
+            self._inference_completed_at.clear()
+            self.inference_fps = 0.0
+            self.inference_latency_ms = 0.0
+            self.inference_dropped_frames = 0
+            self._last_detections = []
+            self._last_detection_at = 0.0
             self._last_detections = []
             self._last_detection_at = 0.0
         self.model_error = ""
@@ -605,6 +617,10 @@ class CameraPipeline:
                 # JPEG encoding, QR decoding and snapshot generation.
                 with self._frames_lock:
                     self._latest_bgr = frame.copy()
+                    self._frame_sequence += 1
+                    self._latest_frame_sequence = self._frame_sequence
+                    self._latest_bgr_at = now
+                    detections = list(self._last_detections)
                     detections = list(self._last_detections)
                     detection_age = now - self._last_detection_at if self._last_detection_at else 999.0
 
@@ -632,7 +648,7 @@ class CameraPipeline:
                 self.bridge.set_metrics(
                     self.video_fps,
                     self.inference_fps,
-                    self.detector is not None,
+                    self.inference_pool is not None,
                     self._pending_alarm_count(),
                     pending_videos=self._pending_video_count(),
                     rtsp_connected=bool(self.live_output and self.live_output.connected),
@@ -647,62 +663,101 @@ class CameraPipeline:
                 self._stop.wait(0.5)
 
     def _ai_loop(self):
-        """Run YOLO at its own configured cadence without blocking the camera stream."""
-        inference_count = 0
-        inference_started = time.monotonic()
+        """Dispatch fresh frames to idle workers and drop work rather than queue latency."""
+        next_dispatch_at = 0.0
+        last_seen_sequence = 0
+
         while not self._stop.is_set():
+            pool = self.inference_pool
+            if pool is None:
+                self._stop.wait(0.25)
+                continue
+
             try:
+                # Harvest completions before dispatching the next frame.
+                for result in pool.collect(timeout=0.01):
+                    sequence = int(result.get("frame_sequence", 0))
+                    frame = self._inflight_frames.pop(sequence, None)
+                    if frame is None:
+                        continue
+
+                    error = str(result.get("error", ""))
+                    if error:
+                        self.model_error = error
+                        log.warning(
+                            "YOLO worker %s failed frame %s: %s",
+                            result.get("worker_id"), sequence, error,
+                        )
+                        continue
+
+                    now = time.monotonic()
+                    self.model_error = ""
+                    self._inference_completed_at.append(now)
+                    while (
+                        self._inference_completed_at
+                        and now - self._inference_completed_at[0] > 5.0
+                    ):
+                        self._inference_completed_at.popleft()
+                    window = min(5.0, max(0.5, now - self._inference_pool_started_at))
+                    self.inference_fps = len(self._inference_completed_at) / window
+                    self.inference_latency_ms = float(result.get("elapsed_seconds", 0.0)) * 1000.0
+
+                    # Workers can finish out of order. Older results never replace
+                    # detections already produced for a newer source frame.
+                    if sequence <= self._last_processed_frame_sequence:
+                        continue
+                    self._last_processed_frame_sequence = sequence
+                    detections = result.get("detections", [])
+                    if not isinstance(detections, list):
+                        detections = []
+
+                    with self._frames_lock:
+                        self._last_detections = detections
+                        self._last_detection_at = now
+
+                    self._detection_history.append(bool(detections))
+                    if detections or self._alert_active:
+                        self._process_detections(frame, detections, now)
+
                 values = self.settings_store.get()
-                interval = 1.0 / float(values["inference_fps"])
-                loop_started = time.monotonic()
-                with self._frames_lock:
-                    frame = self._latest_bgr.copy() if self._latest_bgr is not None else None
-                    frame_timestamp = self.latest_frame_at
-                if frame is None:
-                    self._stop.wait(0.1)
-                    continue
-
-                # Ignore stale samples if inference fell behind camera capture.
-                if frame_timestamp and time.time() - frame_timestamp > 1.0:
-                    self._stop.wait(0.05)
-                    continue
-
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                if self.detector:
-                    # The local panel may change the confidence threshold without
-                    # restarting the camera or reloading the NCNN graph.
-                    self.detector.confidence = float(values["alert_confidence"])
-                    detections = self.detector.detect(rgb_frame)
-                else:
-                    detections = []
+                interval = 1.0 / max(1.0, float(values["inference_fps"]))
                 now = time.monotonic()
-                with self._frames_lock:
-                    self._last_detections = detections
-                    self._last_detection_at = now
+                if now >= next_dispatch_at:
+                    with self._frames_lock:
+                        frame = self._latest_bgr.copy() if self._latest_bgr is not None else None
+                        frame_sequence = self._latest_frame_sequence
+                        frame_timestamp = self._latest_bgr_at
 
-                self._detection_history.append(bool(detections))
-                inference_count += 1
-                elapsed = now - inference_started
-                if elapsed >= 2.0:
-                    self.inference_fps = inference_count / elapsed
-                    inference_count = 0
-                    inference_started = now
+                    if frame is not None and frame_sequence > last_seen_sequence:
+                        last_seen_sequence = frame_sequence
+                        age = now - frame_timestamp if frame_timestamp else 999.0
+                        if age <= 1.0:
+                            worker_id = pool.submit(
+                                frame,
+                                frame_sequence,
+                                frame_timestamp,
+                                float(values["alert_confidence"]),
+                            )
+                            if worker_id is None:
+                                # No FIFO backlog: the next scheduler tick will use
+                                # a newer camera frame instead of queueing this one.
+                                self.inference_dropped_frames += 1
+                            else:
+                                # Retain the exact source image only while its job
+                                # is in flight, for a matching alarm snapshot.
+                                self._inflight_frames[frame_sequence] = frame
+                        else:
+                            self.inference_dropped_frames += 1
+                    next_dispatch_at = now + interval
 
-                if detections:
-                    self._process_detections(frame, detections, now)
-                elif self._alert_active:
-                    self._process_detections(frame, detections, now)
-
-                remaining = interval - (time.monotonic() - loop_started)
-                if remaining > 0:
-                    self._stop.wait(remaining)
+                self._stop.wait(min(0.01, max(0.001, next_dispatch_at - time.monotonic())))
             except Exception as exc:
-                self.camera_error = str(exc)
-                log.exception("YOLOv5n inference loop failed")
+                self.model_error = str(exc)
+                log.exception("Adaptive YOLO inference scheduler failed")
                 self.bridge.publish_log(
-                    "error", "YOLOv5n inference failed", {"error": str(exc)}
+                    "error", "Adaptive YOLO inference scheduler failed", {"error": str(exc)}
                 )
-                self._stop.wait(1)
+                self._stop.wait(0.5)
 
     def _process_detections(self, frame, detections, now):
         confirmed = sum(self._detection_history) >= 2
@@ -862,7 +917,18 @@ class CameraPipeline:
             "video_fps": round(self.video_fps, 2),
             "target_video_fps": values["video_fps"],
             "inference_fps": round(self.inference_fps, 2),
-            "model_loaded": self.detector is not None,
+            "inference_latency_ms": round(self.inference_latency_ms, 1),
+            "inference_dropped_frames": self.inference_dropped_frames,
+            "inference_pool": self.inference_pool.snapshot() if self.inference_pool else {
+                "workers": int(values.get("inference_workers", 2)),
+                "ready_workers": 0,
+                "busy_workers": 0,
+                "average_latency_ms": 0,
+                "worker_latency_ms": [],
+                "last_error": self.model_error,
+            },
+            "model_loaded": bool(self.inference_pool and self.inference_pool.started),
+            "recording_enabled": self.recording_enabled,
             "model_error": self.model_error,
             "camera_error": self.camera_error,
             "rtsp_connected": bool(self.live_output and self.live_output.connected),
@@ -886,6 +952,13 @@ class CameraPipeline:
         for thread in self._threads:
             thread.join(timeout=5)
         self._threads = []
+        if self.inference_pool:
+            try:
+                self.inference_pool.stop()
+            except Exception:
+                log.exception("Could not stop YOLO inference workers cleanly")
+            self.inference_pool = None
+        self._inflight_frames.clear()
         if self.live_output:
             self.live_output.stop()
         stopped_cleanly = True
@@ -908,6 +981,8 @@ class CameraPipeline:
         self.live_output = None
         self.detector = None
         self.bridge.model_loaded = False
+        self.inference_fps = 0.0
+        self.inference_latency_ms = 0.0
         self._current_segment = None
         self._current_marker = None
         with self._frames_lock:

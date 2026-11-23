@@ -47,7 +47,7 @@ services:
     environment: &django-env
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
       DJANGO_DEBUG: "0"
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-server.echonode.website,localhost,127.0.0.1}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-server.echonode.website,localhost,127.0.0.1,api}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-https://server.echonode.website}
       DATABASE_MODE: ${DATABASE_MODE:-postgres}
       DATABASE_PATH: ${DATABASE_PATH:-/app/data/db.sqlite3}

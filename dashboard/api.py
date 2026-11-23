@@ -17,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 import qrcode
 from qrcode.image.svg import SvgPathImage
-from .device_auth import device_required
+from .device_auth import device_required, revoke_device_access
 from .models import Alarm, Device, DeviceLog, PairingRequest, StreamGrant, VideoSegment
 
 DEVICE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}$")
@@ -117,6 +117,16 @@ def pair_device(request):
 @csrf_exempt
 @device_required
 @require_POST
+def disconnect_device(request):
+    """Allow the paired Pi to revoke its own device and stream credentials."""
+    device = request.iot_device
+    revoke_device_access(device)
+    return JsonResponse({"status": "disconnected", "device_id": device.device_id})
+
+
+@csrf_exempt
+@device_required
+@require_POST
 def heartbeat(request):
     payload = _json_body(request)
     device = request.iot_device
@@ -140,6 +150,8 @@ def heartbeat(request):
         "camera_ready": bool(payload.get("camera_ready", False)),
         "pending_alerts": pending_alerts,
         "pending_video_segments": pending_video_segments,
+        "tracking_active": bool(payload.get("tracking_active", False)),
+        "tracking_seconds": max(0.0, min(86400.0, float(payload.get("tracking_seconds") or 0))),
         "model": str(payload.get("model", "yolov5n-ncnn"))[:64],
         "software_version": str(payload.get("software_version", ""))[:64],
     })
@@ -280,6 +292,8 @@ def create_stream_grant(request, device_id):
     device = get_object_or_404(Device, device_id=device_id)
     if not (request.user.is_staff or device.owner_id == request.user.id):
         return JsonResponse({"error": "forbidden"}, status=403)
+    if not device.api_token_hash or not device.stream_path:
+        return JsonResponse({"error": "device_disconnected"}, status=409)
     raw_token = secrets.token_urlsafe(36)
     StreamGrant.objects.create(
         token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),

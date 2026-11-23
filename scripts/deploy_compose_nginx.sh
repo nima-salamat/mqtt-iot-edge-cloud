@@ -15,10 +15,9 @@ docker compose version >/dev/null 2>&1 || fail "Docker Compose plugin is not ava
 command -v openssl >/dev/null 2>&1 || fail "openssl is required for certificate checks."
 command -v curl >/dev/null 2>&1 || fail "curl is required for the API health check."
 
-set -a
-# shellcheck disable=SC1091
-. ./.env
-set +a
+# Parse the Compose dotenv format safely; never execute .env as shell code.
+source ./scripts/load_compose_env.sh
+load_compose_env .env docker-compose.yml
 
 DOMAIN="${DOMAIN:-server.echonode.website}"
 DATABASE_MODE="${DATABASE_MODE:-postgres}"

@@ -165,14 +165,20 @@ def _switchable_output_class():
                 self._switch_pending = True
                 self._switch_done.clear()
 
-            if not self._switch_done.wait(timeout=max(1.0, float(timeout))):
+            completed = self._switch_done.wait(timeout=max(1.0, float(timeout)))
+            if not completed:
                 with self._lock:
-                    if self._switch_pending and self._pending_output is new_output:
+                    # A keyframe can race the timeout boundary. Treat an already
+                    # completed pointer swap as success instead of closing the
+                    # output that the encoder has just begun using.
+                    completed = not self._switch_pending and self._output is new_output
+                    if not completed and self._switch_pending and self._pending_output is new_output:
                         self._pending_output = None
                         self._switch_pending = False
-                if new_output is not None:
-                    new_output.stop()
-                raise TimeoutError("Timed out waiting for an H.264 keyframe to change recording state")
+                if not completed:
+                    if new_output is not None:
+                        new_output.stop()
+                    raise TimeoutError("Timed out waiting for an H.264 keyframe to change recording state")
 
             # outputframe has stopped referencing the previous output, so it is
             # now safe to finalize its MP4 container on this control thread.

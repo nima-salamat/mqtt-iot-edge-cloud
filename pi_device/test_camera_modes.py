@@ -26,7 +26,7 @@ class SensorModeSelectionTests(unittest.TestCase):
 
     def test_manual_picks_smallest_mode_that_meets_requested_fps(self):
         mode, fps = select_sensor_mode(self.MODES, 1280, 720, 30, auto=False)
-        self.assertEqual(mode["size"], (1920, 1080))
+        self.assertEqual(mode["size"], (1296, 972))
         self.assertEqual(fps, 30)
 
     def test_manual_clamps_to_fastest_supported_mode(self):

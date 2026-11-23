@@ -82,7 +82,7 @@
         <div><span>اتصال زنده RTSPS</span><b id="rtsp-health">در حال بررسی</b></div>
         <div><span>مدل و منبع دوربین</span><b id="camera-source-status">در حال بررسی</b></div>
         <div><span>وضوح پیش‌نمایش</span><b id="camera-resolution-status">در حال بررسی</b></div>
-        <div><span>حداکثر FPS سنسور</span><b id="camera-max-fps">در حال بررسی</b></div>
+        <div><span>FPS قابل‌دریافت / اعلام‌شده</span><b id="camera-max-fps">در حال بررسی</b></div>
         <div><span>Heartbeat سرور</span><b id="heartbeat-status">در انتظار</b></div>
         <div><span>تصاویر هشدار در صف</span><b id="pending-alarms">0</b></div>
         <div><span>قطعه‌های ویدئو در صف</span><b id="pending-videos">0</b></div>
@@ -184,7 +184,7 @@
                 <option value="true" {% if settings.video_fps_auto %}selected{% endif %}>خودکار؛ سریع‌ترین mode سازگار سنسور</option>
                 <option value="false" {% if not settings.video_fps_auto %}selected{% endif %}>دستی؛ نرخ درخواستی</option>
               </select>
-              <small>در حالت خودکار، Picamera2 فهرست modeهای سنسور را می‌خواند و سریع‌ترین حالت سازگار با وضوح انتخابی را فعال می‌کند.</small>
+              <small>در حالت خودکار، Picamera2 یا جدول V4L2 وب‌کم سریع‌ترین mode سازگار با وضوح انتخابی را می‌خواند؛ منبع شبکه از نرخ پیش‌فرض خودش استفاده می‌کند و FPS واقعی جداگانه اندازه‌گیری می‌شود.</small>
             </label>
             <label>نرخ فریم در حالت دستی
               <input name="video_fps" type="number" min="1" max="120" step="1" inputmode="numeric" required value="{{ settings.video_fps }}">

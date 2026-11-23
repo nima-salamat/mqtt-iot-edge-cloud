@@ -126,6 +126,51 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             settings=settings_store.get(),
         )
 
+    @flask_app.get("/api/cameras/")
+    @authenticated
+    def api_cameras():
+        cameras = []
+        try:
+            from picamera2 import Picamera2
+            for index, info in enumerate(Picamera2.global_camera_info()):
+                cameras.append({
+                    "backend": "picamera2",
+                    "source": str(info.get("Num", index)),
+                    "label": " / ".join(
+                        str(value) for value in (
+                            info.get("Model", "Raspberry Pi camera"),
+                            info.get("Location", ""),
+                            f"camera {info.get('Num', index)}",
+                        ) if value
+                    ),
+                })
+        except Exception:
+            log.debug("Picamera2 camera discovery is unavailable", exc_info=True)
+
+        for device in sorted(Path("/dev").glob("video*")):
+            if device.name[5:].isdigit():
+                cameras.append({
+                    "backend": "opencv",
+                    "source": str(device),
+                    "label": f"USB / V4L2 - {device}",
+                })
+
+        # Keep a manual OpenCV index available even when device discovery is
+        # restricted by permissions or the selected camera is a network URL.
+        if not any(item["backend"] == "opencv" for item in cameras):
+            cameras.append({
+                "backend": "opencv",
+                "source": "0",
+                "label": "OpenCV default camera index 0",
+            })
+        return jsonify({
+            "backends": [
+                {"id": "picamera2", "label": "Raspberry Pi CSI / Picamera2"},
+                {"id": "opencv", "label": "USB / UVC / V4L2 / network source (OpenCV)"},
+            ],
+            "cameras": cameras,
+        })
+
     @flask_app.get("/api/state/")
     @authenticated
     def api_state():
@@ -235,7 +280,7 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
                         b"--frame\r\nContent-Type: image/jpeg\r\n"
                         b"Cache-Control: no-store\r\n\r\n" + frame + b"\r\n"
                     )
-                time.sleep(0.05)
+                time.sleep(0.04)
 
         return Response(
             frames(),
@@ -290,7 +335,8 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         if not isinstance(payload, dict):
             return jsonify({"error": "مقادیر تنظیمات باید JSON باشند."}), 400
         allowed = {
-            "video_fps", "video_bitrate", "segment_seconds", "inference_fps", "inference_workers",
+            "video_fps", "video_fps_auto", "video_bitrate", "segment_seconds", "inference_fps", "inference_workers",
+            "camera_backend", "camera_source",
             "alert_confidence", "alert_cooldown_seconds", "alert_clear_seconds",
             "local_video_retention_minutes", "upload_queue_retention_hours",
             "upload_queue_max_gb", "local_alarm_retention_days", "local_log_retention_days",
@@ -331,7 +377,7 @@ def main() -> None:
     def camera_supervisor():
         startup_at = time.monotonic()
         while not camera_supervisor_stop.is_set():
-            if camera.picam2 is None:
+            if not camera.is_running():
                 try:
                     camera.start()
                     startup_at = time.monotonic()

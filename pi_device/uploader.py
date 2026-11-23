@@ -223,6 +223,8 @@ class DurableUploader:
             "camera_ready": state["camera_ready"],
             "pending_alerts": state["pending_alerts"],
             "pending_video_segments": state["pending_video_segments"],
+            "tracking_active": state.get("tracking_active", False),
+            "tracking_seconds": state.get("tracking_seconds", 0.0),
             "model": "yolov5n-ncnn",
             "software_version": os.getenv("DEVICE_SOFTWARE_VERSION", "alarm-camera-0.1"),
         }

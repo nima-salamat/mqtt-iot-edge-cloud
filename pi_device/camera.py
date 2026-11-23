@@ -299,6 +299,57 @@ class CameraPipeline:
             except Exception:
                 log.exception("Could not rotate local video segment")
 
+    @staticmethod
+    def _decode_pairing_qr(detector, frame):
+        """Decode the short-lived pairing QR despite small size or uneven screen brightness."""
+        if frame is None:
+            return ""
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        candidates = [gray]
+
+        # A screen viewed from a distance can leave only a few pixels per QR
+        # module in the 640x360 lores stream. Upscaling helps the detector find
+        # and rectify those modules without changing the source camera stream.
+        enlarged = cv2.resize(gray, None, fx=1.75, fy=1.75, interpolation=cv2.INTER_CUBIC)
+        candidates.append(enlarged)
+
+        # Laptop/phone screens can have reflections or brightness gradients.
+        candidates.append(cv2.adaptiveThreshold(
+            enlarged, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 31, 7,
+        ))
+
+        for candidate in candidates:
+            try:
+                decoded, _, _ = detector.detectAndDecode(candidate)
+                if decoded:
+                    value = decoded.strip()
+                    if value.startswith("iot-alarm-pair:"):
+                        code = value.partition(":")[2].strip()
+                        if len(code) >= 32:
+                            return code
+            except cv2.error:
+                log.debug("Single QR decode attempt failed", exc_info=True)
+
+            # Multi-decode is useful when the camera sees more than one QR
+            # (for example, a QR on a nearby screen or printed label).
+            multi_decode = getattr(detector, "detectAndDecodeMulti", None)
+            if multi_decode is not None:
+                try:
+                    result = multi_decode(candidate)
+                    if result and result[0]:
+                        for decoded in result[1]:
+                            value = str(decoded).strip()
+                            if value.startswith("iot-alarm-pair:"):
+                                code = value.partition(":")[2].strip()
+                                if len(code) >= 32:
+                                    return code
+                except cv2.error:
+                    log.debug("Multi QR decode attempt failed", exc_info=True)
+
+        return ""
+
     def _capture_loop(self):
         """Keep camera capture and the local MJPEG preview independent of AI inference."""
         last_qr_scan = 0.0
@@ -332,9 +383,10 @@ class CameraPipeline:
                     self._pair_status = "expired"
                 if self._pair_requested_until > now and now - last_qr_scan >= 0.35:
                     last_qr_scan = now
-                    decoded, _, _ = qr_detector.detectAndDecode(frame)
-                    if decoded and decoded.startswith("iot-alarm-pair:"):
-                        self._complete_pairing(decoded.split(":", 1)[1].strip())
+                    pairing_code = self._decode_pairing_qr(qr_detector, frame)
+                    if pairing_code:
+                        log.info("Pairing QR detected; submitting one-time code")
+                        self._complete_pairing(pairing_code)
 
                 # frame is now BGR, as expected by OpenCV drawing,
                 # JPEG encoding, QR decoding and snapshot generation.

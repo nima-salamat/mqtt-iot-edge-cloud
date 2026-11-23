@@ -22,11 +22,17 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _video_bitrate_default() -> int:
+    configured = _env_int("VIDEO_BITRATE", 1_000_000)
+    # 4 Mbps was the old factory default, not a deliberate user override.
+    return 1_000_000 if configured == 4_000_000 else configured
+
+
 DEFAULTS: dict[str, Any] = {
     "video_width": 1280,
     "video_height": 720,
     "video_fps": _env_int("VIDEO_FPS", 30),
-    "video_bitrate": _env_int("VIDEO_BITRATE", 4_000_000),
+    "video_bitrate": _video_bitrate_default(),
     "segment_seconds": _env_int("VIDEO_SEGMENT_SECONDS", 5),
     "inference_fps": _env_int("INFERENCE_FPS", 5),
     "alert_confidence": _env_float("ALERT_CONFIDENCE", 0.45),
@@ -83,8 +89,15 @@ class SettingsStore:
         try:
             stored = json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(stored, dict):
+                # Migrate the previous factory default once. Preserve any other
+                # operator-selected bitrate, while reducing the old 4 Mbps default.
+                migrated = stored.get("video_bitrate") == 4_000_000
+                if migrated:
+                    stored["video_bitrate"] = DEFAULTS["video_bitrate"]
                 # Persisted UI changes override environment-provided first-run defaults.
                 self._value = normalize_settings({**DEFAULTS, **stored})
+                if migrated:
+                    self._save_locked()
         except FileNotFoundError:
             self._save_locked()
         except (OSError, json.JSONDecodeError):

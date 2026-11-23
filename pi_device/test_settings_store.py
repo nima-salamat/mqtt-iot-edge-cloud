@@ -34,13 +34,31 @@ class VideoBitrateMigrationTests(unittest.TestCase):
             path = Path(directory) / "settings.json"
             settings = SettingsStore(str(path))
 
-            updated, restart_required = settings.update({"inference_workers": 3})
-            self.assertEqual(updated["inference_workers"], 3)
+            updated, restart_required = settings.update({"inference_workers": 8})
+            self.assertEqual(updated["inference_workers"], 8)
             self.assertEqual(restart_required, ["inference_workers"])
 
             updated, restart_required = settings.update({"inference_workers": 99})
-            self.assertEqual(updated["inference_workers"], 3)
+            self.assertEqual(updated["inference_workers"], 8)
             self.assertEqual(restart_required, [])
+
+    def test_fps_ranges_and_camera_backend_are_normalized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = SettingsStore(str(Path(directory) / "settings.json"))
+            updated, restart_required = settings.update({
+                "video_fps": 150,
+                "video_fps_auto": "false",
+                "inference_fps": 80,
+                "camera_backend": "opencv",
+                "camera_source": "/dev/video2",
+            })
+            self.assertEqual(updated["video_fps"], 120)
+            self.assertFalse(updated["video_fps_auto"])
+            self.assertEqual(updated["inference_fps"], 60)
+            self.assertEqual(updated["camera_backend"], "opencv")
+            self.assertEqual(updated["camera_source"], "/dev/video2")
+            self.assertIn("camera_backend", restart_required)
+            self.assertIn("camera_source", restart_required)
 
     def test_recording_pause_is_persisted_without_restarting_camera(self):
         with tempfile.TemporaryDirectory() as directory:

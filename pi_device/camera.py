@@ -733,6 +733,19 @@ class CameraPipeline:
                     if detections or self._alert_active:
                         self._process_detections(frame, detections, now)
 
+                # Recalculate the rolling completion rate even when no new
+                # result arrives, so a stalled worker pool visibly decays to 0 FPS.
+                measurement_now = time.monotonic()
+                while (
+                    self._inference_completed_at
+                    and measurement_now - self._inference_completed_at[0] > 5.0
+                ):
+                    self._inference_completed_at.popleft()
+                measurement_window = min(
+                    5.0, max(0.5, measurement_now - self._inference_pool_started_at)
+                )
+                self.inference_fps = len(self._inference_completed_at) / measurement_window
+
                 values = self.settings_store.get()
                 pool_stats = pool.snapshot()
                 estimated_capacity = float(pool_stats.get("estimated_capacity_fps", 0.0))

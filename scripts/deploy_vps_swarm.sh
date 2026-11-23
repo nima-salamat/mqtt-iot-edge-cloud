@@ -33,19 +33,21 @@ load_compose_env .env docker-compose.yml
 : "${MQTT_SERVER_PASSWORD:?Set MQTT_SERVER_PASSWORD}"
 
 : "${STACK_NAME:=mqtt-iot}"
-: "${MQTT_IOT_IMAGE:=mqtt-iot-edge-cloud:local}"
+: "${DOCKER_REGISTRY:=docker.io}"
+: "${IMAGE_TAG:=latest}"
 : "${TRAEFIK_NETWORK:=traefik-public}"
 : "${TRAEFIK_ENTRYPOINT:=websecure}"
 : "${TRAEFIK_HTTP_ENTRYPOINT:=web}"
 : "${TRAEFIK_CERT_RESOLVER:=letsencrypt}"
 : "${POSTGRES_DB:=iotlab}"
 : "${POSTGRES_USER:=iotlab}"
-: "${MEDIAMTX_IMAGE:=bluenviron/mediamtx:1.21.4}"
+: "${MEDIAMTX_IMAGE:=${DOCKER_REGISTRY%/}/bluenviron/mediamtx:1.21.4}"
+: "${MQTT_IOT_IMAGE:=${DOCKER_REGISTRY%/}/nima-salamat/mqtt-iot-edge-cloud:${IMAGE_TAG}}"
 : "${MQTT_TOPIC_PREFIX:=iotlab}"
 : "${MQTT_WS_PATH:=/mqtt}"
 : "${DOMAIN:=server.echonode.website}"
 : "${RTSPS_HOST:=$DOMAIN}"
-export STACK_NAME MQTT_IOT_IMAGE TRAEFIK_NETWORK TRAEFIK_ENTRYPOINT TRAEFIK_HTTP_ENTRYPOINT
+export STACK_NAME DOCKER_REGISTRY IMAGE_TAG MQTT_IOT_IMAGE TRAEFIK_NETWORK TRAEFIK_ENTRYPOINT TRAEFIK_HTTP_ENTRYPOINT
 export TRAEFIK_CERT_RESOLVER POSTGRES_DB POSTGRES_USER MEDIAMTX_IMAGE PROJECT_DIR
 export MQTT_TOPIC_PREFIX MQTT_WS_PATH DOMAIN RTSPS_HOST
 
@@ -73,7 +75,7 @@ docker volume create "${STACK_NAME}_iot_media" >/dev/null
 docker volume create "${STACK_NAME}_iot_static" >/dev/null
 ./scripts/create_mqtt_users_swarm.sh
 
-docker build -t "$MQTT_IOT_IMAGE" .
+docker build --build-arg DOCKER_REGISTRY="$DOCKER_REGISTRY" -t "$MQTT_IOT_IMAGE" .
 docker stack deploy --resolve-image never -c docker-stack.traefik-swarm.yml "$STACK_NAME"
 
 API_SERVICE="${STACK_NAME}_api"

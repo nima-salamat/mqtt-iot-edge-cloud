@@ -3,8 +3,55 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
+
+
+_CPU_LOCK = threading.Lock()
+_CPU_LAST_SAMPLE: tuple[int, int] | None = None
+
+
+def _cpu_totals(stat_line: str) -> tuple[int, int] | None:
+    """Return total and idle CPU ticks from the first /proc/stat line."""
+    fields = str(stat_line or "").split()
+    if not fields or fields[0] != "cpu" or len(fields) < 5:
+        return None
+    try:
+        values = [int(value) for value in fields[1:]]
+    except ValueError:
+        return None
+    total = sum(values)
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return total, idle
+
+
+def _cpu_percent_from_samples(
+    previous: tuple[int, int] | None,
+    current: tuple[int, int] | None,
+) -> float | None:
+    if previous is None or current is None:
+        return None
+    total_delta = current[0] - previous[0]
+    idle_delta = current[1] - previous[1]
+    if total_delta <= 0:
+        return None
+    return round(max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total_delta))), 1)
+
+
+def _read_cpu_usage(stat_path: Path = Path("/proc/stat")) -> float | None:
+    global _CPU_LAST_SAMPLE
+    try:
+        lines = stat_path.read_text(encoding="ascii").splitlines()
+        sample = _cpu_totals(lines[0] if lines else "")
+    except (OSError, ValueError):
+        return None
+    if sample is None:
+        return None
+    with _CPU_LOCK:
+        percent = _cpu_percent_from_samples(_CPU_LAST_SAMPLE, sample)
+        _CPU_LAST_SAMPLE = sample
+        return percent
 
 
 def _read_temperature(
@@ -76,9 +123,11 @@ def collect_system_stats(
     meminfo_path: Path = Path("/proc/meminfo"),
     thermal_root: Path = Path("/sys/class/thermal"),
     hwmon_root: Path = Path("/sys/class/hwmon"),
+    cpu_stat_path: Path = Path("/proc/stat"),
 ) -> dict[str, Any]:
     """Return best-effort metrics; missing sysfs/procfs data never breaks the camera API."""
     return {
+        "cpu_percent": _read_cpu_usage(cpu_stat_path),
         "temperature_c": _read_temperature(thermal_root, hwmon_root),
         "memory": _read_memory(meminfo_path),
         "storage": _read_storage(data_path),

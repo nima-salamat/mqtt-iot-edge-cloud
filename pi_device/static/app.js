@@ -171,12 +171,14 @@
         'W' + (index + 1) + ' ' + Number(value || 0).toFixed(0) + 'ms'
       ).join(' · ');
       const estimatedCapacity = Number(pool.estimated_capacity_fps || 0);
+      const droppedFrames = Number(state.inference_dropped_frames || 0);
       text('inference-workers',
         readyWorkers.toLocaleString('fa-IR') + '/' + workers.toLocaleString('fa-IR') +
         ' Worker آماده · ' + busyWorkers.toLocaleString('fa-IR') +
         ' مشغول · میانگین ' + latency.toFixed(0) + ' ms' +
         (workerBreakdown ? ' · ' + workerBreakdown : '') +
-        (estimatedCapacity ? ' · ظرفیت تخمینی ' + estimatedCapacity.toFixed(1) + ' FPS' : '')
+        (estimatedCapacity ? ' · ظرفیت تخمینی ' + estimatedCapacity.toFixed(1) + ' FPS' : '') +
+        ' · فریم ردشده ' + droppedFrames.toLocaleString('fa-IR')
       );
       const recordingEnabled = !!state.recording_enabled;
       const recordingButton = $('toggle-recording');

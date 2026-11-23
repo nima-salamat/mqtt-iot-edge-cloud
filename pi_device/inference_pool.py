@@ -13,8 +13,6 @@ import queue
 import time
 from dataclasses import dataclass
 
-import cv2
-
 log = logging.getLogger(__name__)
 
 
@@ -95,6 +93,7 @@ def _inference_worker(
         # Keep nested native thread pools from oversubscribing the Pi's CPUs.
         os.environ.setdefault("OMP_NUM_THREADS", str(ncnn_threads))
         os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+        import cv2
         from .detector import YoloV5nDetector
 
         detector = YoloV5nDetector(

@@ -741,10 +741,10 @@ class CameraPipeline:
                 # service time of every worker. This starts conservatively,
                 # ramps up as real throughput is measured, and backs off after
                 # thermal throttling or CPU contention.
-                effective_rate = min(
-                    configured_cap,
-                    max(0.1, estimated_capacity) if estimated_capacity > 0 else configured_cap,
-                )
+                if estimated_capacity <= 0:
+                    self._stop.wait(0.05)
+                    continue
+                effective_rate = min(configured_cap, estimated_capacity)
                 interval = 1.0 / effective_rate
                 now = time.monotonic()
                 if now >= next_dispatch_at:

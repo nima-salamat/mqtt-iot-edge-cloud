@@ -224,11 +224,20 @@
           : (seconds>0?'آخرین رهگیری · '+seconds.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه':'—');
       }
       const badge=document.getElementById('device-connection-state');
-      if(badge && !device.is_paired){
-        badge.classList.remove('online');
-        badge.classList.add('offline');
-        const dot=document.createElement('i');
-        badge.replaceChildren(dot,document.createTextNode('اتصال لغو شده'));
+      if(!device.is_paired){
+        if(peer || sessionUrl)await stopStream();
+        start.disabled=true;
+        start.title='ابتدا دوربین را دوباره از داشبورد Pair کن';
+        disconnectButton?.remove();
+        if(badge){
+          badge.classList.remove('online');
+          badge.classList.add('offline');
+          const dot=document.createElement('i');
+          badge.replaceChildren(dot,document.createTextNode('اتصال لغو شده'));
+        }
+      }else{
+        start.disabled=false;
+        start.title='';
       }
     }catch(error){console.warn('Could not refresh camera tracking state',error);}
   }

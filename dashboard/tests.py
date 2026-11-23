@@ -132,6 +132,21 @@ class DeviceApiTests(TestCase):
         self.assertTrue(self.device.current_state["rtsp_connected"])
         self.assertEqual(self.device.current_state["pending_alerts"], 2)
 
+    def test_mediamtx_publish_auth_accepts_internal_compose_service_host(self):
+        response = self.client.post(
+            reverse("mediamtx-auth"),
+            data=json.dumps({
+                "user": self.device.device_id,
+                "password": self.token,
+                "action": "publish",
+                "path": self.device.stream_path,
+            }),
+            content_type="application/json",
+            HTTP_HOST="api:8000",
+        )
+
+        self.assertEqual(response.status_code, 204)
+
     def test_bad_device_token_is_rejected(self):
         response = self.client.post(
             reverse("device-heartbeat"),

@@ -65,7 +65,7 @@ if ! sudo -u "$SERVICE_USER" "$INSTALL_DIR/.venv/bin/pip" install --no-deps \
 fi
 
 if ! sudo -u "$SERVICE_USER" env PYTHONPATH="$INSTALL_DIR" \
-  "$INSTALL_DIR/.venv/bin/python" -c "import picamera2, av, cv2, numpy, ncnn"; then
+  "$INSTALL_DIR/.venv/bin/python" -c "import picamera2, av, cv2, numpy, ncnn; from pyzbar.pyzbar import decode"; then
   echo "Picamera2 / PyAV / OpenCV / NumPy / NCNN imports failed." >&2
   echo "Check Raspberry Pi OS package availability and the Python environment." >&2
   exit 1

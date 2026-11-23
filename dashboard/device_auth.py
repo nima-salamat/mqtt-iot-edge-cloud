@@ -2,7 +2,32 @@ from __future__ import annotations
 from functools import wraps
 from django.contrib.auth.hashers import check_password
 from django.http import JsonResponse
-from .models import Device
+from django.utils import timezone
+from .models import Device, StreamGrant
+
+
+def revoke_device_access(device):
+    """Revoke the current device token and every short-lived stream grant."""
+    now = timezone.now()
+    device.api_token_hash = ""
+    device.stream_path = ""
+    device.is_online = False
+    device.model_loaded = False
+    state = device.current_state if isinstance(device.current_state, dict) else {}
+    state.update({
+        "mqtt_connected": False,
+        "rtsp_connected": False,
+        "camera_ready": False,
+        "tracking_active": False,
+        "tracking_seconds": 0.0,
+        "connection_state": "disconnected",
+    })
+    device.current_state = state
+    device.save(update_fields=[
+        "api_token_hash", "stream_path", "is_online", "model_loaded",
+        "current_state", "updated_at",
+    ])
+    StreamGrant.objects.filter(device=device, revoked_at__isnull=True).update(revoked_at=now)
 
 
 def authenticate_device(request):

@@ -136,14 +136,19 @@ These settings are stored on the Pi and are independent from the retention polic
 | Local uploaded alarm snapshots | 7 days | 1–90 days |
 | Local uploaded device logs | 7 days | 1–90 days |
 | Video target | 30 FPS | 5–30 FPS |
-| AI inference target | 5 FPS | 1–10 FPS |
+| H.264 video bitrate | 1,000,000 bit/s | 500,000–8,000,000 bit/s |
+| AI inference target | 10 FPS | 1–10 FPS |
+| YOLO inference workers | 2 processes | 1–3 processes |
 | Person confidence threshold | 0.45 | 0.10–0.95 |
 | Alert cooldown | 15 seconds | 1–300 seconds |
+| Clear detection state after no person | 4 seconds | 1–60 seconds |
 | MP4 segment length | 5 seconds | 2–15 seconds |
 
 Unsent recordings are not removed by the normal local rolling-retention timer. They remain queued until upload succeeds, their retry age expires or the configured size cap is reached. When the queue cap is exceeded, the oldest pending video segments are removed first. Alarm evidence has a reserved portion of the configured queue quota. A prolonged outage can still exhaust storage; use a suitable SD card or external SSD and monitor the local page.
 
-Changing the video FPS, bitrate or segment duration requires a service restart. AI FPS, confidence, cooldown and local retention settings are read dynamically.
+Changing the video FPS, bitrate, segment duration or YOLO worker count requires a service restart. AI FPS, confidence, alert cooldown/clear time and retention settings are read dynamically.
+
+The local camera portal groups these settings by purpose and shows measured YOLO FPS, worker readiness/latency, Raspberry Pi temperature, available RAM and data-volume usage. The temperature and resource indicators are diagnostic readings, not controls. Increasing the worker count can increase memory and CPU pressure; compare the measured FPS and temperature on the actual Pi before keeping a higher value.
 
 ## VPS deployment (Docker Compose + host Nginx)
 

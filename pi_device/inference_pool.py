@@ -221,6 +221,7 @@ class AdaptiveInferencePool:
                     "elapsed_seconds": 0.0,
                     "detections": [],
                     "error": "YOLO worker process exited unexpectedly; frame was discarded",
+                    "worker_failed": True,
                 })
             try:
                 process.join(timeout=0)
@@ -317,12 +318,12 @@ class AdaptiveInferencePool:
         except (queue.Full, ValueError, OSError):
             self.scheduler.mark_failed(worker_id)
             return None
+        self._inflight_by_worker[worker_id] = int(frame_sequence)
         return worker_id
 
     def collect(self, timeout: float = 0.0) -> list[dict]:
         if not self.started or self.result_queue is None:
             return []
-        self._restart_dead_workers()
         results = []
         messages = list(self._pending_failures)
         self._pending_failures.clear()
@@ -353,8 +354,11 @@ class AdaptiveInferencePool:
             if kind != "result" or not 0 <= worker_id < self.worker_count:
                 continue
 
-            elapsed = float(message.get("elapsed_seconds", 0.0))
             self._inflight_by_worker.pop(worker_id, None)
+            if message.get("worker_failed"):
+                results.append(message)
+                continue
+            elapsed = float(message.get("elapsed_seconds", 0.0))
             self.scheduler.mark_completed(worker_id, elapsed)
             error = str(message.get("error", ""))
             if error:

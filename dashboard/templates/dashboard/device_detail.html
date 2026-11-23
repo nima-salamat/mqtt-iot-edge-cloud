@@ -32,13 +32,16 @@
   </section>
 </div>
 
-<section class="section">
-  <div class="section-heading"><div><span class="eyebrow">PERSON DETECTION</span><h2>هشدارها و تصاویر ثبت‌شده</h2></div><span class="muted">آخرین ۵۰ هشدار این دوربین</span></div>
-  <div class="alarm-grid">
+<section class="section" data-live-alerts data-device-id="{{ device.device_id }}" data-alarm-cursor="{{ alarm_cursor }}">
+  <div class="section-heading">
+    <div><span class="eyebrow">PERSON DETECTION · LIVE</span><h2>هشدارها و تصاویر ثبت‌شده</h2><p class="muted">هشدارها و عکس‌های تازه بدون ریلود صفحه اضافه می‌شوند.</p></div>
+    <div class="inline-actions"><button class="btn secondary" id="enable-alert-notifications" type="button">فعال‌سازی اعلان مرورگر</button><span class="muted" id="alert-notification-status" aria-live="polite">دریافت هشدار زنده فعال است</span></div>
+  </div>
+  <div class="alarm-grid" data-live-alert-grid>
     {% for alarm in alarms %}
-      <article class="alarm-card">
+      <article class="alarm-card" data-alarm-id="{{ alarm.pk }}">
         {% if alarm.snapshot %}
-          <a href="{% url 'dashboard:alarm-image' alarm.pk %}" target="_blank" rel="noopener"><img src="{% url 'dashboard:alarm-image' alarm.pk %}" alt="تصویر هشدار تشخیص انسان"></a>
+          <a href="{% url 'dashboard:alarm-image' alarm.pk %}" target="_blank" rel="noopener"><img src="{% url 'dashboard:alarm-image' alarm.pk %}" alt="تصویر هشدار تشخیص انسان" loading="lazy" decoding="async"></a>
         {% else %}<div class="no-image">تصویر موجود نیست</div>{% endif %}
         <div class="alarm-body">
           <div class="alarm-title"><b>تشخیص انسان</b><span class="state {% if alarm.acknowledged %}online{% else %}warning{% endif %}">{% if alarm.acknowledged %}بررسی‌شده{% else %}جدید{% endif %}</span></div>

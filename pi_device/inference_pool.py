@@ -354,6 +354,19 @@ class AdaptiveInferencePool:
             if kind != "result" or not 0 <= worker_id < self.worker_count:
                 continue
 
+            message_sequence = int(message.get("frame_sequence", -1))
+            current_sequence = self._inflight_by_worker.get(worker_id)
+            # A queue feeder can deliver an old worker's final result after
+            # that worker has died and been replaced. Never let that stale
+            # result complete or clear the replacement worker's in-flight job.
+            if current_sequence is not None and current_sequence != message_sequence:
+                log.debug(
+                    "Ignoring stale YOLO result from worker %s for frame %s",
+                    worker_id, message_sequence,
+                )
+                continue
+            if current_sequence is None and not message.get("worker_failed"):
+                continue
             self._inflight_by_worker.pop(worker_id, None)
             if message.get("worker_failed"):
                 results.append(message)

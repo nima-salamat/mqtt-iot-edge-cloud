@@ -209,20 +209,34 @@ def main() -> None:
     uploader.start()
     # The Pi Camera is required for normal operation. A failed first open is
     # logged and retried so the local diagnostics page still comes up.
+    camera_supervisor_stop = threading.Event()
+
     def camera_supervisor():
-        while True:
+        startup_at = time.monotonic()
+        while not camera_supervisor_stop.is_set():
             if camera.picam2 is None:
                 try:
                     camera.start()
+                    startup_at = time.monotonic()
                     camera.camera_error = ""
                 except Exception as exc:
                     camera.camera_error = str(exc)
                     log.exception("Camera startup failed; retrying in 10 seconds")
-                    time.sleep(10)
+                    camera_supervisor_stop.wait(10)
                     continue
-            time.sleep(5)
+            else:
+                last_frame = camera.latest_frame_at
+                stale_for = (time.time() - last_frame) if last_frame else (time.monotonic() - startup_at)
+                if stale_for > 15:
+                    log.error("Picamera2 produced no fresh frame for %.1f seconds; restarting camera", stale_for)
+                    camera.stop()
+                    startup_at = time.monotonic()
+            camera_supervisor_stop.wait(5)
 
-    threading.Thread(target=camera_supervisor, name="camera-supervisor", daemon=True).start()
+    camera_supervisor_thread = threading.Thread(
+        target=camera_supervisor, name="camera-supervisor", daemon=True
+    )
+    camera_supervisor_thread.start()
 
     app = create_local_app(camera, settings_store, bridge, uploader)
     try:
@@ -234,6 +248,8 @@ def main() -> None:
             ident="iot-pi-camera",
         )
     finally:
+        camera_supervisor_stop.set()
+        camera_supervisor_thread.join(timeout=6)
         camera.stop()
         uploader.stop()
         bridge.stop()

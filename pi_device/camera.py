@@ -175,6 +175,14 @@ class CameraPipeline:
         if self.picam2 is not None:
             return
         self._stop.clear()
+        with self._frames_lock:
+            self.latest_jpeg = None
+            self.latest_frame_at = 0.0
+            self._latest_bgr = None
+            self._last_detections = []
+            self._last_detection_at = 0.0
+        self.model_error = ""
+        self.camera_error = ""
         # Incomplete MP4s from a power loss have no final container index.
         for stale_marker in self.video_dir.glob("*.open"):
             stale_marker.with_suffix(".mp4").unlink(missing_ok=True)
@@ -563,15 +571,35 @@ class CameraPipeline:
     def stop(self):
         self._stop.set()
         for thread in self._threads:
-            thread.join(timeout=4)
+            thread.join(timeout=5)
+        self._threads = []
         if self.live_output:
             self.live_output.stop()
+        stopped_cleanly = True
         try:
             if self.picam2:
                 self.picam2.stop()
                 self.picam2.stop_encoder(self.encoder)
                 self.picam2.close()
         except Exception:
+            stopped_cleanly = False
             log.exception("Could not stop Picamera2 cleanly")
-        if self._current_marker:
+        if stopped_cleanly and self._current_marker:
+            # Removing the marker makes a complete, finalized MP4 eligible for
+            # retry upload. If close failed, keep it so startup discards it.
             self._current_marker.unlink(missing_ok=True)
+
+        self.picam2 = None
+        self.encoder = None
+        self.local_output = None
+        self.live_output = None
+        self.detector = None
+        self.bridge.model_loaded = False
+        self._current_segment = None
+        self._current_marker = None
+        with self._frames_lock:
+            self.latest_jpeg = None
+            self.latest_frame_at = 0.0
+            self._latest_bgr = None
+            self._last_detections = []
+            self._last_detection_at = 0.0

@@ -984,7 +984,10 @@ class CameraPipeline:
                 and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count
             ),
             "recording_enabled": self.recording_enabled,
-            "model_error": self.model_error,
+            "model_error": (
+                self.model_error
+                or (self.inference_pool.last_error if self.inference_pool else "")
+            ),
             "camera_error": self.camera_error,
             "rtsp_connected": bool(self.live_output and self.live_output.connected),
             "rtsp_error": self.live_output.error if self.live_output else "",

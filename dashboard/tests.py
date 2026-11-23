@@ -2,8 +2,9 @@ import json
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.test import TestCase
+from django.utils import timezone
 from django.urls import reverse
-from .models import Alarm, Device, PairingRequest, RetentionPolicy
+from .models import Alarm, Device, PairingRequest, RetentionPolicy, StreamGrant
 
 User = get_user_model()
 
@@ -147,6 +148,39 @@ class DeviceApiTests(TestCase):
 
         self.assertEqual(response.status_code, 204)
 
+    def test_device_can_disconnect_itself_and_revoke_stream_grants(self):
+        grant = StreamGrant.objects.create(
+            token_hash="a" * 64,
+            user=self.owner,
+            device=self.device,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+        response = self.client.post(
+            reverse("device-disconnect"),
+            data="{}",
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "disconnected")
+        self.device.refresh_from_db()
+        grant.refresh_from_db()
+        self.assertEqual(self.device.api_token_hash, "")
+        self.assertEqual(self.device.stream_path, "")
+        self.assertFalse(self.device.is_online)
+        self.assertFalse(self.device.model_loaded)
+        self.assertEqual(self.device.current_state["connection_state"], "disconnected")
+        self.assertIsNotNone(grant.revoked_at)
+        retry = self.client.post(
+            reverse("device-heartbeat"),
+            data=json.dumps({"video_fps": 30}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
+        self.assertEqual(retry.status_code, 401)
+
     def test_bad_device_token_is_rejected(self):
         response = self.client.post(
             reverse("device-heartbeat"),
@@ -187,6 +221,29 @@ class UserDeviceIsolationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         hidden = self.client.get(reverse("dashboard:device-detail", args=[self.device_b.device_id]))
         self.assertEqual(hidden.status_code, 404)
+
+    def test_owner_can_disconnect_device_but_another_user_cannot(self):
+        StreamGrant.objects.create(
+            token_hash="b" * 64,
+            user=self.owner_a,
+            device=self.device_a,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+        self.client.force_login(self.owner_b)
+        hidden = self.client.post(
+            reverse("dashboard:device-disconnect", args=[self.device_a.device_id])
+        )
+        self.assertEqual(hidden.status_code, 404)
+        self.client.force_login(self.owner_a)
+        response = self.client.post(
+            reverse("dashboard:device-disconnect", args=[self.device_a.device_id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.device_a.refresh_from_db()
+        self.assertFalse(self.device_a.api_token_hash)
+        self.assertFalse(self.device_a.is_online)
+        self.assertFalse(self.device_a.stream_path)
+        self.assertIsNotNone(StreamGrant.objects.get(device=self.device_a).revoked_at)
 
     def test_each_user_gets_an_independent_retention_policy(self):
         policy_a, _ = RetentionPolicy.objects.get_or_create(user=self.owner_a)

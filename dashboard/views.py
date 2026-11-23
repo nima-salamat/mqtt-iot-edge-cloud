@@ -9,6 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from .models import Alarm, Device, DeviceLog, RetentionPolicy, VideoSegment
+from .device_auth import revoke_device_access
 
 
 def _visible_devices(user):
@@ -32,6 +33,19 @@ def home(request):
         "alarm_cursor": alarm_cursor,
         "retention": policy,
         "is_admin": request.user.is_staff,
+    })
+
+
+@login_required
+@require_POST
+def disconnect_device(request, device_id):
+    device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
+    if not device.api_token_hash:
+        return JsonResponse({"status": "already_disconnected"})
+    revoke_device_access(device)
+    return JsonResponse({
+        "status": "disconnected",
+        "device_id": device.device_id,
     })
 
 
@@ -117,15 +131,18 @@ def dashboard_overview(request):
                 "device_id": device.device_id,
                 "name": device.name,
                 "is_online": bool(
-                    device.is_online and device.last_heartbeat
+                    device.api_token_hash and device.is_online and device.last_heartbeat
                     and device.last_heartbeat >= timezone.now() - timedelta(seconds=50)
                 ),
+                "is_paired": bool(device.api_token_hash),
                 "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
                 "video_fps": round(device.reported_video_fps, 1),
                 "inference_fps": round(device.reported_inference_fps, 1),
                 "model_loaded": device.model_loaded,
                 "camera_ready": bool(device.current_state.get("camera_ready", False)),
                 "rtsp_connected": bool(device.current_state.get("rtsp_connected", False)),
+                "tracking_active": bool(device.current_state.get("tracking_active", False)),
+                "tracking_seconds": round(float(device.current_state.get("tracking_seconds", 0) or 0), 1),
                 "pending_alerts": int(device.current_state.get("pending_alerts", 0) or 0),
                 "pending_video_segments": int(device.current_state.get("pending_video_segments", 0) or 0),
             }

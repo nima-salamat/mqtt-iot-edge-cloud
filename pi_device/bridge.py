@@ -35,6 +35,8 @@ class RaspberryPiMqttBridge:
         self.camera_ready = False
         self.pending_alert_count = 0
         self.pending_video_count = 0
+        self.tracking_active = False
+        self.tracking_seconds = 0.0
         self._lock = threading.RLock()
         self.topic_root = f"{self.prefix}/devices/{device_id}"
         self.alarm_topic = f"{self.topic_root}/alarms"
@@ -141,6 +143,11 @@ class RaspberryPiMqttBridge:
             self.pending_alert_count = int(pending_alerts)
             self.pending_video_count = int(pending_videos)
 
+    def set_tracking(self, active, duration_seconds):
+        with self._lock:
+            self.tracking_active = bool(active)
+            self.tracking_seconds = round(max(0.0, float(duration_seconds)), 1)
+
     def snapshot(self):
         with self._lock:
             return {
@@ -156,4 +163,6 @@ class RaspberryPiMqttBridge:
                 "camera_ready": self.camera_ready,
                 "pending_alerts": self.pending_alert_count,
                 "pending_video_segments": self.pending_video_count,
+                "tracking_active": self.tracking_active,
+                "tracking_seconds": self.tracking_seconds,
             }

@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.test import TestCase
 from django.urls import reverse
-from .models import Device, PairingRequest, RetentionPolicy
+from .models import Alarm, Device, PairingRequest, RetentionPolicy
 
 User = get_user_model()
 
@@ -180,3 +180,57 @@ class UserDeviceIsolationTests(TestCase):
         policy_a.save()
         self.assertEqual(policy_b.alarm_image_days, 30)
 
+
+
+class LiveDashboardAlertTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="live-alert-owner", password="Strong-Pass-12345"
+        )
+        self.other_owner = User.objects.create_user(
+            username="other-live-alert-owner", password="Strong-Pass-12345"
+        )
+        self.device = Device.objects.create(
+            device_id="cam-live-alert-01", owner=self.owner, name="Front Camera"
+        )
+        self.other_device = Device.objects.create(
+            device_id="cam-live-alert-02", owner=self.other_owner, name="Other Camera"
+        )
+        self.client.force_login(self.owner)
+
+    def _alarm(self, device, alert_id):
+        return Alarm.objects.create(
+            device=device,
+            alert_id=alert_id,
+            confidence=0.91,
+            bbox=[{"x1": 0.1, "y1": 0.2, "x2": 0.5, "y2": 0.8}],
+        )
+
+    def test_alert_feed_returns_only_alerts_after_cursor_for_current_user(self):
+        first = self._alarm(self.device, "live-alert-first")
+        second = self._alarm(self.device, "live-alert-second")
+        self._alarm(self.other_device, "not-visible-alert")
+
+        response = self.client.get(
+            reverse("dashboard-alerts"), {"after": first.pk}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([item["id"] for item in payload["alerts"]], [second.pk])
+        self.assertEqual(payload["next_cursor"], second.pk)
+        self.assertEqual(payload["alerts"][0]["device_name"], "Front Camera")
+        self.assertEqual(payload["alerts"][0]["image_url"], None)
+        self.assertEqual(payload["alerts"][0]["device_url"],
+                         reverse("dashboard:device-detail", args=[self.device.device_id]))
+
+    def test_alert_feed_rejects_access_to_another_users_device(self):
+        response = self.client.get(
+            reverse("dashboard-alerts"),
+            {"after": 0, "device_id": self.other_device.device_id},
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_alert_feed_rejects_invalid_cursor(self):
+        response = self.client.get(reverse("dashboard-alerts"), {"after": "invalid"})
+        self.assertEqual(response.status_code, 400)

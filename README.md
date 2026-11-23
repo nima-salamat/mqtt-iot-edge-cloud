@@ -264,20 +264,11 @@ The Compose files used are:
 - `docker-compose.nginx.yml`: loopback-only ports for host Nginx and host certificate mount for MediaMTX.
 - `docker-compose.sqlite.yml`: used only when `DATABASE_MODE=sqlite`.
 
-### Configure host Nginx
+### Nginx routes and exposed ports
 
-The Nginx virtual-host example is:
+The final Nginx virtual host is installed in the previous Certbot section. It proxies the Django dashboard/API, Streamlit at `/ops/`, MQTT WebSockets at `/mqtt`, WebRTC/WHEP at `/webrtc/` and HLS at `/streams/` to loopback-only ports.
 
-    deploy/nginx/server.echonode.website.conf
-
-Review its `ssl_certificate` and `ssl_certificate_key` directives and change them to the exact certificate paths already used on the host. Then install and activate it:
-
-    sudo cp deploy/nginx/server.echonode.website.conf /etc/nginx/sites-available/mqtt-iot-edge-cloud
-    sudo ln -s /etc/nginx/sites-available/mqtt-iot-edge-cloud /etc/nginx/sites-enabled/mqtt-iot-edge-cloud
-    sudo nginx -t
-    sudo systemctl reload nginx
-
-Do not install a second active virtual host with the same `server_name`. Nginx proxies Django, Streamlit, MQTT WebSockets, WebRTC/WHEP and HLS to loopback ports. RTSPS TCP 8322 and WebRTC ICE UDP 8189 are published directly by MediaMTX and do not pass through the HTTP Nginx proxy.
+RTSPS TCP 8322 and WebRTC ICE UDP 8189 are published directly by MediaMTX and do not pass through the HTTP Nginx proxy. Do not install another active virtual host with the same `server_name`.
 
 ### Create the first administrator
 

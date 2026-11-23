@@ -20,6 +20,10 @@ services:
       - "127.0.0.1:${MQTT_WS_BIND_PORT:-19001}:9001"
 
   mediamtx:
+    # Host Nginx proxies the MediaMTX HTTP services through loopback.
+    ports:
+      - "127.0.0.1:18888:8888/tcp"
+      - "127.0.0.1:18889:8889/tcp"
     environment:
       MTX_RTSPSERVERCERT: ${MEDIA_TLS_CERT:?Set MEDIA_TLS_CERT in .env}
       MTX_RTSPSERVERKEY: ${MEDIA_TLS_KEY:?Set MEDIA_TLS_KEY in .env}

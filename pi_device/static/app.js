@@ -53,6 +53,19 @@
     return size.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + ' ' + units[unit];
   };
 
+  function setBidiParts(id, parts) {
+    const node = $(id);
+    if (!node) return;
+    node.replaceChildren();
+    for (const part of parts) {
+      const item = document.createElement(part.dir ? 'bdi' : 'span');
+      if (part.dir) item.dir = part.dir;
+      if (part.className) item.className = part.className;
+      item.textContent = part.text;
+      node.append(item);
+    }
+  }
+
   function refreshQueueCards(queues = {}) {
     for (const name of ['videos', 'alarms', 'logs']) {
       const queue = queues[name] || {};
@@ -136,7 +149,18 @@
         confidence.textContent = Number.isFinite(score)
           ? (score * 100).toLocaleString('fa-IR', {maximumFractionDigits: 1}) + '٪'
           : '—';
-        heading.append(title, confidence);
+        const menu = document.createElement('details');
+        menu.className = 'alarm-card-menu';
+        const menuSummary = document.createElement('summary');
+        menuSummary.textContent = '⋮';
+        menuSummary.setAttribute('aria-label', 'عملیات تشخیص');
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'alarm-delete-action';
+        deleteButton.dataset.deleteAlarm = alertId;
+        deleteButton.textContent = 'حذف این تشخیص';
+        menu.append(menuSummary, deleteButton);
+        heading.append(title, confidence, menu);
 
         const time = document.createElement('small');
         time.textContent = timeLabel(alarm.detected_at);
@@ -178,6 +202,67 @@
     }
   }
 
+  const alarmGallery = $('alarm-gallery');
+  alarmGallery?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-delete-alarm]');
+    if (!button) return;
+    const alertId = button.dataset.deleteAlarm;
+    if (!(await askConfirmation(
+      'حذف تصویر تشخیص',
+      'تصویر، جزئیات و فایل‌های صف ارسال این تشخیص از Raspberry Pi حذف می‌شوند. نسخه‌ای که قبلاً به سرور ارسال شده از سرور حذف نخواهد شد.',
+      'حذف تشخیص'
+    ))) return;
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/alarms/' + encodeURIComponent(alertId) + '/', {
+        method: 'DELETE',
+        headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'حذف تشخیص ناموفق بود.');
+      alarmGallery.querySelector('[data-alert-id="' + CSS.escape(alertId) + '"]')?.remove();
+      if (!alarmGallery.querySelector('[data-alert-id]')) {
+        const empty = document.createElement('div');
+        empty.className = 'gallery-empty';
+        empty.textContent = 'هنوز تصویری از تشخیص انسان ثبت نشده است.';
+        alarmGallery.replaceChildren(empty);
+      }
+      text('queue-action-status', 'تشخیص حذف شد؛ ' + formatBytes(result.removed_bytes) + ' فضا آزاد شد.');
+      await refreshState();
+      await refreshAlarms();
+    } catch (error) {
+      text('queue-action-status', error.message);
+      button.disabled = false;
+    }
+  });
+
+  $('cleanup-alarms')?.addEventListener('click', async () => {
+    const button = $('cleanup-alarms');
+    if (!(await askConfirmation(
+      'پاک‌سازی همه تشخیص‌های محلی',
+      'تمام تصاویر و metadata تشخیص روی Raspberry Pi حذف می‌شوند؛ چه ارسال شده باشند چه هنوز در صف باشند. تاریخچه‌ای که قبلاً در پنل وب ذخیره شده حذف نمی‌شود.',
+      'پاک‌سازی همه'
+    ))) return;
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/alarms/cleanup/', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'پاک‌سازی تشخیص‌ها ناموفق بود.');
+      text('queue-action-status', Number(result.removed_count || 0).toLocaleString('fa-IR') +
+        ' تشخیص حذف شد؛ ' + formatBytes(result.removed_bytes) + ' فضا آزاد شد.');
+      refreshQueueCards(result.remaining || {});
+      await refreshAlarms();
+      await refreshState();
+    } catch (error) {
+      text('queue-action-status', error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   async function refreshState() {
     try {
       const response = await fetch('/api/state/', {cache: 'no-store'});
@@ -185,10 +270,24 @@
       const state = await response.json();
       const mqtt = state.mqtt || {};
       const system = state.system || {};
+      const cpuPercent = system.cpu_percent === null || system.cpu_percent === undefined
+        ? null : Number(system.cpu_percent);
       const temperature = system.temperature_c === null || system.temperature_c === undefined
         ? null : Number(system.temperature_c);
       const memory = system.memory || {};
       const storage = system.storage || {};
+
+      if (cpuPercent !== null && Number.isFinite(cpuPercent)) {
+        text('system-cpu', cpuPercent.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + '٪');
+        text('system-cpu-note', cpuPercent >= 90
+          ? 'بار پردازنده بسیار بالا است'
+          : 'مصرف لحظه‌ای پردازنده');
+      } else {
+        text('system-cpu', 'در حال اندازه‌گیری');
+        text('system-cpu-note', 'نمونه‌برداری از /proc/stat');
+      }
+      const cpuCard = $('system-cpu')?.closest('.metric-card');
+      if (cpuCard) cpuCard.classList.toggle('is-warning', cpuPercent !== null && cpuPercent >= 90);
 
       if (temperature !== null && Number.isFinite(temperature)) {
         text('system-temperature', temperature.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + '°C');
@@ -204,8 +303,12 @@
 
       if (Number.isFinite(Number(memory.total_bytes)) && Number(memory.total_bytes) > 0) {
         text('memory-usage', formatBytes(memory.used_bytes) + ' / ' + formatBytes(memory.total_bytes));
-        text('memory-usage-note', formatBytes(memory.available_bytes) + ' RAM آزاد · ' +
-          Number(memory.used_percent || 0).toLocaleString('fa-IR', {maximumFractionDigits: 0}) + '٪ مصرف');
+        setBidiParts('memory-usage-note', [
+          {text: 'RAM آزاد: '},
+          {text: formatBytes(memory.available_bytes), dir: 'ltr'},
+          {text: ' · مصرف: '},
+          {text: Number(memory.used_percent || 0).toLocaleString('fa-IR', {maximumFractionDigits: 0}) + '٪', dir: 'ltr'}
+        ]);
       } else {
         text('memory-usage', 'ناموجود');
         text('memory-usage-note', 'اطلاعات حافظه در دسترس نیست');
@@ -237,6 +340,34 @@
       text('video-fps', Number(state.video_fps || 0).toFixed(1) + ' FPS');
       text('video-fps-target', (state.video_fps_auto ? 'انتخاب خودکار سنسور · ' : 'هدف دستی · ') +
         Number(state.target_video_fps || state.settings?.video_fps || 30).toLocaleString('fa-IR') + ' FPS');
+      const cameraFpsCap = Number(state.camera_max_fps || 0);
+      const inputFpsCap = cameraFpsCap > 0 ? Math.max(1, Math.floor(cameraFpsCap)) : 1000;
+      const videoFpsInput = settingsForm.elements.namedItem('video_fps');
+      const inferenceFpsInput = settingsForm.elements.namedItem('inference_fps');
+      if (videoFpsInput) videoFpsInput.max = String(inputFpsCap);
+      if (inferenceFpsInput) inferenceFpsInput.max = String(inputFpsCap);
+      const fpsList = $('camera-fps-options');
+      if (fpsList) {
+        fpsList.replaceChildren();
+        for (const rate of (Array.isArray(state.video_fps_options) ? state.video_fps_options : [])) {
+          const option = document.createElement('option');
+          option.value = String(Math.max(1, Math.floor(Number(rate))));
+          option.label = Number(rate).toLocaleString('fa-IR') + ' FPS';
+          fpsList.append(option);
+        }
+      }
+      const fpsHint = settingsForm.elements.namedItem('video_fps')?.closest('label')?.querySelector('small');
+      if (fpsHint && cameraFpsCap > 0) {
+        fpsHint.textContent = 'حد بالای فعلی این دوربین: ' +
+          cameraFpsCap.toLocaleString('fa-IR', {maximumFractionDigits: 1}) +
+          ' FPS؛ فقط نرخ واقعی قابل پشتیبانی انتخاب می‌شود.';
+      }
+      const inferenceHint = settingsForm.elements.namedItem('inference_fps')?.closest('label')?.querySelector('small');
+      if (inferenceHint && cameraFpsCap > 0) {
+        inferenceHint.textContent = 'سقف این مقدار روی ' +
+          cameraFpsCap.toLocaleString('fa-IR', {maximumFractionDigits: 1}) +
+          ' FPS دوربین قرار دارد؛ ظرفیت Workerها نیز نرخ واقعی را محدود می‌کند.';
+      }
       text('inference-fps', Number(state.inference_fps || 0).toFixed(1) + ' FPS');
       const pool = state.inference_pool || {};
       const workers = Number(pool.workers || state.settings?.inference_workers || 0);
@@ -304,7 +435,22 @@
       text('pending-videos', state.pending_video_segments ?? 0);
       text('last-upload', timeLabel(state.last_upload_at));
       const pairingStatus = state.pairing_status || 'نامشخص';
-      document.querySelector('.pair-card')?.classList.toggle('is-paired', pairingStatus === 'paired');
+      const pairingCard = $('pair-card');
+      const pairedCard = $('paired-connection-card');
+      const isPaired = pairingStatus === 'paired';
+      if (pairingCard) pairingCard.hidden = isPaired;
+      if (pairedCard) pairedCard.hidden = !isPaired;
+      pairingCard?.classList.toggle('is-paired', isPaired);
+      const trackingSeconds = Number(state.tracking_seconds || 0);
+      const trackingLabel = state.tracking_active
+        ? 'در حال رهگیری · ' + trackingSeconds.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + ' ثانیه'
+        : (trackingSeconds > 0
+          ? 'آخرین رهگیری · ' + trackingSeconds.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + ' ثانیه'
+          : 'رهگیری فعالی ثبت نشده است');
+      text('tracking-duration', trackingLabel);
+      text('tracking-duration-note', state.tracking_active
+        ? 'مدت حضور پیوسته هدف در تصویر'
+        : 'زمان آخرین حضور پیوسته هدف');
       const pairingLabels = {
         not_paired: 'دستگاه هنوز به حسابی متصل نشده است.',
         scanning: 'در حال اسکن QR؛ اگر تا پایان مهلت تشخیص داده نشد، کد را دستی وارد کن.',
@@ -335,6 +481,30 @@
   const previewFrame = document.querySelector('.preview-frame');
   const reconnectButton = $('preview-reconnect');
   const fullscreenButton = $('preview-fullscreen');
+
+  $('disconnect-camera')?.addEventListener('click', async () => {
+    const button = $('disconnect-camera');
+    const approved = await askConfirmation(
+      'قطع اتصال دوربین از حساب',
+      'توکن دستگاه و مجوزهای پخش زنده از سرور باطل می‌شوند. تصویر محلی و تشخیص YOLO باقی می‌مانند و تاریخچه قبلی پاک نمی‌شود.',
+      'قطع اتصال'
+    );
+    if (!approved) return;
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/disconnect/', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'قطع اتصال ناموفق بود.');
+      text('pairing-state', 'اتصال حساب لغو شد؛ برای اتصال دوباره QR تازه‌ای از پنل وب بساز.');
+      await refreshState();
+    } catch (error) {
+      text('pairing-state', error.message);
+      button.disabled = false;
+    }
+  });
 
   reconnectButton?.addEventListener('click', () => {
     if (!previewImage) return;

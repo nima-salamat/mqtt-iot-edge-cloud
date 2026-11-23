@@ -731,7 +731,7 @@ class CameraPipeline:
                 # thermal throttling or CPU contention.
                 effective_rate = min(
                     configured_cap,
-                    max(0.5, estimated_capacity) if estimated_capacity > 0 else configured_cap,
+                    max(0.1, estimated_capacity) if estimated_capacity > 0 else configured_cap,
                 )
                 interval = 1.0 / effective_rate
                 now = time.monotonic()

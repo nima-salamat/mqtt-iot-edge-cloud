@@ -521,7 +521,9 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'جست‌وجوی دوربین‌ها ناموفق بود.');
       datalist.replaceChildren();
-      for (const camera of (result.cameras || [])) {
+      const selectedBackend = settingsForm.elements.namedItem('camera_backend')?.value || 'picamera2';
+      const available = (result.cameras || []).filter(camera => camera.backend === selectedBackend);
+      for (const camera of available) {
         const option = document.createElement('option');
         option.value = camera.source;
         option.label = camera.label || camera.source;
@@ -537,6 +539,7 @@
     }
   }
   $('camera-discover')?.addEventListener('click', discoverCameras);
+  settingsForm.elements.namedItem('camera_backend')?.addEventListener('change', discoverCameras);
   discoverCameras();
 
   settingsForm.addEventListener('submit', async (event) => {

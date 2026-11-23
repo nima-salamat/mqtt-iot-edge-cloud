@@ -35,6 +35,10 @@ load_compose_env .env docker-compose.yml
 : "${STACK_NAME:=mqtt-iot}"
 : "${DOCKER_REGISTRY:=docker.io}"
 : "${IMAGE_TAG:=latest}"
+if [[ ! "$DOCKER_REGISTRY" =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+  echo "DOCKER_REGISTRY must be a registry host only, without https:// or a path." >&2
+  exit 1
+fi
 : "${TRAEFIK_NETWORK:=traefik-public}"
 : "${TRAEFIK_ENTRYPOINT:=websecure}"
 : "${TRAEFIK_HTTP_ENTRYPOINT:=web}"

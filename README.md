@@ -186,7 +186,7 @@ Set one registry host in `.env`:
 - `mirror.gcr.io` — Docker Hub mirror.
 - `registry.example.com:5000` — your own registry or pull-through mirror.
 
-The selected registry is used for the PostgreSQL, Mosquitto, MediaMTX, Caddy and Python base images, and as the tag prefix for the locally-built application image. The registry must expose the same upstream repository paths (for example `library/postgres`, `eclipse-mosquitto`, `bluenviron/mediamtx`, `library/python` and `library/caddy`). A private registry must already contain or proxy those images. Authenticate before deployment with:
+The selected registry is used for the PostgreSQL, Mosquitto, MediaMTX, Caddy and Python base images, and as the tag prefix for the locally-built application image. For registries that mirror Mosquitto under a different repository path or tag, set the full reference in `MOSQUITTO_IMAGE`, for example `MOSQUITTO_IMAGE=docker.iranserver.com/eclipse-mosquitto:2.1.2-alpine`. The registry must expose the same upstream repository paths (for example `library/postgres`, `eclipse-mosquitto`, `bluenviron/mediamtx`, `library/python` and `library/caddy`). A private registry must already contain or proxy those images. Authenticate before deployment with:
 
     docker login registry.example.com:5000
 

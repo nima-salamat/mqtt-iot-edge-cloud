@@ -164,8 +164,8 @@ class AdaptiveInferencePool:
         confidence: float = 0.45,
         ncnn_threads: int = 1,
     ):
-        if not 1 <= int(worker_count) <= 3:
-            raise ValueError("inference worker count must be between 1 and 3")
+        if not 1 <= int(worker_count) <= 8:
+            raise ValueError("inference worker count must be between 1 and 8")
         if int(ncnn_threads) < 1:
             raise ValueError("NCNN threads per worker must be at least one")
         self.worker_count = int(worker_count)

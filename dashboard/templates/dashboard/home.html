@@ -32,12 +32,22 @@
     {% endfor %}
   </div>
 </section>
-<section class="section">
-  <div class="section-heading"><div><span class="eyebrow">RECENT EVENTS</span><h2>آخرین هشدارها</h2></div></div>
-  <div class="table-wrap"><table><thead><tr><th>نوع رخداد</th><th>دوربین</th><th>اطمینان</th><th>زمان</th><th>وضعیت</th></tr></thead><tbody id="recent-alarm-body">
+<section class="section" data-live-alerts data-alarm-cursor="{{ alarm_cursor }}">
+  <div class="section-heading">
+    <div><span class="eyebrow">RECENT EVENTS · LIVE</span><h2>آخرین هشدارها</h2><p class="muted">رخدادهای جدید بدون بارگذاری مجدد صفحه دریافت می‌شوند.</p></div>
+    <div class="inline-actions"><button class="btn secondary" id="enable-alert-notifications" type="button">فعال‌سازی اعلان مرورگر</button><span class="muted" id="alert-notification-status" aria-live="polite">به‌روزرسانی خودکار فعال است</span></div>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>تصویر</th><th>نوع رخداد</th><th>دوربین</th><th>اطمینان</th><th>زمان</th><th>وضعیت</th></tr></thead><tbody id="recent-alarm-body">
     {% for alarm in recent_alarms %}
-      <tr><td><span class="event-type">● تشخیص انسان</span></td><td><a href="{% url 'dashboard:device-detail' alarm.device.device_id %}">{{ alarm.device.name }}</a></td><td>{{ alarm.confidence|floatformat:2 }}</td><td>{{ alarm.detected_at|date:"Y-m-d H:i:s" }}</td><td>{% if alarm.acknowledged %}<span class="state online">بررسی‌شده</span>{% else %}<span class="state warning">جدید</span>{% endif %}</td></tr>
-    {% empty %}<tr><td colspan="5" class="empty">هنوز هشداری ثبت نشده است.</td></tr>{% endfor %}
+      <tr data-alarm-id="{{ alarm.pk }}">
+        <td class="alarm-image-cell">{% if alarm.snapshot %}<a href="{% url 'dashboard:alarm-image' alarm.pk %}" target="_blank" rel="noopener"><img class="alarm-thumb" src="{% url 'dashboard:alarm-image' alarm.pk %}" alt="تصویر هشدار" loading="lazy" decoding="async"></a>{% else %}—{% endif %}</td>
+        <td><span class="event-type">● تشخیص انسان</span></td>
+        <td><a href="{% url 'dashboard:device-detail' alarm.device.device_id %}">{{ alarm.device.name }}</a></td>
+        <td>{{ alarm.confidence|floatformat:2 }}</td>
+        <td>{{ alarm.detected_at|date:"Y-m-d H:i:s" }}</td>
+        <td>{% if alarm.acknowledged %}<span class="state online">بررسی‌شده</span>{% else %}<span class="state warning">جدید</span>{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="6" class="empty">هنوز هشداری ثبت نشده است.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 <section class="section">
@@ -133,10 +143,9 @@ async function refreshOverview(){
     const response=await fetch('/api/dashboard/overview/',{cache:'no-store'});
     if(!response.ok)return;
     const data=await response.json();
-    const devices=data.devices||[], alarms=data.alarms||[];
+    const devices=data.devices||[];
     document.getElementById('device-count').textContent=devices.length;
     document.getElementById('online-count').textContent=devices.filter(item=>item.is_online).length;
-    document.getElementById('alarm-count').textContent=alarms.length;
     for(const device of devices){
       const card=document.querySelector('.device-card[data-device-id="'+device.device_id+'"]');
       if(!card)continue;
@@ -155,24 +164,6 @@ async function refreshOverview(){
       set('.pending-alerts',device.pending_alerts||0);
       set('.pending-videos',device.pending_video_segments||0);
       set('.last-heartbeat',device.last_heartbeat?new Date(device.last_heartbeat).toLocaleString('fa-IR'):'هنوز دریافت نشده');
-    }
-    const body=document.getElementById('recent-alarm-body');
-    body.replaceChildren();
-    if(!alarms.length){
-      const row=document.createElement('tr'),cell=document.createElement('td');
-      cell.colSpan=5;cell.className='empty';cell.textContent='هنوز هشداری ثبت نشده است.';
-      row.append(cell);body.append(row);return;
-    }
-    for(const alarm of alarms){
-      const row=document.createElement('tr');
-      const eventCell=document.createElement('td');eventCell.textContent='● تشخیص انسان';eventCell.className='event-type';
-      const deviceCell=document.createElement('td'),link=document.createElement('a');
-      link.href='/devices/'+encodeURIComponent(alarm.device_id)+'/';link.textContent=alarm.device_name;deviceCell.append(link);
-      const confidence=document.createElement('td');confidence.textContent=Number(alarm.confidence).toFixed(2);
-      const time=document.createElement('td');time.textContent=new Date(alarm.detected_at).toLocaleString('fa-IR');
-      const stateCell=document.createElement('td'),state=document.createElement('span');
-      state.className='state '+(alarm.acknowledged?'online':'warning');state.textContent=alarm.acknowledged?'بررسی‌شده':'جدید';
-      stateCell.append(state);row.append(eventCell,deviceCell,confidence,time,stateCell);body.append(row);
     }
   }catch(error){console.warn('Dashboard refresh failed',error);}
 }

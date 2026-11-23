@@ -223,6 +223,13 @@ class DurableUploader:
                     log.exception("Could not upload log %s", path)
 
     def _upload_segments(self):
+        # Pausing recording also pauses video delivery. Existing pending files
+        # remain on disk and resume when the operator starts recording again.
+        if self.settings_store is not None:
+            settings = self.settings_store.get()
+            if not settings.get("recording_enabled", True):
+                return
+
         for path in self._sorted_queue_files(self.video_dir, "*.mp4"):
             if self._stop.is_set():
                 return

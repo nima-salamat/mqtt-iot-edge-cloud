@@ -56,12 +56,43 @@
       const response = await fetch('/api/pair/scan/', {method: 'POST', headers: {'X-CSRF-Token': csrf}});
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'شروع اسکن QR ناموفق بود.');
-      text('pairing-state', 'اسکن فعال شد؛ QR یک‌بارمصرف پنل وب را مقابل دوربین قرار بده.');
+      text('pairing-state', 'اسکن فعال شد؛ QR یک‌بارمصرف پنل وب را مقابل دوربین قرار بده. اگر تشخیص نداد، کد را دستی وارد کن.');
     } catch (error) {
       text('pairing-state', error.message);
     } finally {
       button.disabled = false;
       refreshState();
+    }
+  });
+
+  $('manual-pairing-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const input = $('manual-pairing-code');
+    const button = $('submit-manual-pairing');
+    const pairingCode = input.value.trim();
+    if (!pairingCode) {
+      text('pairing-state', 'ابتدا کد اتصال را وارد کن.');
+      input.focus();
+      return;
+    }
+
+    button.disabled = true;
+    text('pairing-state', 'در حال ارسال کد اتصال به سرور…');
+    try {
+      const response = await fetch('/api/pair/manual/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+        body: JSON.stringify({pairing_code: pairingCode})
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'ارسال کد اتصال ناموفق بود.');
+      input.value = '';
+      text('pairing-state', 'کد پذیرفته شد؛ در حال تکمیل Pairing با سرور…');
+      await refreshState();
+    } catch (error) {
+      text('pairing-state', error.message);
+    } finally {
+      button.disabled = false;
     }
   });
 

@@ -42,19 +42,19 @@ class VideoBitrateMigrationTests(unittest.TestCase):
             self.assertEqual(updated["inference_workers"], 8)
             self.assertEqual(restart_required, [])
 
-    def test_fps_ranges_and_camera_backend_are_normalized(self):
+    def test_fps_values_are_not_capped_by_a_fixed_ui_ceiling(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = SettingsStore(str(Path(directory) / "settings.json"))
             updated, restart_required = settings.update({
-                "video_fps": 150,
+                "video_fps": 240,
                 "video_fps_auto": "false",
-                "inference_fps": 80,
+                "inference_fps": 180,
                 "camera_backend": "opencv",
                 "camera_source": "/dev/video2",
             })
-            self.assertEqual(updated["video_fps"], 120)
+            self.assertEqual(updated["video_fps"], 240)
             self.assertFalse(updated["video_fps_auto"])
-            self.assertEqual(updated["inference_fps"], 60)
+            self.assertEqual(updated["inference_fps"], 180)
             self.assertEqual(updated["camera_backend"], "opencv")
             self.assertEqual(updated["camera_source"], "/dev/video2")
             self.assertIn("camera_backend", restart_required)

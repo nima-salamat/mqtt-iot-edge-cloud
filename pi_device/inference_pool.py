@@ -176,29 +176,78 @@ class AdaptiveInferencePool:
         self.ready_workers: set[int] = set()
         self.last_error = ""
         self.started = False
+        self._restart_at = [0.0 for _ in range(self.worker_count)]
+        self._restart_delay = [1.0 for _ in range(self.worker_count)]
+
+    def _spawn_worker(self, worker_id: int) -> None:
+        process = self.context.Process(
+            target=_inference_worker,
+            name=f"yolo-ncnn-{worker_id}",
+            args=(
+                worker_id,
+                self.task_queues[worker_id],
+                self.result_queue,
+                self.model_dir,
+                self.confidence,
+                self.ncnn_threads,
+            ),
+            daemon=True,
+        )
+        process.start()
+        if worker_id < len(self.processes):
+            self.processes[worker_id] = process
+        else:
+            self.processes.append(process)
+
+    def _restart_dead_workers(self) -> None:
+        if not self.started:
+            return
+        now = time.monotonic()
+        for worker_id, process in enumerate(self.processes):
+            if process.is_alive() or now < self._restart_at[worker_id]:
+                continue
+
+            self.ready_workers.discard(worker_id)
+            self.scheduler.mark_failed(worker_id)
+            try:
+                process.join(timeout=0)
+            except Exception:
+                pass
+
+            # The old process may have died before consuming its one queued
+            # frame. Drop that stale task before reusing the bounded queue.
+            tasks = self.task_queues[worker_id]
+            while True:
+                try:
+                    tasks.get_nowait()
+                except queue.Empty:
+                    break
+                except (ValueError, OSError):
+                    break
+
+            delay = self._restart_delay[worker_id]
+            try:
+                self._spawn_worker(worker_id)
+                self._restart_at[worker_id] = now + delay
+                self._restart_delay[worker_id] = min(30.0, delay * 2.0)
+                log.warning(
+                    "YOLO worker %s exited; respawned with %.1fs restart backoff",
+                    worker_id, delay,
+                )
+            except Exception:
+                self._restart_at[worker_id] = now + delay
+                self.last_error = f"Could not restart YOLO worker {worker_id}"
+                log.exception("Could not respawn YOLO worker %s", worker_id)
 
     def start(self, timeout: float = 75.0) -> None:
         if self.started:
             return
         self.result_queue = self.context.Queue(maxsize=max(4, self.worker_count * 2))
+        self.task_queues = [
+            self.context.Queue(maxsize=1) for _ in range(self.worker_count)
+        ]
         for worker_id in range(self.worker_count):
-            tasks = self.context.Queue(maxsize=1)
-            process = self.context.Process(
-                target=_inference_worker,
-                name=f"yolo-ncnn-{worker_id}",
-                args=(
-                    worker_id,
-                    tasks,
-                    self.result_queue,
-                    self.model_dir,
-                    self.confidence,
-                    self.ncnn_threads,
-                ),
-                daemon=True,
-            )
-            process.start()
-            self.task_queues.append(tasks)
-            self.processes.append(process)
+            self._spawn_worker(worker_id)
 
         deadline = time.monotonic() + timeout
         while len(self.ready_workers) < self.worker_count:
@@ -235,6 +284,7 @@ class AdaptiveInferencePool:
     def submit(self, frame, frame_sequence: int, frame_timestamp: float, confidence: float) -> int | None:
         if not self.started:
             return None
+        self._restart_dead_workers()
         available = [
             index for index, process in enumerate(self.processes)
             if index in self.ready_workers
@@ -260,6 +310,7 @@ class AdaptiveInferencePool:
     def collect(self, timeout: float = 0.0) -> list[dict]:
         if not self.started or self.result_queue is None:
             return []
+        self._restart_dead_workers()
         results = []
         try:
             first = self.result_queue.get(timeout=max(0.0, timeout)) if timeout else self.result_queue.get_nowait()
@@ -276,8 +327,14 @@ class AdaptiveInferencePool:
         for message in messages:
             kind = message.get("kind")
             worker_id = int(message.get("worker_id", -1))
-            if kind == "ready":
+            if kind == "ready" and 0 <= worker_id < self.worker_count:
                 self.ready_workers.add(worker_id)
+                self._restart_at[worker_id] = 0.0
+                self._restart_delay[worker_id] = 1.0
+                continue
+            if kind == "init_error" and 0 <= worker_id < self.worker_count:
+                self.last_error = str(message.get("error", "worker initialization failed"))
+                log.error("YOLO worker %s initialization failed: %s", worker_id, self.last_error)
                 continue
             if kind != "result" or not 0 <= worker_id < self.worker_count:
                 continue
@@ -289,6 +346,7 @@ class AdaptiveInferencePool:
                 self.last_error = error
             results.append(message)
 
+        self._restart_dead_workers()
         return results
 
     def snapshot(self) -> dict:

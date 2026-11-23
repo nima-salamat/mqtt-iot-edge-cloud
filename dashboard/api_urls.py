@@ -3,6 +3,7 @@ from . import api, views
 
 urlpatterns = [
     path("dashboard/overview/", views.dashboard_overview, name="dashboard-overview"),
+    path("dashboard/alerts/", views.dashboard_alerts, name="dashboard-alerts"),
     path("pairings/", api.create_pairing, name="create-pairing"),
     path("pairings/<int:pairing_id>/", api.pairing_status, name="pairing-status"),
     path("device/pair/", api.pair_device, name="pair-device"),

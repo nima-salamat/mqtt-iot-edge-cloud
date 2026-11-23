@@ -5,7 +5,7 @@ A multi-user edge-AI security platform built around a Raspberry Pi 4 and a Raspb
 ## Capabilities
 
 - Raspberry Pi 4 camera capture through Picamera2 and the Pi's H.264 hardware encoder.
-- Local password-protected management page with camera preview, connectivity, edge-AI health, logs and storage settings.
+- Local password-protected management page with camera preview, connectivity, edge-AI health, recent alarm snapshots with detection details, logs, storage settings and per-queue controls for clearing only unsent uploads.
 - YOLOv5n NCNN person detection on the Raspberry Pi; inference is separate from video capture.
 - Alarm JPEG snapshots with drawn bounding boxes, confidence and normalized box coordinates.
 - Persistent offline outboxes for video segments, alarm evidence and device logs.

@@ -198,7 +198,7 @@ class CameraPipeline:
         try:
             config = picam2.create_video_configuration(
                 main={"size": (values["video_width"], values["video_height"]), "format": "YUV420"},
-                lores={"size": (640, 360), "format": "RGB888"},
+                lores={"size": (640, 360), "format": "YUV420"},
                 controls={"FrameDurationLimits": (
                     int(1_000_000 / values["video_fps"]),
                     int(1_000_000 / values["video_fps"]),
@@ -306,9 +306,24 @@ class CameraPipeline:
         preview_interval = 1.0 / 15.0
         while not self._stop.is_set():
             try:
-                frame = self.picam2.capture_array("lores")
-                if frame is None:
+                lores_yuv = self.picam2.capture_array("lores")
+                if lores_yuv is None:
                     continue
+
+                # Picamera2 requires the lores stream to use YUV420. Its
+                # capture_array representation is a packed I420 frame:
+                # height * 3/2 rows by width columns. Convert once to BGR so
+                # OpenCV preview, QR decoding, snapshots and YOLO share the
+                # same correctly formatted frame.
+                if lores_yuv.ndim == 3 and lores_yuv.shape[2] == 1:
+                    lores_yuv = lores_yuv.reshape((540, 640))
+                if lores_yuv.shape != (540, 640):
+                    raise RuntimeError(
+                        "Unexpected lores YUV420 frame shape: "
+                        f"{lores_yuv.shape}; expected (540, 640)"
+                    )
+                frame = cv2.cvtColor(lores_yuv, cv2.COLOR_YUV2BGR_I420)
+
                 now = time.monotonic()
                 self.camera_error = ""
 
@@ -321,8 +336,8 @@ class CameraPipeline:
                     if decoded and decoded.startswith("iot-alarm-pair:"):
                         self._complete_pairing(decoded.split(":", 1)[1].strip())
 
-                # RGB888 is byte-ordered B,G,R in Picamera2 capture arrays.
-                # Preserve BGR for OpenCV drawing, JPEG encoding and snapshots.
+                # frame is now BGR, as expected by OpenCV drawing,
+                # JPEG encoding, QR decoding and snapshot generation.
                 with self._frames_lock:
                     self._latest_bgr = frame.copy()
                     detections = list(self._last_detections)

@@ -40,11 +40,12 @@ def home(request):
 @require_POST
 def disconnect_device(request, device_id):
     device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
-    if not device.api_token_hash:
-        return JsonResponse({"status": "already_disconnected"})
+    was_paired = bool(device.api_token_hash)
+    # Revoke any orphaned stream grants as well, even if the device token
+    # had already been cleared by an earlier partial disconnect.
     revoke_device_access(device)
     return JsonResponse({
-        "status": "disconnected",
+        "status": "disconnected" if was_paired else "already_disconnected",
         "device_id": device.device_id,
     })
 

@@ -463,20 +463,30 @@ class CameraPipeline:
             else:
                 old_marker = self._current_marker
                 old_segment = self._current_segment
-                # Detach only the local MP4 writer at the next keyframe. The
-                # partial segment is discarded so pressing Stop creates no
-                # final video item in the upload queue. Camera, YOLO and RTSPS
-                # remain active and receive every subsequent frame.
-                self.local_output.switch_output(None)
-                if old_marker:
-                    old_marker.unlink(missing_ok=True)
-                if old_segment:
-                    old_segment.unlink(missing_ok=True)
+                # Pause the video uploader before waiting for the encoder's next
+                # keyframe. If switching fails, restore the prior upload state.
+                self.settings_store.update({"recording_enabled": False})
+                try:
+                    # Detach only the local MP4 writer. Camera, YOLO and RTSPS
+                    # remain active and receive every subsequent frame.
+                    self.local_output.switch_output(None)
+                except Exception:
+                    self.settings_store.update({"recording_enabled": True})
+                    raise
+
+                # The uploader uses this same lock. Delete the open partial file
+                # before removing its .open marker, so it can never race and
+                # upload a segment that the operator asked us to discard.
+                with self.uploader._queue_lock:
+                    if old_segment:
+                        old_segment.unlink(missing_ok=True)
+                    if old_marker:
+                        old_marker.unlink(missing_ok=True)
+
                 self._current_segment = None
                 self._current_marker = None
                 self.recording_enabled = False
-                self.settings_store.update({"recording_enabled": False})
-                log.info("Local recording paused; partial segment discarded; video uploader paused")
+                log.info("Local recording paused; partial segment discarded; video queue delivery paused")
 
         return {"recording_enabled": self.recording_enabled}
 

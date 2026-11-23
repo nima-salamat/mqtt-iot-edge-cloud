@@ -25,7 +25,7 @@ sudo apt-get update
 sudo apt-get install -y \
   python3 python3-venv python3-pip python3-dev \
   python3-picamera2 python3-av python3-opencv python3-numpy \
-  python3-libcamera python3-lgpio ffmpeg \
+  python3-libcamera python3-lgpio ffmpeg libzbar0 \
   libopenblas-dev libgomp1 rsync curl ca-certificates \
   cmake g++ git pybind11-dev protobuf-compiler libprotobuf-dev
 

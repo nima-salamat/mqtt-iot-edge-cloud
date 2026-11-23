@@ -85,6 +85,8 @@
 
         const time = document.createElement('small');
         time.textContent = timeLabel(alarm.detected_at);
+        const model = document.createElement('small');
+        model.textContent = 'مدل: ' + (alarm.model || 'yolov5n-ncnn');
         const status = document.createElement('span');
         status.className = 'alarm-upload-status ' + (
           alarm.published ? 'complete' : (alarm.uploaded ? 'partial' : 'pending')
@@ -109,7 +111,7 @@
           : 'مختصات محدوده تشخیص در دسترس نیست.';
         details.append(summary, detailText);
 
-        body.append(heading, time, status, details);
+        body.append(heading, time, model, status, details);
         card.append(link, body);
         gallery.append(card);
       }

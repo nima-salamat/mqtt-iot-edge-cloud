@@ -32,6 +32,9 @@ DEFAULTS: dict[str, Any] = {
     "video_width": 1280,
     "video_height": 720,
     "video_fps": _env_int("VIDEO_FPS", 30),
+    "video_fps_auto": os.getenv("VIDEO_FPS_AUTO", "1").strip().lower() in {"1", "true", "yes", "on"},
+    "camera_backend": os.getenv("CAMERA_BACKEND", "picamera2").strip().lower(),
+    "camera_source": os.getenv("CAMERA_SOURCE", "0").strip(),
     "video_bitrate": _video_bitrate_default(),
     "segment_seconds": _env_int("VIDEO_SEGMENT_SECONDS", 5),
     "inference_fps": _env_int("INFERENCE_FPS", 10),
@@ -48,11 +51,11 @@ DEFAULTS: dict[str, Any] = {
 }
 
 RANGES = {
-    "video_fps": (5, 30),
+    "video_fps": (1, 120),
     "video_bitrate": (500_000, 8_000_000),
     "segment_seconds": (2, 15),
-    "inference_fps": (1, 10),
-    "inference_workers": (1, 3),
+    "inference_fps": (1, 60),
+    "inference_workers": (1, 8),
     "alert_confidence": (0.10, 0.95),
     "alert_cooldown_seconds": (1, 300),
     "alert_clear_seconds": (1, 60),
@@ -69,11 +72,19 @@ def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
     for key, raw in value.items():
         if key not in DEFAULTS or key in {"video_width", "video_height"}:
             continue
-        if key == "recording_enabled":
+        if key in {"recording_enabled", "video_fps_auto"}:
             if isinstance(raw, bool):
                 result[key] = raw
             elif isinstance(raw, str) and raw.strip().lower() in {"true", "false", "1", "0"}:
                 result[key] = raw.strip().lower() in {"true", "1"}
+            continue
+        if key == "camera_backend":
+            backend = str(raw or "").strip().lower()
+            result[key] = backend if backend in {"picamera2", "opencv"} else DEFAULTS["camera_backend"]
+            continue
+        if key == "camera_source":
+            source = str(raw or "").strip().replace("\\x00", "")[:2048]
+            result[key] = source or "0"
             continue
         low, high = RANGES.get(key, (None, None))
         try:
@@ -130,7 +141,7 @@ class SettingsStore:
             old = dict(self._value)
             self._value = normalize_settings({**old, **changes})
             self._save_locked()
-            restart_keys = {"video_fps", "video_bitrate", "segment_seconds", "inference_workers"}
+            restart_keys = {"video_fps", "video_fps_auto", "video_bitrate", "segment_seconds", "inference_workers", "camera_backend", "camera_source"}
             restart_required = [
                 key for key in changes
                 if key in restart_keys and self._value[key] != old[key]

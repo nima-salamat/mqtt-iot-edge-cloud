@@ -247,8 +247,8 @@
       button.classList.toggle('is-recording', !!result.recording_enabled);
       button.classList.toggle('is-paused', !result.recording_enabled);
       text('recording-status', result.recording_enabled
-        ? 'ضبط محلی فعال است'
-        : 'ضبط محلی متوقف است؛ پخش زنده و تشخیص همچنان فعال‌اند.');
+        ? 'ضبط فعال شد؛ صف ویدئوهای قبلی هم برای ارسال از سر گرفته می‌شود.'
+        : 'ضبط و ارسال ویدئو متوقف شد؛ قطعه نیمه‌تمام حذف شد و صف قبلی حفظ شد. پخش زنده و YOLO فعال‌اند.');
       await refreshState();
     } catch (error) {
       text('recording-status', error.message);

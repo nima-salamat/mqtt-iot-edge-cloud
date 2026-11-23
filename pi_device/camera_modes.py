@@ -41,7 +41,11 @@ def select_sensor_mode(
     if auto:
         selected = max(
             compatible,
-            key=lambda item: (item[3], -item[1] * item[2]),
+            key=lambda item: (
+                item[3],
+                -item[1] * item[2],
+                2 if item[0].get("fourcc") in {"MJPG", "H264", "AVC1"} else 1,
+            ),
         )
         return selected[0], selected[3]
 
@@ -50,7 +54,14 @@ def select_sensor_mode(
     if supporting:
         selected = min(
             supporting,
-            key=lambda item: (item[1] * item[2], item[3]),
+            key=lambda item: (
+                item[1] * item[2],
+                -item[3],
+                -(
+                    2 if item[0].get("fourcc") in {"MJPG", "H264", "AVC1"}
+                    else 1
+                ),
+            ),
         )
         return selected[0], target
 
@@ -63,37 +74,46 @@ def select_sensor_mode(
 
 
 def parse_v4l2_modes(output: str) -> list[dict[str, Any]]:
-    """Parse discrete resolution/FPS entries from v4l2-ctl --list-formats-ext."""
-    found: dict[tuple[int, int], float] = {}
-    pattern = re.compile(
-        r"Size:\s*Discrete\s+(\d+)\s*x\s*(\d+)(.*?)(?=\n\s*(?:Size:|\[\d+\]:)|\Z)",
+    """Parse discrete formats, resolutions and FPS entries from v4l2-ctl."""
+    found: dict[tuple[tuple[int, int], str], float] = {}
+    format_pattern = re.compile(
+        r"^\s*\[\d+\]:\s*'([^']+)'[^\n]*\n(.*?)(?=^\s*\[\d+\]:|\Z)",
+        re.IGNORECASE | re.DOTALL | re.MULTILINE,
+    )
+    size_pattern = re.compile(
+        r"Size:\s*Discrete\s+(\d+)\s*x\s*(\d+)(.*?)(?=\n\s*Size:|\Z)",
         re.IGNORECASE | re.DOTALL,
     )
-    for match in pattern.finditer(str(output or "")):
-        try:
-            width, height = int(match.group(1)), int(match.group(2))
-        except (TypeError, ValueError):
-            continue
-        section = match.group(3)
-        rates = [
-            float(value)
-            for value in re.findall(
-                r"\(([0-9]+(?:\.[0-9]+)?)\s*fps\)",
-                section,
-                re.IGNORECASE,
-            )
-        ]
-        if not rates:
-            intervals = re.findall(
-                r"Interval:\s*Discrete\s+([0-9]+(?:\.[0-9]+)?)s",
-                section,
-                re.IGNORECASE,
-            )
-            rates = [1.0 / float(value) for value in intervals if float(value) > 0]
-        if width > 0 and height > 0 and rates:
-            size = (width, height)
-            found[size] = max(found.get(size, 0.0), max(rates))
+    for format_match in format_pattern.finditer(str(output or "")):
+        fourcc = format_match.group(1).strip().upper()
+        for match in size_pattern.finditer(format_match.group(2)):
+            try:
+                width, height = int(match.group(1)), int(match.group(2))
+            except (TypeError, ValueError):
+                continue
+            section = match.group(3)
+            rates = [
+                float(value)
+                for value in re.findall(
+                    r"\(([0-9]+(?:\.[0-9]+)?)\s*fps\)",
+                    section,
+                    re.IGNORECASE,
+                )
+            ]
+            if not rates:
+                intervals = re.findall(
+                    r"Interval:\s*Discrete\s+([0-9]+(?:\.[0-9]+)?)s",
+                    section,
+                    re.IGNORECASE,
+                )
+                rates = [1.0 / float(value) for value in intervals if float(value) > 0]
+            if width > 0 and height > 0 and rates:
+                key = ((width, height), fourcc)
+                found[key] = max(found.get(key, 0.0), max(rates))
     return [
-        {"size": size, "fps": fps, "source": "v4l2"}
-        for size, fps in sorted(found.items(), key=lambda item: (item[0][0] * item[0][1], item[1]))
+        {"size": size, "fps": fps, "fourcc": fourcc, "source": "v4l2"}
+        for ((size, fourcc), fps) in sorted(
+            found.items(),
+            key=lambda item: (item[0][0][0] * item[0][0][1], item[1], item[0][1]),
+        )
     ]

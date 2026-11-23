@@ -145,55 +145,114 @@ Unsent recordings are not removed by the normal local rolling-retention timer. T
 
 Changing the video FPS, bitrate or segment duration requires a service restart. AI FPS, confidence, cooldown and local retention settings are read dynamically.
 
-## VPS deployment
+## VPS deployment (Docker Compose + host Nginx)
+
+The recommended deployment for a VPS that already runs Nginx on the host is Docker Compose behind that Nginx. Nginx remains outside Docker and owns TCP 80/443. The application containers publish only loopback ports for Nginx; MediaMTX publishes RTSPS TCP 8322 and WebRTC ICE UDP 8189 directly.
 
 Requirements:
-- Linux VPS with Docker Engine and Docker Compose, or an existing Docker Swarm cluster.
-- DNS A record for the configured domain.
-- Existing Traefik or permission to use the bundled Caddy profile.
-- A valid TLS certificate for the MediaMTX RTSPS endpoint.
-- Public access to HTTPS TCP 443, RTSPS TCP 8322 and WebRTC ICE UDP 8189.
+- Linux VPS with Docker Engine and the Docker Compose plugin.
+- Nginx installed and running on the host.
+- DNS A record for `server.echonode.website` pointing to the VPS.
+- A valid host-managed TLS certificate and matching private key whose SAN covers the configured domain.
+- Public firewall access to TCP 80, 443, 8322 and UDP 8189.
 
-Prepare the environment file:
+### Clone and configure
 
+Run these commands on the VPS (the example assumes a first installation):
+
+    cd /opt
+    git clone https://github.com/nima-salamat/mqtt-iot-edge-cloud.git
+    cd /opt/mqtt-iot-edge-cloud
     cp .env.example .env
-
-Set all unique secrets in .env. Generate a URL-safe PostgreSQL password, for example:
-
-    openssl rand -hex 24
-
-Configure the domain, CSRF_TRUSTED_ORIGINS, Traefik network/entrypoints/certificate resolver, Streamlit operator login and the two MQTT identities.
-
-Install the MediaMTX certificate:
-- certs/fullchain.pem
-- certs/privkey.pem
-
-The private key must not be committed to Git.
-
-Deploy:
-
     chmod +x scripts/*.sh
+    nano .env
+
+Set unique values for `DJANGO_SECRET_KEY`, `PANEL_PASSWORD`, `MQTT_CAMERA_EDGE_PASSWORD` and `MQTT_SERVER_PASSWORD`. Generate secrets with:
+
+    openssl rand -hex 32
+    python3 -c 'import secrets; print(secrets.token_urlsafe(64))'
+
+Keep the configured domain consistent across `DOMAIN`, `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS` and `RTSPS_HOST`.
+
+### Database mode
+
+The sample `.env.example` selects `DATABASE_MODE=sqlite` so the platform can be tested without setting up PostgreSQL. In this mode:
+
+- SQLite is stored at `/app/data/db.sqlite3` in the persistent `sqlite_data` Docker volume.
+- The same volume is mounted into the API, Streamlit panel, MQTT listener and retention worker.
+- The SQLite Compose override disables the PostgreSQL service and removes the API's PostgreSQL dependency.
+
+SQLite is intended for a light, single-server evaluation only. It has more limited concurrent-write behavior than PostgreSQL and is not the recommended database for a production installation or multiple application replicas.
+
+For normal production use, set `DATABASE_MODE=postgres` and set a strong, URL-safe `POSTGRES_PASSWORD`. The regular Compose stack starts PostgreSQL, waits for its health check, and uses the PostgreSQL database volume.
+
+Do not delete Docker volumes when stopping the platform. In particular, `docker compose down -v` deletes the database, media and MQTT persistent data.
+
+### Reuse the host TLS certificate
+
+The host certificate is not copied into the repository and no certificate container is started.
+
+Set `HOST_CERT_DIR` to the host directory that contains the certificate and its key. Set `MEDIA_TLS_CERT` and `MEDIA_TLS_KEY` to their paths *inside* the container under `/host-certs/`.
+
+For a Certbot installation, the usual values are:
+
+    HOST_CERT_DIR=/etc/letsencrypt
+    MEDIA_TLS_CERT=/host-certs/live/server.echonode.website/fullchain.pem
+    MEDIA_TLS_KEY=/host-certs/live/server.echonode.website/privkey.pem
+
+For certificates stored elsewhere, mount their containing directory instead and change the two in-container paths. The deployment script checks that the certificate is readable, valid for `DOMAIN`, unexpired, and matches the private key.
+
+Mounting the whole certificate directory (rather than individual `live/` symlink files) keeps the Certbot `archive/` symlink targets available inside MediaMTX. MediaMTX may need a restart after certificate renewal to reload a renewed certificate.
+
+### Deploy the Docker Compose stack
+
+After editing `.env`, run:
+
     ./scripts/deploy_vps.sh
 
-Supported PROXY_MODE values:
-- traefik-swarm: deploys the Swarm stack to a manager node connected to an existing Traefik overlay network.
-- traefik-compose: starts Compose services with the Traefik Docker-provider overlay.
-- standalone: starts the bundled Caddy reverse proxy with the Compose standalone profile.
+With `PROXY_MODE=compose-nginx`, this validates the selected TLS certificate and key, checks the Compose configuration, creates the Mosquitto credential file, builds the application image, starts the selected database mode and waits for the Django health endpoint.
 
-The deployment builds the application image, creates persistent PostgreSQL/Mosquitto/media/static volumes, initializes MQTT password hashes, runs Django migrations and starts the API, operator panel, MQTT listener, retention worker and MediaMTX.
+The Compose files used are:
 
-Create the first administrator account.
+- `docker-compose.yml`: application services and internal network.
+- `docker-compose.nginx.yml`: loopback-only ports for host Nginx and host certificate mount for MediaMTX.
+- `docker-compose.sqlite.yml`: used only when `DATABASE_MODE=sqlite`.
 
-For Docker Compose:
+### Configure host Nginx
 
-    docker compose exec api python manage.py createsuperuser
+The Nginx virtual-host example is:
 
-For Docker Swarm, find the running API task and execute the command inside it:
+    deploy/nginx/server.echonode.website.conf
 
-    docker ps --filter label=com.docker.swarm.service.name=mqtt-iot_api
-    docker exec -it API_CONTAINER_ID python manage.py createsuperuser
+Review its `ssl_certificate` and `ssl_certificate_key` directives and change them to the exact certificate paths already used on the host. Then install and activate it:
+
+    sudo cp deploy/nginx/server.echonode.website.conf /etc/nginx/sites-available/mqtt-iot-edge-cloud
+    sudo ln -s /etc/nginx/sites-available/mqtt-iot-edge-cloud /etc/nginx/sites-enabled/mqtt-iot-edge-cloud
+    sudo nginx -t
+    sudo systemctl reload nginx
+
+Do not install a second active virtual host with the same `server_name`. Nginx proxies Django, Streamlit, MQTT WebSockets, WebRTC/WHEP and HLS to loopback ports. RTSPS TCP 8322 and WebRTC ICE UDP 8189 are published directly by MediaMTX and do not pass through the HTTP Nginx proxy.
+
+### Create the first administrator
+
+After the API is healthy:
+
+    docker compose -f docker-compose.yml -f docker-compose.nginx.yml -f docker-compose.sqlite.yml exec api python manage.py createsuperuser
+
+For PostgreSQL mode, omit the final `-f docker-compose.sqlite.yml` argument.
 
 Use Django Admin to create ordinary user accounts. Only staff/superuser accounts can open Django Admin. Normal users sign in to the IoT dashboard and can only access their own cameras, alarms, video and logs.
+
+### Operations
+
+For SQLite mode:
+
+    docker compose -f docker-compose.yml -f docker-compose.nginx.yml -f docker-compose.sqlite.yml ps
+    docker compose -f docker-compose.yml -f docker-compose.nginx.yml -f docker-compose.sqlite.yml logs -f api broker mediamtx listener retention
+
+For PostgreSQL mode, omit `-f docker-compose.sqlite.yml`.
+
+The app's backend services are not published on public interfaces. Do not expose the local Pi management port 8080 or the PostgreSQL and raw MQTT ports to the Internet.
 
 ## Web interfaces
 

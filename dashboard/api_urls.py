@@ -8,6 +8,7 @@ urlpatterns = [
     path("pairings/<int:pairing_id>/", api.pairing_status, name="pairing-status"),
     path("device/pair/", api.pair_device, name="pair-device"),
     path("device/heartbeat/", api.heartbeat, name="device-heartbeat"),
+    path("device/disconnect/", api.disconnect_device, name="device-disconnect"),
     path("device/alarms/", api.upload_alarm, name="device-upload-alarm"),
     path("device/segments/", api.upload_segment, name="device-upload-segment"),
     path("device/logs/", api.device_log, name="device-log"),

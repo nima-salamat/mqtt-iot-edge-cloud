@@ -154,7 +154,7 @@ class ReconnectingRtspOutput:
         )
         if not capture.isOpened():
             capture.release()
-            raise RuntimeError(f"OpenCV could not open camera source: {raw_source}")
+            raise RuntimeError("OpenCV could not open the selected camera source")
 
         try:
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -176,7 +176,7 @@ class ReconnectingRtspOutput:
         self._local_recording_attached = False
         self.camera_backend = "opencv"
         self.camera_source = raw_source
-        self.camera_model = f"OpenCV source {raw_source}"
+        self.camera_model = ("OpenCV network source" if "://" in raw_source else f"OpenCV device {raw_source}")
         reported_rate = float(capture.get(cv2.CAP_PROP_FPS) or 0)
         self.camera_max_fps = max(0.0, reported_rate)
         self.target_video_fps = (
@@ -189,7 +189,7 @@ class ReconnectingRtspOutput:
         for thread in self._threads:
             thread.start()
         self.bridge.publish_log("info", "Camera opened through OpenCV", {
-            "source": raw_source,
+            "source_type": "network" if "://" in raw_source else "local_device",
             "reported_fps": reported_rate,
             "media_output": "not_supported_by_opencv_backend",
         })
@@ -248,10 +248,19 @@ class ReconnectingRtspOutput:
                         "output_size": tuple(selected_mode["size"]),
                         "bit_depth": int(selected_mode["bit_depth"]),
                     }
-                self.camera_max_fps = max(
-                    (float(mode.get("fps", 0) or 0) for mode in sensor_modes),
-                    default=selected_fps,
-                )
+                compatible_rates = []
+                for mode in sensor_modes:
+                    try:
+                        mode_size = mode.get("size", ())
+                        if (
+                            len(mode_size) >= 2
+                            and int(mode_size[0]) >= int(values["video_width"])
+                            and int(mode_size[1]) >= int(values["video_height"])
+                        ):
+                            compatible_rates.append(float(mode.get("fps", 0) or 0))
+                    except (TypeError, ValueError):
+                        continue
+                self.camera_max_fps = max(compatible_rates, default=selected_fps)
                 self.target_video_fps = selected_fps
             except Exception:
                 log.exception("Could not inspect Picamera2 sensor modes; using configured FPS")

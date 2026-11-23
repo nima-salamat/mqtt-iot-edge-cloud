@@ -69,8 +69,25 @@
       <div class="pair-card">
         <span class="eyebrow">SECURE DEVICE PAIRING</span>
         <h3>اتصال به حساب کاربری</h3>
-        <p>در پنل وب، «افزودن دوربین» را بزن. سپس QR یک‌بارمصرف را مقابل همین دوربین قرار بده.</p>
+        <p>در پنل وب، «افزودن دوربین» را بزن. می‌توانی QR را با دوربین اسکن کنی یا متن کد زیر QR را کپی و اینجا وارد کنی.</p>
         <button id="scan-pairing" class="primary-btn" type="button">اسکن QR با دوربین</button>
+        <form id="manual-pairing-form" class="manual-pairing-form">
+          <label for="manual-pairing-code">یا ورود دستی کد اتصال</label>
+          <input
+            id="manual-pairing-code"
+            name="pairing_code"
+            type="text"
+            dir="ltr"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            maxlength="160"
+            placeholder="iot-alarm-pair:..."
+            aria-describedby="manual-pairing-help"
+          >
+          <small id="manual-pairing-help">کد کامل یا متن کامل iot-alarm-pair: را از داشبورد کپی کن. کد پس از ۲ دقیقه منقضی می‌شود.</small>
+          <button id="submit-manual-pairing" class="secondary-btn" type="submit">اتصال با کد دستی</button>
+        </form>
         <div id="pairing-state" class="pairing-state">وضعیت: دستگاه هنوز ثبت نشده است.</div>
       </div>
     </aside>

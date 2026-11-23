@@ -83,7 +83,7 @@ def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
             result[key] = backend if backend in {"picamera2", "opencv"} else DEFAULTS["camera_backend"]
             continue
         if key == "camera_source":
-            source = str(raw or "").strip().replace("\\x00", "")[:2048]
+            source = str(raw or "").strip().replace(chr(0), "")[:2048]
             result[key] = source or "0"
             continue
         low, high = RANGES.get(key, (None, None))

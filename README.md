@@ -209,12 +209,7 @@ Create the webroot and install the temporary HTTP-only Nginx site. This lets Cer
 
 Issue the certificate (replace the email address with an address you control):
 
-    sudo certbot certonly --webroot \\
-      -w /var/www/certbot \\
-      -d server.echonode.website \\
-      --cert-name server.echonode.website \\
-      --email YOUR_EMAIL_ADDRESS \\
-      --agree-tos --no-eff-email
+    sudo certbot certonly --webroot -w /var/www/certbot -d server.echonode.website --cert-name server.echonode.website --email YOUR_EMAIL_ADDRESS --agree-tos --no-eff-email
 
 Certbot stores the certificate and key at:
 

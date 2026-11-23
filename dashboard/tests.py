@@ -23,6 +23,46 @@ class PairingFlowTests(TestCase):
         self.assertEqual(pairing.owner, self.owner)
         self.assertTrue(pairing.is_valid)
 
+    def test_owner_can_repair_device_to_rotate_lost_device_token(self):
+        self.client.force_login(self.owner)
+        first_qr = self.client.post(reverse("create-pairing")).json()
+        first_code = first_qr["qr_payload"].split(":", 1)[1]
+        first = self.client.post(
+            reverse("pair-device"),
+            data=json.dumps({
+                "pairing_code": first_code,
+                "device_id": "cam-recover-token-01",
+                "name": "Recovery Camera",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201)
+        old_token = first.json()["api_token"]
+
+        second_qr = self.client.post(reverse("create-pairing")).json()
+        second_code = second_qr["qr_payload"].split(":", 1)[1]
+        second = self.client.post(
+            reverse("pair-device"),
+            data=json.dumps({
+                "pairing_code": second_code,
+                "device_id": "cam-recover-token-01",
+                "name": "Recovery Camera",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(second.status_code, 201)
+        new_token = second.json()["api_token"]
+        self.assertNotEqual(old_token, new_token)
+
+        heartbeat = self.client.post(
+            reverse("device-heartbeat"),
+            data=json.dumps({"video_fps": 30}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {old_token}",
+            HTTP_X_DEVICE_ID="cam-recover-token-01",
+        )
+        self.assertEqual(heartbeat.status_code, 401)
+
     def test_pairing_code_is_one_time_and_device_token_is_hashed(self):
         self.client.force_login(self.owner)
         qr_response = self.client.post(reverse("create-pairing"))

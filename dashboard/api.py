@@ -82,8 +82,9 @@ def pair_device(request):
     device = Device.objects.filter(device_id=device_id).first()
     if device and device.owner_id not in (None, pairing.owner_id):
         return JsonResponse({"error": "device_already_owned"}, status=409)
-    if device and device.api_token_hash:
-        return JsonResponse({"error": "device_already_paired"}, status=409)
+    # Re-pairing an already-owned device is intentionally allowed. It rotates
+    # the device token and recovers from a lost pairing response or replaced SD card.
+    # Devices owned by another account are rejected by the ownership check above.
     if device is None:
         device = Device(device_id=device_id, kind=Device.RASPBERRY_PI)
     api_token = secrets.token_urlsafe(48)

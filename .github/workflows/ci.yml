@@ -33,6 +33,7 @@ jobs:
           bash -n scripts/deploy_compose_nginx.sh
           bash -n scripts/deploy_vps.sh
           bash -n scripts/deploy_vps_swarm.sh
+          bash -n scripts/install_pi.sh
           bash -n scripts/create_mqtt_users.sh
           sh -n scripts/create_mqtt_users_swarm.sh
       - name: Validate Compose variants

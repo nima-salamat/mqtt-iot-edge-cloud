@@ -1,13 +1,17 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-if [ ! -f .env ]; then
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_DIR"
+
+if [[ ! -f .env ]]; then
   echo "Missing .env. Copy .env.example and set the secrets first." >&2
   exit 1
 fi
-set -a
-. ./.env
-set +a
+
+# Parse the Compose dotenv format safely; never execute .env as shell code.
+source ./scripts/load_compose_env.sh
+load_compose_env .env docker-compose.yml
 
 : "${MQTT_CAMERA_EDGE_USERNAME:?Set MQTT_CAMERA_EDGE_USERNAME}"
 : "${MQTT_CAMERA_EDGE_PASSWORD:?Set MQTT_CAMERA_EDGE_PASSWORD}"

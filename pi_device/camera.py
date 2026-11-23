@@ -268,6 +268,7 @@ class CameraPipeline:
         self._current_marker = None
         self._recording_lock = threading.RLock()
         self.recording_enabled = bool(settings_store.get().get("recording_enabled", True))
+        self._local_recording_attached = False
 
     def _pending_alarm_count(self):
         return sum(
@@ -390,12 +391,22 @@ class CameraPipeline:
             self._current_marker = None
             raise
 
-        self.picam2 = picam2
-        self.encoder = encoder
-        self.local_output = local_output
-        self.live_output = live_output
-        self._current_segment = segment
-        self._current_marker = marker
+        with self._recording_lock:
+            self.picam2 = picam2
+            self.encoder = encoder
+            self.local_output = local_output
+            self.live_output = live_output
+            self._current_segment = segment
+            self._current_marker = marker
+            self._local_recording_attached = bool(segment)
+            # Reconcile a recording request that arrived while Picamera2 was
+            # being opened and the encoder output was being initialized.
+            desired_recording = bool(
+                self.settings_store.get().get("recording_enabled", self.recording_enabled)
+            )
+            self.recording_enabled = desired_recording
+            self.set_recording_enabled(desired_recording)
+
         self.live_output.start()
 
         try:
@@ -444,9 +455,11 @@ class CameraPipeline:
 
         enabled = bool(enabled)
         with self._recording_lock:
-            if enabled == self.recording_enabled:
-                return {"recording_enabled": self.recording_enabled}
             if self.picam2 is None or self.local_output is None:
+                self.recording_enabled = enabled
+                self.settings_store.update({"recording_enabled": enabled})
+                return {"recording_enabled": enabled}
+            if enabled == self._local_recording_attached:
                 self.recording_enabled = enabled
                 self.settings_store.update({"recording_enabled": enabled})
                 return {"recording_enabled": enabled}
@@ -460,9 +473,14 @@ class CameraPipeline:
                     self.local_output.switch_output(output)
                 except Exception:
                     next_marker.unlink(missing_ok=True)
+                    self.recording_enabled = self._local_recording_attached
+                    self.settings_store.update({
+                        "recording_enabled": self._local_recording_attached
+                    })
                     raise
                 self._current_segment = next_path
                 self._current_marker = next_marker
+                self._local_recording_attached = True
                 self.recording_enabled = True
                 self.settings_store.update({"recording_enabled": True})
                 log.info("Local video recording resumed; RTSPS live output was not restarted")
@@ -477,11 +495,15 @@ class CameraPipeline:
                     # remain active and receive every subsequent frame.
                     self.local_output.switch_output(None)
                 except Exception:
-                    self.settings_store.update({"recording_enabled": True})
+                    self.recording_enabled = self._local_recording_attached
+                    self.settings_store.update({
+                        "recording_enabled": self._local_recording_attached
+                    })
                     raise
 
                 self._current_segment = None
                 self._current_marker = None
+                self._local_recording_attached = False
                 self.recording_enabled = False
 
                 # The uploader uses this same lock. Delete the open partial file

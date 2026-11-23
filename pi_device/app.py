@@ -5,13 +5,14 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 from waitress import serve
 
 from .bridge import RaspberryPiMqttBridge
@@ -134,7 +135,86 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         state["last_upload_error"] = uploader.last_upload_error
         state["uploaded_segments"] = uploader.uploaded_segments
         state["settings"] = settings_store.get()
+        state["queues"] = uploader.queue_snapshot()
         return jsonify(state)
+
+    @flask_app.get("/api/alarms/")
+    @authenticated
+    def local_alarms():
+        alarm_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot")) / "alarms"
+        items = []
+        for meta_path in sorted(
+            alarm_dir.glob("*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        ):
+            if not meta_path.is_file() or meta_path.is_symlink():
+                continue
+            if not re.fullmatch(r"[a-fA-F0-9]{32}", meta_path.stem):
+                continue
+            try:
+                payload = json.loads(meta_path.read_text(encoding="utf-8"))
+                image_path = alarm_dir / f"{meta_path.stem}.jpg"
+                if not image_path.is_file() or image_path.is_symlink():
+                    continue
+                boxes = payload.get("bbox", [])
+                if not isinstance(boxes, list):
+                    boxes = []
+                uploaded = meta_path.with_suffix(".uploaded").exists()
+                published = meta_path.with_suffix(".published").exists()
+                items.append({
+                    "alert_id": meta_path.stem,
+                    "event": str(payload.get("event", "person_detected")),
+                    "detected_at": payload.get("detected_at"),
+                    "confidence": payload.get("confidence"),
+                    "bbox_count": len(boxes),
+                    "bbox": boxes[:20],
+                    "model": str(payload.get("model", "yolov5n-ncnn")),
+                    "uploaded": uploaded,
+                    "published": published,
+                    "status": "published" if published else ("server_saved" if uploaded else "pending"),
+                    "image_url": url_for("local_alarm_image", alert_id=meta_path.stem),
+                })
+                if len(items) >= 12:
+                    break
+            except (OSError, ValueError, TypeError):
+                log.exception("Could not read local alarm metadata %s", meta_path.name)
+        return jsonify({"alarms": items})
+
+    @flask_app.get("/alarms/<alert_id>.jpg")
+    @authenticated
+    def local_alarm_image(alert_id):
+        if not re.fullmatch(r"[a-fA-F0-9]{32}", alert_id):
+            abort(404)
+        alarm_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot")) / "alarms"
+        meta_path = alarm_dir / f"{alert_id}.json"
+        image_path = alarm_dir / f"{alert_id}.jpg"
+        if (
+            not meta_path.is_file() or meta_path.is_symlink()
+            or not image_path.is_file() or image_path.is_symlink()
+        ):
+            abort(404)
+        return send_file(
+            image_path,
+            mimetype="image/jpeg",
+            conditional=True,
+            max_age=0,
+        )
+
+    @flask_app.post("/api/queue/clear/")
+    @authenticated
+    def clear_queue():
+        if not csrf_valid():
+            return jsonify({"error": "درخواست معتبر نیست؛ صفحه را دوباره بارگذاری کن."}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "نوع صف مشخص نشده است."}), 400
+        queue_name = str(payload.get("queue", ""))
+        try:
+            result = uploader.clear_pending_queue(queue_name)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"status": "cleared", **result})
 
     @flask_app.get("/preview.mjpg")
     @authenticated

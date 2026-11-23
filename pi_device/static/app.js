@@ -235,7 +235,7 @@
       const dot = document.createElement('i');
       status.replaceChildren(dot, document.createTextNode(cameraOnline ? ' دوربین آماده' : ' دوربین آماده نیست'));
       text('video-fps', Number(state.video_fps || 0).toFixed(1) + ' FPS');
-      text('video-fps-target', 'مقدار ذخیره‌شده: ' +
+      text('video-fps-target', (state.video_fps_auto ? 'انتخاب خودکار سنسور · ' : 'هدف دستی · ') +
         Number(state.target_video_fps || state.settings?.video_fps || 30).toLocaleString('fa-IR') + ' FPS');
       text('inference-fps', Number(state.inference_fps || 0).toFixed(1) + ' FPS');
       const pool = state.inference_pool || {};
@@ -268,16 +268,35 @@
       const recordingButton = $('toggle-recording');
       const recordingStatus = $('recording-status');
       if (recordingButton && !recordingButton.dataset.busy) {
-        recordingButton.textContent = recordingEnabled ? 'توقف ضبط' : 'شروع ضبط';
+        recordingButton.disabled = state.recording_supported === false;
+        recordingButton.title = state.recording_supported === false
+          ? 'ضبط محلی فعلاً فقط با Picamera2 پشتیبانی می‌شود'
+          : '';
+        recordingButton.textContent = state.recording_supported === false
+          ? 'ضبط نیازمند Picamera2'
+          : (recordingEnabled ? 'توقف ضبط' : 'شروع ضبط');
         recordingButton.setAttribute('aria-pressed', String(recordingEnabled));
         recordingButton.classList.toggle('is-recording', recordingEnabled);
         recordingButton.classList.toggle('is-paused', !recordingEnabled);
       }
       if (recordingStatus && !recordingButton?.dataset.busy) {
-        recordingStatus.textContent = recordingEnabled ? 'ضبط محلی فعال است' : 'ضبط محلی متوقف است';
+        recordingStatus.textContent = state.recording_supported === false
+          ? 'این منبع فقط برای پیش‌نمایش و YOLO فعال است؛ ضبط/RTSPS هنوز پشتیبانی نمی‌شود.'
+          : (recordingEnabled ? 'ضبط محلی فعال است' : 'ضبط محلی متوقف است');
       }
-      text('rtsp-status', boolLabel(state.rtsp_connected));
-      text('rtsp-health', boolLabel(state.rtsp_connected));
+      text('camera-source-status', (state.camera_model || state.camera_backend || '—') +
+        (state.camera_source ? ' · ' + state.camera_source : ''));
+      text('camera-resolution-status', state.camera_resolution || '—');
+      text('camera-max-fps', Number(state.camera_max_fps || 0) > 0
+        ? Number(state.camera_max_fps).toFixed(1) + ' FPS'
+        : 'در حال اندازه‌گیری');
+      const picameraBackend = state.camera_backend !== 'opencv';
+      text('rtsp-status', state.live_publish_supported ? boolLabel(state.rtsp_connected) : 'نیازمند Picamera2');
+      text('rtsp-health', state.live_publish_supported ? boolLabel(state.rtsp_connected) : 'نیازمند Picamera2');
+      const capabilityNote = $('camera-capability-note');
+      if (capabilityNote) capabilityNote.textContent = picameraBackend
+        ? 'پیش‌نمایش با وضوح اصلی سنسور و کیفیت JPEG بالا ساخته می‌شود؛ YOLO از جریان کم‌وضوح مجزا استفاده می‌کند. ضبط محلی و RTSPS سخت‌افزاری فعال‌اند.'
+        : 'OpenCV: پیش‌نمایش با وضوح واقعی منبع و تشخیص YOLO فعال است؛ ضبط MP4 و ارسال RTSPS سخت‌افزاری در این backend هنوز در دسترس نیست و برای آن Picamera2 را انتخاب کن.';
       text('mqtt-status', boolLabel(mqtt.mqtt_connected));
       text('heartbeat-status', state.last_heartbeat_at ? 'فعال' : 'در انتظار');
       text('last-heartbeat', 'آخرین Heartbeat: ' + timeLabel(state.last_heartbeat_at));
@@ -446,6 +465,16 @@
     );
   }
 
+  const autoFpsSelect = settingsForm.elements.namedItem('video_fps_auto');
+  const manualFpsInput = settingsForm.elements.namedItem('video_fps');
+  function updateVideoFpsControls() {
+    if (!autoFpsSelect || !manualFpsInput) return;
+    manualFpsInput.disabled = autoFpsSelect.value === 'true';
+    manualFpsInput.setAttribute('aria-disabled', String(manualFpsInput.disabled));
+  }
+  autoFpsSelect?.addEventListener('change', updateVideoFpsControls);
+  updateVideoFpsControls();
+
   function updateConfidenceOutput() {
     if (confidenceInput && confidenceOutput) {
       confidenceOutput.textContent = Math.round(Number(confidenceInput.value) * 100).toLocaleString('fa-IR') + '٪';
@@ -476,7 +505,36 @@
     updateSettingsDirty();
   });
   updateConfidenceOutput();
+  updateVideoFpsControls();
   updateSettingsDirty();
+
+  async function discoverCameras() {
+    const button = $('camera-discover');
+    const datalist = $('camera-sources');
+    if (!datalist) return;
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch('/api/cameras/', {cache: 'no-store'});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'جست‌وجوی دوربین‌ها ناموفق بود.');
+      datalist.replaceChildren();
+      for (const camera of (result.cameras || [])) {
+        const option = document.createElement('option');
+        option.value = camera.source;
+        option.label = camera.label || camera.source;
+        datalist.append(option);
+      }
+      text('settings-result', (result.cameras || []).length
+        ? (result.cameras.length.toLocaleString('fa-IR') + ' منبع دوربین پیدا شد.')
+        : 'دوربینی پیدا نشد؛ می‌توانی شماره یا مسیر منبع را دستی وارد کنی.');
+    } catch (error) {
+      text('settings-result', error.message);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+  $('camera-discover')?.addEventListener('click', discoverCameras);
+  discoverCameras();
 
   settingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -484,9 +542,15 @@
     const data = Object.fromEntries(new FormData(settingsForm).entries());
     for (const key of Object.keys(data)) {
       const input = settingsForm.elements.namedItem(key);
-      data[key] = input.type === 'range' || input.step === '0.01'
-        ? Number(data[key])
-        : Number.parseInt(data[key], 10);
+      if (key === 'video_fps_auto') {
+        data[key] = data[key] === 'true';
+      } else if (key === 'camera_backend' || key === 'camera_source') {
+        data[key] = String(data[key] || '').trim();
+      } else {
+        data[key] = input.type === 'range' || input.step === '0.01'
+          ? Number(data[key])
+          : Number.parseInt(data[key], 10);
+      }
     }
 
     savingSettings = true;
@@ -507,12 +571,16 @@
       }
       savedSettings = captureSettings();
       updateConfidenceOutput();
+      updateVideoFpsControls();
 
       const restartLabels = {
         video_fps: 'نرخ فریم ویدئو',
         video_bitrate: 'بیت‌ریت ویدئو',
         segment_seconds: 'مدت قطعه ویدئو',
-        inference_workers: 'تعداد پردازه‌های YOLO'
+        inference_workers: 'تعداد پردازه‌های YOLO',
+        video_fps_auto: 'حالت انتخاب نرخ فریم',
+        camera_backend: 'نوع دوربین',
+        camera_source: 'منبع دوربین'
       };
       const restartItems = (result.restart_required || []).map(key => restartLabels[key] || key);
       if (restartItems.length) {

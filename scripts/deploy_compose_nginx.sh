@@ -13,6 +13,7 @@ fail() {
 command -v docker >/dev/null 2>&1 || fail "Docker is not installed."
 docker compose version >/dev/null 2>&1 || fail "Docker Compose plugin is not available."
 command -v openssl >/dev/null 2>&1 || fail "openssl is required for certificate checks."
+command -v curl >/dev/null 2>&1 || fail "curl is required for the API health check."
 
 set -a
 # shellcheck disable=SC1091

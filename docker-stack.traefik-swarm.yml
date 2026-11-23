@@ -9,10 +9,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes: [postgres_data:/var/lib/postgresql/data]
     networks: [iot-internal]
+    healthcheck:
       test:
         - CMD-SHELL
         - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
-      test: ["CMD-SHELL", "pg_isready -U \\"${POSTGRES_USER:-iotlab}\\" -d \\"${POSTGRES_DB:-iotlab}\\""]
       interval: 10s
       timeout: 5s
       retries: 10

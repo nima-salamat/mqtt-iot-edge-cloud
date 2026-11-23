@@ -77,6 +77,9 @@ class AdaptiveWorkerScheduler:
             "busy_workers": sum(worker.busy for worker in self.workers),
             "worker_latency_ms": [round(value * 1000.0, 1) for value in latencies],
             "average_latency_ms": round(sum(latencies) * 1000.0 / len(latencies), 1),
+            # Independent workers run concurrently, so their measured service
+            # rates add to the current pool capacity estimate.
+            "estimated_capacity_fps": round(sum(1.0 / value for value in latencies), 2),
         }
 
 

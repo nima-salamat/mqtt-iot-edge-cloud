@@ -1,19 +1,22 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-if [ ! -f .env ]; then
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_DIR"
+
+if [[ ! -f .env ]]; then
   echo "Copy .env.example to .env and set the secrets first." >&2
   exit 1
 fi
 
-set -a
-. ./.env
-set +a
+# Parse .env with Docker Compose instead of sourcing it as shell code.
+source ./scripts/load_compose_env.sh
+load_compose_env .env docker-compose.yml
 PROXY_MODE="${PROXY_MODE:-traefik-swarm}"
 
 # The host-Nginx Compose path uses host certificate paths, so it does not
 # require the legacy ./certs/fullchain.pem and ./certs/privkey.pem files.
-if [ "$PROXY_MODE" = "compose-nginx" ]; then
+if [[ "$PROXY_MODE" == "compose-nginx" ]]; then
   exec bash ./scripts/deploy_compose_nginx.sh
 fi
 

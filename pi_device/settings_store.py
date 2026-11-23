@@ -51,10 +51,8 @@ DEFAULTS: dict[str, Any] = {
 }
 
 RANGES = {
-    "video_fps": (1, 120),
     "video_bitrate": (500_000, 8_000_000),
     "segment_seconds": (2, 15),
-    "inference_fps": (1, 60),
     "inference_workers": (1, 8),
     "alert_confidence": (0.10, 0.95),
     "alert_cooldown_seconds": (1, 300),
@@ -91,7 +89,9 @@ def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
             number = float(raw) if key == "alert_confidence" else int(raw)
         except (TypeError, ValueError):
             continue
-        if low is not None:
+        if key in {"video_fps", "inference_fps"}:
+            number = max(1, number)
+        elif low is not None:
             number = max(low, min(high, number))
         result[key] = round(number, 3) if key == "alert_confidence" else int(number)
     return result

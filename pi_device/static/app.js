@@ -472,7 +472,10 @@
     manualFpsInput.disabled = autoFpsSelect.value === 'true';
     manualFpsInput.setAttribute('aria-disabled', String(manualFpsInput.disabled));
   }
-  autoFpsSelect?.addEventListener('change', updateVideoFpsControls);
+  autoFpsSelect?.addEventListener('change', () => {
+    updateVideoFpsControls();
+    updateSettingsDirty();
+  });
   updateVideoFpsControls();
 
   function updateConfidenceOutput() {

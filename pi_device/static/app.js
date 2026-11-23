@@ -9,6 +9,118 @@
     return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('fa-IR');
   };
 
+  const formatBytes = (value) => {
+    const bytes = Math.max(0, Number(value) || 0);
+    if (bytes < 1024) return bytes.toLocaleString('fa-IR') + ' بایت';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
+    let unit = -1;
+    do { size /= 1024; unit += 1; } while (size >= 1024 && unit < units.length - 1);
+    return size.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + ' ' + units[unit];
+  };
+
+  function refreshQueueCards(queues = {}) {
+    for (const name of ['videos', 'alarms', 'logs']) {
+      const queue = queues[name] || {};
+      text('queue-' + name + '-count', Number(queue.count || 0).toLocaleString('fa-IR'));
+      text('queue-' + name + '-size', formatBytes(queue.bytes));
+      const button = document.querySelector('[data-clear-queue="' + name + '"]');
+      if (button) button.disabled = Number(queue.count || 0) === 0;
+    }
+  }
+
+  async function refreshAlarms() {
+    const gallery = $('alarm-gallery');
+    if (!gallery) return;
+    try {
+      const response = await fetch('/api/alarms/', {cache: 'no-store'});
+      if (!response.ok) throw new Error('دریافت تصاویر تشخیص ناموفق بود.');
+      const data = await response.json();
+      const alarms = Array.isArray(data.alarms) ? data.alarms : [];
+      text('alarm-gallery-count', alarms.length.toLocaleString('fa-IR') + ' تصویر');
+      gallery.replaceChildren();
+
+      if (!alarms.length) {
+        const empty = document.createElement('div');
+        empty.className = 'gallery-empty';
+        empty.textContent = 'هنوز تصویری از تشخیص انسان ثبت نشده است.';
+        gallery.append(empty);
+        return;
+      }
+
+      for (const alarm of alarms) {
+        const card = document.createElement('article');
+        card.className = 'alarm-thumb-card';
+
+        const link = document.createElement('a');
+        link.className = 'alarm-thumb-link';
+        link.href = alarm.image_url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        const image = document.createElement('img');
+        image.src = alarm.image_url;
+        image.alt = 'تصویر ثبت‌شده از تشخیص انسان';
+        image.loading = 'lazy';
+        image.onerror = () => {
+          image.remove();
+          const missing = document.createElement('span');
+          missing.className = 'alarm-image-missing';
+          missing.textContent = 'تصویر محلی موجود نیست';
+          link.append(missing);
+        };
+        link.append(image);
+
+        const body = document.createElement('div');
+        body.className = 'alarm-thumb-body';
+        const heading = document.createElement('div');
+        heading.className = 'alarm-thumb-heading';
+        const title = document.createElement('b');
+        title.textContent = 'تشخیص انسان';
+        const confidence = document.createElement('span');
+        const score = Number(alarm.confidence);
+        confidence.textContent = Number.isFinite(score)
+          ? (score * 100).toLocaleString('fa-IR', {maximumFractionDigits: 1}) + '٪'
+          : '—';
+        heading.append(title, confidence);
+
+        const time = document.createElement('small');
+        time.textContent = timeLabel(alarm.detected_at);
+        const status = document.createElement('span');
+        status.className = 'alarm-upload-status ' + (
+          alarm.published ? 'complete' : (alarm.uploaded ? 'partial' : 'pending')
+        );
+        status.textContent = alarm.published
+          ? 'تصویر و اعلان ارسال شده'
+          : (alarm.uploaded ? 'تصویر ذخیره شده؛ اعلان در صف' : 'در انتظار ارسال');
+
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = 'جزئیات تشخیص (' + Number(alarm.bbox_count || 0).toLocaleString('fa-IR') + ')';
+        const detailText = document.createElement('p');
+        detailText.className = 'alarm-box-details';
+        const boxes = Array.isArray(alarm.bbox) ? alarm.bbox : [];
+        detailText.textContent = boxes.length
+          ? boxes.map((box, index) => {
+              const coords = ['x1', 'y1', 'x2', 'y2'].map(key =>
+                (Number(box[key] || 0) * 100).toFixed(1) + '%'
+              ).join(' · ');
+              return 'مورد ' + (index + 1) + ': ' + coords;
+            }).join(' | ')
+          : 'مختصات محدوده تشخیص در دسترس نیست.';
+        details.append(summary, detailText);
+
+        body.append(heading, time, status, details);
+        card.append(link, body);
+        gallery.append(card);
+      }
+    } catch (error) {
+      const message = document.createElement('div');
+      message.className = 'gallery-empty';
+      message.textContent = error.message;
+      gallery.replaceChildren(message);
+    }
+  }
+
   async function refreshState() {
     try {
       const response = await fetch('/api/state/', {cache: 'no-store'});
@@ -45,6 +157,7 @@
       ));
       text('device-pair-status', pairingStatus);
       text('uploaded-segments', state.uploaded_segments ?? 0);
+      refreshQueueCards(state.queues || {});
       text('model-error', state.model_error || state.camera_error || '—');
       text('upload-error', state.last_upload_error || '—');
       text('preview-status', state.preview_ready ? 'تصویر زنده در دسترس است' : 'در انتظار فریم دوربین');
@@ -140,6 +253,46 @@
     }
   });
 
+  document.querySelectorAll('[data-clear-queue]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const queue = button.dataset.clearQueue;
+      const labels = {
+        videos: 'همه قطعه‌های ویدئویی که هنوز آپلود نشده‌اند',
+        alarms: 'هشدارها و تصاویرشان که اعلان نهایی آن‌ها هنوز ارسال نشده است',
+        logs: 'لاگ‌هایی که هنوز به سرور ارسال نشده‌اند'
+      };
+      if (!labels[queue]) return;
+      const approved = window.confirm(
+        'پاک‌سازی غیرقابل‌بازگشت است.\n' + labels[queue] +
+        ' از حافظه Raspberry Pi حذف می‌شوند.\nادامه می‌دهی؟'
+      );
+      if (!approved) return;
+
+      button.disabled = true;
+      text('queue-action-status', 'در حال پاک‌سازی صف…');
+      try {
+        const response = await fetch('/api/queue/clear/', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+          body: JSON.stringify({queue})
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'پاک‌سازی صف ناموفق بود.');
+        const count = Number(result.removed_count || 0).toLocaleString('fa-IR');
+        text('queue-action-status', count + ' مورد حذف شد؛ حجم آزادشده: ' + formatBytes(result.removed_bytes));
+        refreshQueueCards(result.remaining || {});
+        if (queue === 'alarms') refreshAlarms();
+      } catch (error) {
+        text('queue-action-status', error.message);
+      } finally {
+        button.disabled = false;
+        refreshState();
+      }
+    });
+  });
+
   refreshState();
+  refreshAlarms();
   window.setInterval(refreshState, 3000);
+  window.setInterval(refreshAlarms, 5000);
 })();

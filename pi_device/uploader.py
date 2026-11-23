@@ -44,6 +44,7 @@ class DurableUploader:
         self.last_heartbeat_at = ""
         self.uploaded_segments = 0
         self._last_heartbeat_monotonic = 0.0
+        self.credentials_revoked = False
 
     def start(self):
         self._thread = threading.Thread(target=self._run, name="durable-uploader", daemon=True)
@@ -60,6 +61,94 @@ class DurableUploader:
 
     def _headers(self):
         return {"Authorization": f"Bearer {self._token()}", "X-Device-ID": self.device_id}
+
+    def clear_local_credentials(self):
+        """Forget revoked pairing credentials without deleting local recordings."""
+        path = Path(os.getenv("DEVICE_CREDENTIALS_PATH", "/var/lib/mqttiot/device.json"))
+        try:
+            if path.is_file() and not path.is_symlink():
+                path.unlink()
+            path.with_suffix(".tmp").unlink(missing_ok=True)
+        except OSError:
+            log.exception("Could not remove revoked device credentials")
+            raise
+        self.state_provider = lambda: {}
+        self.credentials_revoked = True
+        self.last_heartbeat_at = ""
+        self._last_heartbeat_monotonic = 0.0
+
+    def _check_response(self, response):
+        if response.status_code in {401, 403}:
+            self.clear_local_credentials()
+            raise requests.HTTPError(
+                "The server revoked this camera pairing; local credentials were cleared.",
+                response=response,
+            )
+        self._check_response(response)
+
+    def disconnect_from_server(self):
+        """Revoke server access first, then clear the local saved API token."""
+        token = self._token()
+        if not token:
+            self.clear_local_credentials()
+            return {"status": "already_disconnected"}
+        response = self._session.post(
+            f"{self.api_base}/api/device/disconnect/",
+            headers=self._headers(),
+            json={},
+            timeout=(5, 20),
+        )
+        if response.status_code not in {200, 204}:
+            self._check_response(response)
+            raise RuntimeError(f"Device disconnect returned HTTP {response.status_code}")
+        self.clear_local_credentials()
+        return {"status": "disconnected", "device_id": self.device_id}
+
+    def delete_alarm(self, alert_id):
+        """Delete one local detection and all local delivery markers."""
+        if not re.fullmatch(r"[a-fA-F0-9]{32}", str(alert_id or "")):
+            raise ValueError("شناسه تشخیص معتبر نیست.")
+        with self._queue_lock:
+            paths = [
+                self.alarm_dir / f"{alert_id}.json",
+                self.alarm_dir / f"{alert_id}.jpg",
+                self.alarm_dir / f"{alert_id}.uploaded",
+                self.alarm_dir / f"{alert_id}.published",
+            ]
+            removed_bytes = 0
+            removed_any = False
+            for path in paths:
+                if path.is_symlink():
+                    continue
+                if not path.is_file():
+                    continue
+                removed_bytes += self._file_size(path)
+                path.unlink(missing_ok=True)
+                removed_any = True
+            return {
+                "removed_count": 1 if removed_any else 0,
+                "removed_bytes": removed_bytes,
+            }
+
+    def clear_all_local_alarms(self):
+        """Delete every local detection, including items already synced to the server."""
+        removed_count = 0
+        removed_bytes = 0
+        with self._queue_lock:
+            for meta_path in self.alarm_dir.glob("*.json"):
+                alert_id = meta_path.stem
+                if not re.fullmatch(r"[a-fA-F0-9]{32}", alert_id):
+                    continue
+                if not meta_path.is_file() or meta_path.is_symlink():
+                    continue
+                result = self.delete_alarm(alert_id)
+                removed_count += result["removed_count"]
+                removed_bytes += result["removed_bytes"]
+        return {
+            "removed_count": removed_count,
+            "removed_bytes": removed_bytes,
+            "remaining": self.queue_snapshot(),
+        }
 
     def _sorted_queue_files(self, folder: Path, pattern: str):
         # Snapshot mtimes under the same lock used by queue clearing and cleanup.
@@ -98,7 +187,7 @@ class DurableUploader:
                 self._upload_logs,
                 self._upload_segments,
             ):
-                if self._stop.is_set():
+                if self._stop.is_set() or not self._token():
                     break
                 try:
                     task()

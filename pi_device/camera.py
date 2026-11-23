@@ -196,6 +196,12 @@ class ReconnectingRtspOutput:
         )
         try:
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            selected_fourcc = str(selected_mode.get("fourcc", "")) if selected_mode else ""
+            if len(selected_fourcc) == 4:
+                capture.set(
+                    cv2.CAP_PROP_FOURCC,
+                    cv2.VideoWriter_fourcc(*selected_fourcc),
+                )
             selected_size = (
                 tuple(selected_mode["size"])
                 if selected_mode

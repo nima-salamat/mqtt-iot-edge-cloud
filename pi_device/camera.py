@@ -381,6 +381,10 @@ class CameraPipeline:
                 if self._pair_requested_until and now >= self._pair_requested_until:
                     self._pair_requested_until = 0.0
                     self._pair_status = "expired"
+                    log.warning(
+                        "Pairing QR scan expired without decoding a supported QR code; "
+                        "use manual code entry or try again with the QR closer to the camera"
+                    )
                 if self._pair_requested_until > now and now - last_qr_scan >= 0.35:
                     last_qr_scan = now
                     pairing_code = self._decode_pairing_qr(qr_detector, frame)
@@ -554,6 +558,7 @@ class CameraPipeline:
                 return {"status": "submitting", "expires_in": 0}
             self._pair_requested_until = time.monotonic() + 120
             self._pair_status = "scanning"
+        log.info("Pairing QR scan started; waiting up to 120 seconds for a supported code")
         return {"status": "scanning", "expires_in": 120}
 
     def submit_manual_pairing_code(self, value):

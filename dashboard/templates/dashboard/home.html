@@ -53,7 +53,9 @@
 <div class="modal" id="pair-modal" aria-hidden="true"><div class="modal-panel">
   <button class="modal-close" id="close-modal">×</button><span class="eyebrow">SECURE DEVICE PAIRING</span><h2>ثبت Raspberry Pi Camera</h2>
   <p class="muted">این QR فقط یک‌بار قابل استفاده است و پس از دو دقیقه منقضی می‌شود. آن را فقط مقابل دوربین دستگاه خودت بگیر.</p>
-  <div class="qr-wrap"><img id="pair-qr-image" alt="کد اتصال یک‌بارمصرف"></div><code id="pair-code" class="pair-code"></code><p id="pair-expiry" class="muted"></p>
+  <div class="qr-wrap"><img id="pair-qr-image" alt="کد اتصال یک‌بارمصرف"></div>
+  <div class="pair-code-tools"><code id="pair-code" class="pair-code"></code><button class="btn secondary" id="copy-pair-code" type="button">کپی کد برای ورود دستی</button></div>
+  <p id="pair-copy-status" class="muted" aria-live="polite"></p><p id="pair-expiry" class="muted"></p>
 </div></div>
 {% endblock %}
 {% block scripts %}
@@ -64,6 +66,26 @@ const csrf=document.querySelector('input[name=csrfmiddlewaretoken]').value;
 function closeModal(){modal.classList.remove('open');modal.setAttribute('aria-hidden','true');}
 document.getElementById('close-modal').addEventListener('click',closeModal);
 modal.addEventListener('click',e=>{if(e.target===modal)closeModal();});
+document.getElementById('copy-pair-code').addEventListener('click',async()=>{
+  const value=document.getElementById('pair-code').textContent.trim();
+  const status=document.getElementById('pair-copy-status');
+  if(!value){status.textContent='ابتدا یک کد اتصال بساز.';return;}
+  try{
+    if(navigator.clipboard?.writeText){
+      await navigator.clipboard.writeText(value);
+    }else{
+      const helper=document.createElement('textarea');
+      helper.value=value;helper.setAttribute('readonly','');
+      helper.style.position='fixed';helper.style.opacity='0';
+      document.body.appendChild(helper);helper.select();
+      const copied=document.execCommand('copy');helper.remove();
+      if(!copied)throw new Error('clipboard unavailable');
+    }
+    status.textContent='کد اتصال کپی شد؛ آن را در پنل محلی Raspberry Pi وارد کن.';
+  }catch(error){
+    status.textContent='کپی خودکار در دسترس نیست؛ متن کد را انتخاب و دستی کپی کن.';
+  }
+});
 let pairingTimer=null;
 function closeModal(){
   modal.classList.remove('open');

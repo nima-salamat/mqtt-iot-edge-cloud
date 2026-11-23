@@ -4,11 +4,16 @@ set -Eeuo pipefail
 DOMAIN="server.echonode.website"
 PROJECT_DIR="${PROJECT_DIR:-/opt/mqtt-iot-edge-cloud}"
 
-# Certbot sets RENEWED_DOMAINS for deploy hooks. Ignore other certificates.
-case " ${RENEWED_DOMAINS:-} " in
-  *" ${DOMAIN} "*) ;;
-  *) exit 0 ;;
-esac
+# Prefer the renewed certificate's SAN so this also works with older Certbot
+# releases that don't export RENEWED_DOMAINS to deploy hooks.
+RENEWED_CERT="${RENEWED_LINEAGE:-/etc/letsencrypt/live/$DOMAIN}/fullchain.pem"
+if [[ -r "$RENEWED_CERT" ]]; then
+  if ! openssl x509 -in "$RENEWED_CERT" -noout -checkhost "$DOMAIN" >/dev/null 2>&1; then
+    exit 0
+  fi
+elif [[ " ${RENEWED_DOMAINS:-} " != *" ${DOMAIN} "* ]]; then
+  exit 0
+fi
 
 if [[ ! -d "$PROJECT_DIR" || ! -f "$PROJECT_DIR/.env" ]]; then
   echo "IoT project directory or .env not found: $PROJECT_DIR" >&2

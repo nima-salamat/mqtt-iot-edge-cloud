@@ -347,3 +347,5 @@ button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+.settings-grid .camera-source-field{display:grid;gap:8px;align-content:start;min-width:0}

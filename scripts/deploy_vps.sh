@@ -14,7 +14,7 @@ PROXY_MODE="${PROXY_MODE:-traefik-swarm}"
 # The host-Nginx Compose path uses host certificate paths, so it does not
 # require the legacy ./certs/fullchain.pem and ./certs/privkey.pem files.
 if [ "$PROXY_MODE" = "compose-nginx" ]; then
-  exec ./scripts/deploy_compose_nginx.sh
+  exec bash ./scripts/deploy_compose_nginx.sh
 fi
 
 if grep -Eq 'REPLACE_|YOUR_|CHANGE_ME' .env; then

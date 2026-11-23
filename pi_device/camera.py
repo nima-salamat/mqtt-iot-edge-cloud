@@ -370,7 +370,7 @@ class ReconnectingRtspOutput:
 
     def set_recording_enabled(self, enabled: bool) -> dict:
         """Pause/resume only the local MP4 spool; camera, preview and RTSPS stay live."""
-        if self.camera_backend != "picamera2" or self.picam2 is None:
+        if self.camera_backend != "picamera2":
             raise RuntimeError("ضبط و ارسال RTSPS برای دوربین OpenCV هنوز پشتیبانی نمی‌شود؛ از Picamera2 استفاده کن.")
         from picamera2.outputs import PyavOutput
 

@@ -1,5 +1,5 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
@@ -17,9 +17,9 @@ if [ ! -s certs/fullchain.pem ] || [ ! -s certs/privkey.pem ]; then
   exit 1
 fi
 
-set -a
-. ./.env
-set +a
+# Parse the Compose dotenv format safely; never execute .env as shell code.
+source ./scripts/load_compose_env.sh
+load_compose_env .env docker-compose.yml
 
 : "${DOMAIN:?Set DOMAIN}"
 : "${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY}"

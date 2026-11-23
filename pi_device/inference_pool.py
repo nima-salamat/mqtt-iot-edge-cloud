@@ -370,11 +370,22 @@ class AdaptiveInferencePool:
 
     def snapshot(self) -> dict:
         state = self.scheduler.snapshot()
+        ready_indices = [
+            index for index, process in enumerate(self.processes)
+            if index in self.ready_workers and process.is_alive()
+        ]
+        ready_latencies = [
+            self.scheduler.workers[index].latency_seconds
+            for index in ready_indices
+        ]
         state.update({
-            "ready_workers": len([
-                index for index, process in enumerate(self.processes)
-                if index in self.ready_workers and process.is_alive()
-            ]),
+            "ready_workers": len(ready_indices),
+            "estimated_capacity_fps": round(
+                sum(1.0 / value for value in ready_latencies), 2
+            ),
+            "ready_worker_latency_ms": [
+                round(value * 1000.0, 1) for value in ready_latencies
+            ],
             "last_error": self.last_error,
             "ncnn_threads_per_worker": self.ncnn_threads,
         })

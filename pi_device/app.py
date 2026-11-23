@@ -164,6 +164,22 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             return jsonify({"error": "درخواست معتبر نیست؛ صفحه را دوباره بارگذاری کن."}), 403
         return jsonify(camera.request_pairing())
 
+    @flask_app.post("/api/pair/manual/")
+    @authenticated
+    def pair_manual():
+        if not csrf_valid():
+            return jsonify({"error": "درخواست معتبر نیست؛ صفحه را دوباره بارگذاری کن."}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "کد اتصال ارسال نشده است."}), 400
+        try:
+            result = camera.submit_manual_pairing_code(payload.get("pairing_code", ""))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(result), 202
+
     @flask_app.post("/api/settings/")
     @authenticated
     def update_settings():

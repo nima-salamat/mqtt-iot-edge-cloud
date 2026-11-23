@@ -93,6 +93,42 @@
     </aside>
   </section>
 
+  <section class="panel detections-panel">
+    <div class="panel-heading">
+      <div><span class="eyebrow">LOCAL DETECTIONS</span><h2>تصاویر ثبت‌شده تشخیص انسان</h2><p class="hint">آخرین تصاویر ذخیره‌شده روی خود Raspberry Pi؛ مستقل از وضعیت اتصال اینترنت.</p></div>
+      <span class="settings-mark" id="alarm-gallery-count">۰ تصویر</span>
+    </div>
+    <div id="alarm-gallery" class="alarm-gallery" aria-live="polite">
+      <div class="gallery-empty">هنوز تصویری از تشخیص انسان ثبت نشده است.</div>
+    </div>
+  </section>
+
+  <section class="panel queue-panel">
+    <div class="panel-heading">
+      <div><span class="eyebrow">DURABLE OUTBOX</span><h2>مدیریت صف ارسال</h2><p class="hint">فقط موارد ارسال‌نشده حذف می‌شوند. فایل‌های آپلودشده و آرشیو لاگ‌ها دست‌نخورده باقی می‌مانند.</p></div>
+      <span class="settings-mark">LOCAL QUEUES</span>
+    </div>
+    <div class="queue-grid">
+      <article class="queue-card">
+        <div class="queue-card-icon">▶</div>
+        <div class="queue-card-main"><b>قطعه‌های ویدئو</b><strong id="queue-videos-count">۰</strong><small id="queue-videos-size">۰ بایت</small></div>
+        <button class="danger-btn" type="button" data-clear-queue="videos">پاک‌کردن صف ویدئو</button>
+      </article>
+      <article class="queue-card">
+        <div class="queue-card-icon">◎</div>
+        <div class="queue-card-main"><b>هشدارها و تصاویر ارسال‌نشده</b><strong id="queue-alarms-count">۰</strong><small id="queue-alarms-size">۰ بایت</small></div>
+        <button class="danger-btn" type="button" data-clear-queue="alarms">پاک‌کردن صف هشدار</button>
+      </article>
+      <article class="queue-card">
+        <div class="queue-card-icon">≡</div>
+        <div class="queue-card-main"><b>لاگ‌های ارسال‌نشده</b><strong id="queue-logs-count">۰</strong><small id="queue-logs-size">۰ بایت</small></div>
+        <button class="danger-btn" type="button" data-clear-queue="logs">پاک‌کردن صف لاگ</button>
+      </article>
+    </div>
+    <p class="queue-warning">پاک‌سازی غیرقابل‌بازگشت است. ویدئوهای در حال ضبط و فایل‌های قبلاً ارسال‌شده حذف نمی‌شوند. در صف هشدار، مواردی که تصویرشان به سرور رسیده ولی اعلان MQTT هنوز ارسال نشده نیز حذف خواهند شد.</p>
+    <p id="queue-action-status" class="queue-action-status" role="status"></p>
+  </section>
+
   <section class="panel settings-panel">
     <div class="panel-heading">
       <div><span class="eyebrow">LOCAL STORAGE & EDGE AI</span><h2>تنظیمات دستگاه</h2><p class="hint">ذخیره‌سازی این بخش روی خود Raspberry Pi است و از سیاست نگهداری سرور مستقل است.</p></div>

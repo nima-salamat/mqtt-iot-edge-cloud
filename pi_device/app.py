@@ -143,10 +143,14 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
     def local_alarms():
         alarm_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot")) / "alarms"
         items = []
-        for meta_path in sorted(
-            alarm_dir.glob("*.json"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
+        recent_paths = []
+        for meta_path in alarm_dir.glob("*.json"):
+            try:
+                recent_paths.append((meta_path, meta_path.stat().st_mtime))
+            except OSError:
+                continue
+        for meta_path, _modified_at in sorted(
+            recent_paths, key=lambda item: item[1], reverse=True
         ):
             if not meta_path.is_file() or meta_path.is_symlink():
                 continue

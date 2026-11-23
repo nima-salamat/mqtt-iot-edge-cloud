@@ -97,6 +97,10 @@ def _inference_worker(
         os.environ["OMP_NUM_THREADS"] = str(ncnn_threads)
         os.environ["OPENBLAS_NUM_THREADS"] = "1"
         import cv2
+        # Spawned Python re-imports the application entry module, so cv2 may
+        # already be loaded before this worker function begins. Explicitly cap
+        # its native pool here to avoid multiplying OpenCV threads by workers.
+        cv2.setNumThreads(ncnn_threads)
         from .detector import YoloV5nDetector
 
         detector = YoloV5nDetector(

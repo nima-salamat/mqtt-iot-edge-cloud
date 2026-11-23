@@ -264,6 +264,21 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             return jsonify({"error": str(exc)}), 409
         return jsonify(result), 202
 
+    @flask_app.post("/api/recording/")
+    @authenticated
+    def update_recording():
+        if not csrf_valid():
+            return jsonify({"error": "درخواست معتبر نیست؛ صفحه را دوباره بارگذاری کن."}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or type(payload.get("enabled")) is not bool:
+            return jsonify({"error": "وضعیت ضبط باید true یا false باشد."}), 400
+        try:
+            result = camera.set_recording_enabled(payload["enabled"])
+        except (RuntimeError, TimeoutError, OSError) as exc:
+            log.exception("Could not change local video recording state")
+            return jsonify({"error": str(exc)}), 409
+        return jsonify({"status": "updated", **result})
+
     @flask_app.post("/api/settings/")
     @authenticated
     def update_settings():
@@ -273,7 +288,7 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         if not isinstance(payload, dict):
             return jsonify({"error": "مقادیر تنظیمات باید JSON باشند."}), 400
         allowed = {
-            "video_fps", "video_bitrate", "segment_seconds", "inference_fps",
+            "video_fps", "video_bitrate", "segment_seconds", "inference_fps", "inference_workers",
             "alert_confidence", "alert_cooldown_seconds", "alert_clear_seconds",
             "local_video_retention_minutes", "upload_queue_retention_hours",
             "upload_queue_max_gb", "local_alarm_retention_days", "local_log_retention_days",

@@ -550,18 +550,50 @@ class CameraPipeline:
 
     def request_pairing(self):
         with self._pair_lock:
+            if self._pair_in_progress:
+                return {"status": "submitting", "expires_in": 0}
             self._pair_requested_until = time.monotonic() + 120
             self._pair_status = "scanning"
         return {"status": "scanning", "expires_in": 120}
 
+    def submit_manual_pairing_code(self, value):
+        """Accept either the raw one-time token or the complete QR payload."""
+        value = str(value or "").strip()
+        prefix = "iot-alarm-pair:"
+        if value.startswith(prefix):
+            value = value[len(prefix):].strip()
+
+        # The backend creates URL-safe 256-bit tokens. Reject arbitrary text
+        # before making a network request and never include the secret in logs.
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", value):
+            raise ValueError("کد اتصال معتبر نیست؛ متن زیر QR را کامل کپی کن.")
+
+        if not self._complete_pairing(value):
+            raise RuntimeError("یک درخواست Pairing دیگر در حال انجام است.")
+        return {"status": "submitting"}
+
     def _complete_pairing(self, pairing_code):
         with self._pair_lock:
             if self._pair_in_progress:
-                return
+                return False
             self._pair_in_progress = True
             self._pair_requested_until = 0
             self._pair_status = "submitting"
-        threading.Thread(target=self._pair_request, args=(pairing_code,), name="device-pairing", daemon=True).start()
+        try:
+            thread = threading.Thread(
+                target=self._pair_request,
+                args=(pairing_code,),
+                name="device-pairing",
+                daemon=True,
+            )
+            thread.start()
+            return True
+        except Exception:
+            with self._pair_lock:
+                self._pair_in_progress = False
+                self._pair_status = "failed_to_start"
+            raise
 
     def _pair_request(self, pairing_code):
         api_base = os.getenv("API_BASE_URL", "https://server.echonode.website").rstrip("/")

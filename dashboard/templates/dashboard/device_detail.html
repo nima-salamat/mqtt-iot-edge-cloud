@@ -5,7 +5,11 @@
 <div class="breadcrumb"><a href="{% url 'dashboard:home' %}">داشبورد</a><span> / </span>{{ device.name }}</div>
 <section class="hero compact">
   <div><span class="eyebrow">CAMERA DEVICE</span><h1>{{ device.name }}</h1><p><code>{{ device.device_id }}</code></p></div>
-  <div class="hero-actions"><span class="state {% if device.is_online %}online{% else %}offline{% endif %}"><i></i>{% if device.is_online %}آنلاین{% else %}آفلاین{% endif %}</span><span class="muted">آخرین Heartbeat: {{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"—" }}</span></div>
+  <div class="hero-actions">
+    <span class="state {% if device.api_token_hash and device.is_online %}online{% else %}offline{% endif %}" id="device-connection-state"><i></i>{% if device.api_token_hash and device.is_online %}آنلاین{% elif device.api_token_hash %}آفلاین{% else %}اتصال لغو شده{% endif %}</span>
+    <span class="muted">آخرین Heartbeat: {{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"—" }}</span>
+    {% if device.api_token_hash %}<button class="btn danger" id="disconnect-camera" type="button" data-url="{% url 'dashboard:device-disconnect' device.device_id %}">قطع اتصال دوربین</button>{% endif %}
+  </div>
 </section>
 <div class="detail-grid">
   <section class="panel">
@@ -24,6 +28,7 @@
       <div><span>دوربین Pi</span><b>{% if device.current_state.camera_ready %}آماده{% else %}نامشخص{% endif %}</b></div>
       <div><span>Video FPS</span><b>{{ device.reported_video_fps|floatformat:1 }}</b></div>
       <div><span>Inference FPS</span><b>{{ device.reported_inference_fps|floatformat:1 }}</b></div>
+      <div><span>مدت تشخیص پیوسته</span><b id="tracking-duration">{% if device.current_state.tracking_active %}در حال تشخیص · {{ device.current_state.tracking_seconds|default:0|floatformat:1 }} ثانیه{% else %}آخرین رهگیری · {{ device.current_state.tracking_seconds|default:0|floatformat:1 }} ثانیه{% endif %}</b></div>
       <div><span>هشدارهای ارسال‌نشده</span><b>{{ device.current_state.pending_alerts|default:0 }}</b></div>
       <div><span>ویدئوهای ارسال‌نشده</span><b>{{ device.current_state.pending_video_segments|default:0 }}</b></div>
       <div><span>اتصال MQTT</span><b>{% if device.current_state.mqtt_connected %}متصل{% else %}قطع{% endif %}</b></div>
@@ -88,6 +93,7 @@
   const status = document.getElementById('live-status');
   const start = document.getElementById('start-live');
   const stop = document.getElementById('stop-live');
+  const disconnectButton = document.getElementById('disconnect-camera');
   let peer = null;
   let sessionUrl = null;
   let authHeader = null;
@@ -174,6 +180,34 @@
     }
   });
   stop.addEventListener('click', stopStream);
+  disconnectButton?.addEventListener('click',async()=>{
+    if(!window.confirm('دسترسی دوربین، پخش زنده و مجوزهای موقت باطل می‌شود. تاریخچه و هشدارهای قبلی حذف نمی‌شوند. ادامه می‌دهی؟'))return;
+    disconnectButton.disabled=true;
+    try{
+      const response=await fetch(disconnectButton.dataset.url,{
+        method:'POST',
+        headers:{'X-CSRFToken':csrf,'Accept':'application/json'}
+      });
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error||'قطع اتصال ناموفق بود.');
+      await stopStream();
+      const badge=document.getElementById('device-connection-state');
+      if(badge){
+        badge.classList.remove('online');
+        badge.classList.add('offline');
+        const dot=document.createElement('i');
+        badge.replaceChildren(dot,document.createTextNode('اتصال لغو شده'));
+      }
+      disconnectButton.remove();
+      status.textContent='دسترسی دوربین لغو شد؛ برای اتصال مجدد از داشبورد یک QR تازه بساز.';
+      document.querySelectorAll('.health-list b').forEach(node=>{
+        if(['متصل','در حال اتصال مجدد','آماده'].includes(node.textContent.trim()))node.textContent='قطع';
+      });
+    }catch(error){
+      status.textContent=error.message;
+      disconnectButton.disabled=false;
+    }
+  });
   window.addEventListener('pagehide', () => { if (sessionUrl && authHeader) fetch(sessionUrl, {method:'DELETE',headers:{'Authorization':authHeader},keepalive:true}); });
   document.querySelectorAll('.ack-form').forEach(form => form.addEventListener('submit', async event => {
     event.preventDefault();

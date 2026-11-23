@@ -81,6 +81,16 @@ class ReconnectingRtspOutput:
     def _reconnect_loop(self):
         while not self._stop.is_set():
             if self.connected:
+                if not (self.credentials_provider() or {}).get("api_token"):
+                    try:
+                        # Revoke an already-authorized publish session immediately,
+                        # without terminating the local camera or its H.264 encoder.
+                        self.output.split_output(None)
+                    except Exception:
+                        log.exception("Could not detach revoked RTSPS output")
+                    self.connected = False
+                    self.error = "Device pairing has been revoked"
+                    continue
                 self._wake.wait(2)
                 self._wake.clear()
                 continue
@@ -484,6 +494,16 @@ class CameraPipeline:
             selected_fps if selected_mode
             else (reported_rate if auto_fps else requested_fps)
         )
+        if self.camera_max_fps > 0:
+            changes = {}
+            max_setting = max(1, int(self.camera_max_fps))
+            if not auto_fps and requested_fps > self.camera_max_fps:
+                changes["video_fps"] = max_setting
+                self.target_video_fps = float(max_setting)
+            if int(values.get("inference_fps", 10)) > max_setting:
+                changes["inference_fps"] = max_setting
+            if changes:
+                values, _ = self.settings_store.update(changes)
         if self.camera_max_fps <= 0 and self.target_video_fps > 0:
             self.camera_max_fps = self.target_video_fps
         self.camera_resolution = f"{int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or selected_size[0])}x{int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or selected_size[1])}"
@@ -571,9 +591,16 @@ class CameraPipeline:
             ]
             self.camera_max_fps = max(compatible_rates, default=selected_fps)
             self.target_video_fps = selected_fps
-            if not auto_fps and self.camera_max_fps > 0 and requested_fps > self.camera_max_fps:
-                clamped_setting = max(1, int(self.camera_max_fps))
-                values, _ = self.settings_store.update({"video_fps": clamped_setting})
+            if self.camera_max_fps > 0:
+                max_setting = max(1, int(self.camera_max_fps))
+                changes = {}
+                if not auto_fps and requested_fps > self.camera_max_fps:
+                    changes["video_fps"] = max_setting
+                    self.target_video_fps = float(max_setting)
+                if int(values.get("inference_fps", 10)) > max_setting:
+                    changes["inference_fps"] = max_setting
+                if changes:
+                    values, _ = self.settings_store.update(changes)
             effective_fps = max(1.0, float(self.target_video_fps or requested_fps))
             frame_duration = max(1, int(round(1_000_000 / effective_fps)))
             config_options = {

@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.test import TestCase
@@ -153,7 +154,7 @@ class DeviceApiTests(TestCase):
             token_hash="a" * 64,
             user=self.owner,
             device=self.device,
-            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+            expires_at=timezone.now() + timedelta(minutes=10),
         )
         response = self.client.post(
             reverse("device-disconnect"),

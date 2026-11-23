@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
 import uuid
@@ -22,7 +23,7 @@ except (ImportError, OSError):
     _zbar_decode = None
 
 from .inference_pool import AdaptiveInferencePool
-from .camera_modes import select_sensor_mode
+from .camera_modes import parse_v4l2_modes, select_sensor_mode
 
 log = logging.getLogger(__name__)
 
@@ -138,10 +139,37 @@ class ReconnectingRtspOutput:
         self._threads.append(inference_thread)
         inference_thread.start()
 
+    @staticmethod
+    def _probe_v4l2_modes(raw_source):
+        """Return discrete USB camera formats when v4l2-ctl is installed."""
+        if "://" in raw_source:
+            return []
+        if raw_source.isdigit():
+            device = f"/dev/video{raw_source}"
+        elif raw_source.startswith("/dev/video"):
+            device = raw_source
+        else:
+            return []
+        try:
+            result = subprocess.run(
+                ["v4l2-ctl", "--device", device, "--list-formats-ext"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if result.returncode != 0:
+                return []
+            return parse_v4l2_modes(result.stdout)
+        except (OSError, subprocess.SubprocessError):
+            log.debug("V4L2 mode discovery is unavailable for %s", device, exc_info=True)
+            return []
+
     def _start_opencv(self, values):
         """Open a UVC/V4L2 webcam or a network video source through OpenCV.
 
-        This backend supplies full-resolution local preview and YOLO input.
+        V4L2 mode tables are used when available; actual delivered FPS is
+        measured in the capture loop rather than trusting driver metadata.
         Hardware H.264 recording and RTSPS publishing remain Picamera2-only.
         """
         self._reset_frame_state()
@@ -156,12 +184,29 @@ class ReconnectingRtspOutput:
             capture.release()
             raise RuntimeError("OpenCV could not open the selected camera source")
 
+        auto_fps = bool(values.get("video_fps_auto", True))
+        requested_fps = float(values.get("video_fps", 30))
+        sensor_modes = self._probe_v4l2_modes(raw_source)
+        selected_mode, selected_fps = select_sensor_mode(
+            sensor_modes,
+            int(values["video_width"]),
+            int(values["video_height"]),
+            requested_fps,
+            auto=auto_fps,
+        )
         try:
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(values["video_width"]))
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(values["video_height"]))
-            if not bool(values.get("video_fps_auto", True)):
-                capture.set(cv2.CAP_PROP_FPS, float(values["video_fps"]))
+            selected_size = (
+                tuple(selected_mode["size"])
+                if selected_mode
+                else (int(values["video_width"]), int(values["video_height"]))
+            )
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(selected_size[0]))
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(selected_size[1]))
+            if selected_mode:
+                capture.set(cv2.CAP_PROP_FPS, float(selected_fps))
+            elif not auto_fps:
+                capture.set(cv2.CAP_PROP_FPS, requested_fps)
         except Exception:
             log.debug("The selected OpenCV camera ignored one or more capture hints", exc_info=True)
 
@@ -178,10 +223,16 @@ class ReconnectingRtspOutput:
         self.camera_source = raw_source
         self.camera_model = ("OpenCV network source" if "://" in raw_source else f"OpenCV device {raw_source}")
         reported_rate = float(capture.get(cv2.CAP_PROP_FPS) or 0)
-        self.camera_max_fps = max(0.0, reported_rate)
+        compatible_rates = [
+            float(mode["fps"])
+            for mode in sensor_modes
+            if int(mode["size"][0]) >= int(values["video_width"])
+            and int(mode["size"][1]) >= int(values["video_height"])
+        ]
+        self.camera_max_fps = max(compatible_rates, default=max(0.0, reported_rate))
         self.target_video_fps = (
-            reported_rate if bool(values.get("video_fps_auto", True))
-            else float(values["video_fps"])
+            selected_fps if selected_mode
+            else (reported_rate if auto_fps else requested_fps)
         )
         self._threads = [
             threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
@@ -190,7 +241,9 @@ class ReconnectingRtspOutput:
             thread.start()
         self.bridge.publish_log("info", "Camera opened through OpenCV", {
             "source_type": "network" if "://" in raw_source else "local_device",
+            "mode_discovery": "v4l2" if sensor_modes else "driver_default",
             "reported_fps": reported_rate,
+            "selected_fps": self.target_video_fps,
             "media_output": "not_supported_by_opencv_backend",
         })
         self._start_inference_pool(values)

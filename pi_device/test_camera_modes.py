@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from pi_device.camera_modes import select_sensor_mode
+from pi_device.camera_modes import parse_v4l2_modes, select_sensor_mode
 
 
 class SensorModeSelectionTests(unittest.TestCase):
@@ -38,6 +38,25 @@ class SensorModeSelectionTests(unittest.TestCase):
         mode, fps = select_sensor_mode([], 1280, 720, 30, auto=True)
         self.assertIsNone(mode)
         self.assertEqual(fps, 30)
+
+    def test_parse_v4l2_discrete_formats_and_frame_rates(self):
+        output = """
+        [0]: 'MJPG' (Motion-JPEG, compressed)
+            Size: Discrete 1920x1080
+                Interval: Discrete 0.033s (30.000 fps)
+                Interval: Discrete 0.017s (60.000 fps)
+            Size: Discrete 1280x720
+                Interval: Discrete 0.016s (60.000 fps)
+        [1]: 'YUYV' (YUYV 4:2:2)
+            Size: Discrete 640x480
+                Interval: Discrete 0.033s (30.000 fps)
+        """
+        modes = parse_v4l2_modes(output)
+        self.assertEqual(len(modes), 3)
+        by_size = {mode["size"]: mode["fps"] for mode in modes}
+        self.assertEqual(by_size[(1920, 1080)], 60.0)
+        self.assertEqual(by_size[(1280, 720)], 60.0)
+        self.assertEqual(by_size[(640, 480)], 30.0)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,28 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Compile Python modules
         run: python -m compileall -q dashboard iotlab server_panel pi_device streamlit_app.py manage.py
+      - name: Validate deployment scripts
+        run: |
+          bash -n scripts/deploy_compose_nginx.sh
+          sh -n scripts/deploy_vps.sh
+      - name: Validate Compose variants
+        env:
+          DOMAIN: server.echonode.website
+          DJANGO_SECRET_KEY: ci-only-secret-key-not-for-production
+          DJANGO_ALLOWED_HOSTS: server.echonode.website,localhost,127.0.0.1
+          CSRF_TRUSTED_ORIGINS: https://server.echonode.website
+          MQTT_SERVER_PASSWORD: ci-only-mqtt-server-password
+          MQTT_SERVER_USERNAME: django-server
+          MQTT_CAMERA_EDGE_USERNAME: camera-edge
+          MQTT_CAMERA_EDGE_PASSWORD: ci-only-camera-edge-password
+          PANEL_USERNAME: ci-operator
+          PANEL_PASSWORD: ci-only-panel-password
+          HOST_CERT_DIR: /tmp
+          MEDIA_TLS_CERT: /host-certs/test.crt
+          MEDIA_TLS_KEY: /host-certs/test.key
+        run: |
+          DATABASE_MODE=sqlite docker compose -f docker-compose.yml -f docker-compose.nginx.yml -f docker-compose.sqlite.yml config -q
+          DATABASE_MODE=postgres POSTGRES_PASSWORD=ci-only-postgres-password docker compose -f docker-compose.yml -f docker-compose.nginx.yml config -q
       - name: Django system checks
         env:
           DJANGO_SECRET_KEY: ci-only-secret-key-not-for-production

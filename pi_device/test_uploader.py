@@ -151,6 +151,58 @@ class QueueManagementTests(unittest.TestCase):
         self.uploader._session.post.assert_called_once()
         self.assertTrue(path.with_suffix(".uploaded").exists())
 
+    def test_delete_alarm_removes_one_record_and_delivery_markers(self):
+        alert_id = "f" * 32
+        meta, image = self._alarm(alert_id, published=False)
+        marker = meta.with_suffix(".uploaded")
+        result = self.uploader.delete_alarm(alert_id)
+        self.assertEqual(result["removed_count"], 1)
+        self.assertGreater(result["removed_bytes"], 0)
+        self.assertFalse(meta.exists())
+        self.assertFalse(image.exists())
+        self.assertFalse(marker.exists())
+
+    def test_cleanup_all_local_alarms_removes_pending_and_published_records(self):
+        pending_meta, pending_image = self._alarm("1" * 32, published=False)
+        published_meta, published_image = self._alarm("2" * 32, published=True)
+        result = self.uploader.clear_all_local_alarms()
+        self.assertEqual(result["removed_count"], 2)
+        self.assertGreater(result["removed_bytes"], 0)
+        self.assertFalse(pending_meta.exists())
+        self.assertFalse(pending_image.exists())
+        self.assertFalse(published_meta.exists())
+        self.assertFalse(published_image.exists())
+        self.assertEqual(result["remaining"]["alarms"]["count"], 0)
+
+    def test_disconnect_revokes_server_token_then_removes_local_credential_file(self):
+        from unittest.mock import Mock
+
+        credentials_path = Path(self.temp_dir.name) / "device.json"
+        credentials_path.write_text(
+            json.dumps({"api_token": "unit-test-secret-token", "stream_path": "cam-test-device-01"}),
+            encoding="utf-8",
+        )
+        self.uploader.state_provider = lambda: {
+            "api_token": "unit-test-secret-token",
+            "stream_path": "cam-test-device-01",
+        }
+        response = Mock(status_code=200)
+        with patch.dict(os.environ, {"DEVICE_CREDENTIALS_PATH": str(credentials_path)}):
+            self.uploader._session.post = Mock(return_value=response)
+            result = self.uploader.disconnect_from_server()
+        self.assertEqual(result["status"], "disconnected")
+        self.assertFalse(credentials_path.exists())
+        self.assertFalse(self.uploader._token())
+        self.assertTrue(self.uploader.credentials_revoked)
+        self.uploader._session.post.assert_called_once()
+
+    def test_successful_response_checker_calls_raise_for_status_once(self):
+        from unittest.mock import Mock
+
+        response = Mock(status_code=200)
+        self.uploader._check_response(response)
+        response.raise_for_status.assert_called_once_with()
+
     def test_alarm_snapshot_path_rejects_path_traversal(self):
         alert_id = "e" * 32
         metadata = self.uploader.alarm_dir / f"{alert_id}.json"

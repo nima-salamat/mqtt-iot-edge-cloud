@@ -1,0 +1,46 @@
+services:
+  # This service is profile-gated in the base Compose file. The SQLite
+  # override removes the API's dependency so PostgreSQL is not started.
+  db:
+    profiles: ["postgres"]
+
+  api:
+    environment:
+      DATABASE_MODE: sqlite
+      DATABASE_PATH: ${DATABASE_PATH:-/app/data/db.sqlite3}
+      DATABASE_URL: ""
+    depends_on: !reset []
+    volumes:
+      - sqlite_data:/app/data
+      - iot_media:/app/data/media
+      - iot_static:/app/staticfiles
+
+  web:
+    environment:
+      DATABASE_MODE: sqlite
+      DATABASE_PATH: ${DATABASE_PATH:-/app/data/db.sqlite3}
+      DATABASE_URL: ""
+    volumes:
+      - sqlite_data:/app/data
+      - iot_media:/app/data/media
+
+  listener:
+    environment:
+      DATABASE_MODE: sqlite
+      DATABASE_PATH: ${DATABASE_PATH:-/app/data/db.sqlite3}
+      DATABASE_URL: ""
+    volumes:
+      - sqlite_data:/app/data
+      - iot_media:/app/data/media
+
+  retention:
+    environment:
+      DATABASE_MODE: sqlite
+      DATABASE_PATH: ${DATABASE_PATH:-/app/data/db.sqlite3}
+      DATABASE_URL: ""
+    volumes:
+      - sqlite_data:/app/data
+      - iot_media:/app/data/media
+
+volumes:
+  sqlite_data:

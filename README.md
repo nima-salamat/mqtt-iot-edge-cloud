@@ -188,23 +188,67 @@ For normal production use, set `DATABASE_MODE=postgres` and set a strong, URL-sa
 
 Do not delete Docker volumes when stopping the platform. In particular, `docker compose down -v` deletes the database, media and MQTT persistent data.
 
-### Reuse the host TLS certificate
+### Obtain a dedicated TLS certificate with Certbot
 
-The host certificate is not copied into the repository and no certificate container is started.
+This deployment obtains a certificate specifically for `server.echonode.website`; it does not depend on the existing wildcard certificate. Certbot and Nginx run on the VPS host. No Nginx or Certbot container is started.
 
-Set `HOST_CERT_DIR` to the host directory that contains the certificate and its key. Set `MEDIA_TLS_CERT` and `MEDIA_TLS_KEY` to their paths *inside* the container under `/host-certs/`.
+Before issuing the certificate, create an A record for `server.echonode.website` pointing to the VPS IPv4 address. If an AAAA record exists, it must point to this VPS and IPv6 port 80 must be reachable; otherwise remove the incorrect AAAA record. Allow inbound TCP 80 and 443 in the VPS firewall.
 
-The current host Nginx configuration references a wildcard-certificate candidate at `/etc/ssl/echonode-wildcard/`. The sample environment uses:
+Install Certbot on Ubuntu/Debian:
 
-    HOST_CERT_DIR=/etc/ssl/echonode-wildcard
-    MEDIA_TLS_CERT=/host-certs/wildcard.crt
-    MEDIA_TLS_KEY=/host-certs/wildcard.key
+    sudo apt update
+    sudo apt install -y certbot
 
-Verify that these files exist and the certificate covers `server.echonode.website`. If this candidate is not the active certificate, set `HOST_CERT_DIR`, `MEDIA_TLS_CERT` and `MEDIA_TLS_KEY` to the correct certificate directory and filenames. For Certbot, mount `/etc/letsencrypt` and use `/host-certs/live/<certificate-name>/fullchain.pem` and `privkey.pem`.
+Create the webroot and install the temporary HTTP-only Nginx site. This lets Certbot perform HTTP-01 validation without stopping or automatically rewriting the existing Nginx configuration:
 
-The deployment script checks that the certificate is readable, valid for `DOMAIN`, unexpired, and matches the private key.
+    sudo mkdir -p /var/www/certbot/.well-known/acme-challenge
+    sudo cp deploy/nginx/letsencrypt-bootstrap.conf /etc/nginx/sites-available/mqtt-iot-certbot-bootstrap
+    sudo ln -sfn /etc/nginx/sites-available/mqtt-iot-certbot-bootstrap /etc/nginx/sites-enabled/mqtt-iot-certbot-bootstrap
+    sudo nginx -t
+    sudo systemctl reload nginx
 
-Mounting the whole certificate directory (rather than individual `live/` symlink files) keeps the Certbot `archive/` symlink targets available inside MediaMTX. MediaMTX may need a restart after certificate renewal to reload a renewed certificate.
+Issue the certificate (replace the email address with an address you control):
+
+    sudo certbot certonly --webroot \\
+      -w /var/www/certbot \\
+      -d server.echonode.website \\
+      --cert-name server.echonode.website \\
+      --email YOUR_EMAIL_ADDRESS \\
+      --agree-tos --no-eff-email
+
+Certbot stores the certificate and key at:
+
+    /etc/letsencrypt/live/server.echonode.website/fullchain.pem
+    /etc/letsencrypt/live/server.echonode.website/privkey.pem
+
+The sample `.env.example` is configured for these paths:
+
+    HOST_CERT_DIR=/etc/letsencrypt
+    MEDIA_TLS_CERT=/host-certs/live/server.echonode.website/fullchain.pem
+    MEDIA_TLS_KEY=/host-certs/live/server.echonode.website/privkey.pem
+
+The Compose override mounts the entire `/etc/letsencrypt` directory read-only at `/host-certs`. This is intentional: Certbot's `live/` files are symlinks into `archive/`, so mounting only the two files would break those links inside MediaMTX.
+
+The deployment script verifies that the certificate covers `DOMAIN`, is not expired, and matches the private key. Keep `DOMAIN`, `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS` and `RTSPS_HOST` consistent.
+
+After obtaining the certificate and deploying the Compose stack, replace the temporary bootstrap site with the final reverse-proxy configuration:
+
+    sudo cp deploy/nginx/server.echonode.website.conf /etc/nginx/sites-available/mqtt-iot-edge-cloud
+    sudo ln -sfn /etc/nginx/sites-available/mqtt-iot-edge-cloud /etc/nginx/sites-enabled/mqtt-iot-edge-cloud
+    sudo nginx -t
+    sudo systemctl reload nginx
+
+The final HTTP virtual host intentionally keeps `/.well-known/acme-challenge/` on the webroot, so future HTTP-01 renewals continue to work.
+
+Install the renewal deploy hook so Nginx reloads and MediaMTX restarts only after this certificate is renewed:
+
+    sudo install -D -m 0750 deploy/certbot/restart-media-services.sh /etc/letsencrypt/renewal-hooks/deploy/mqtt-iot-edge-cloud
+
+Test renewal:
+
+    sudo certbot renew --dry-run
+
+The hook skips unrelated certificates. It reloads host Nginx and restarts the MediaMTX Compose service so the RTSPS listener loads the renewed certificate.
 
 ### Deploy the Docker Compose stack
 

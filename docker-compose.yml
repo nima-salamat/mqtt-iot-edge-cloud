@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:17-alpine
-    profiles: ["postgres"]
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iotlab}

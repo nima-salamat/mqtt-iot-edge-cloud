@@ -2,6 +2,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 import os
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEBUG = os.environ.get("DJANGO_DEBUG", "0").lower() in {"1", "true", "yes"}
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-unsafe-key-change-before-deployment")
@@ -54,22 +56,38 @@ TEMPLATES = [{
 WSGI_APPLICATION = "iotlab.wsgi.application"
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-if DATABASE_URL.startswith(("postgres://", "postgresql://")):
+DATABASE_MODE = os.environ.get("DATABASE_MODE", "").strip().lower()
+if not DATABASE_MODE:
+    # Preserve the previous behavior for deployments that only define DATABASE_URL.
+    DATABASE_MODE = "postgres" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite"
+
+if DATABASE_MODE == "postgres":
+    if not DATABASE_URL.startswith(("postgres://", "postgresql://")):
+        raise ImproperlyConfigured(
+            "DATABASE_MODE=postgres requires a valid DATABASE_URL."
+        )
     parsed = urlparse(DATABASE_URL)
+    database_name = unquote(parsed.path.lstrip("/"))
+    if not parsed.hostname or not database_name:
+        raise ImproperlyConfigured("DATABASE_URL must include a database host and name.")
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": unquote(parsed.path.lstrip("/")),
+            "NAME": database_name,
             "USER": unquote(parsed.username or ""),
             "PASSWORD": unquote(parsed.password or ""),
-            "HOST": parsed.hostname or "db",
+            "HOST": parsed.hostname,
             "PORT": parsed.port or 5432,
             "CONN_MAX_AGE": 60,
             "OPTIONS": {"connect_timeout": 10},
         }
     }
-else:
-    DATABASE_PATH = os.environ.get("DATABASE_PATH", str(BASE_DIR / "data" / "db.sqlite3"))
+elif DATABASE_MODE == "sqlite":
+    DATABASE_PATH = os.environ.get(
+        "DATABASE_PATH", str(BASE_DIR / "data" / "db.sqlite3")
+    ).strip()
+    if not DATABASE_PATH:
+        raise ImproperlyConfigured("DATABASE_MODE=sqlite requires a non-empty DATABASE_PATH.")
     Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
     DATABASES = {
         "default": {
@@ -78,6 +96,10 @@ else:
             "OPTIONS": {"timeout": 30},
         }
     }
+else:
+    raise ImproperlyConfigured(
+        "Unsupported DATABASE_MODE. Choose 'sqlite' or 'postgres'."
+    )
 
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", str(BASE_DIR / "data" / "media")))
 MEDIA_ROOT.mkdir(parents=True, exist_ok=True)

@@ -414,6 +414,16 @@ class CameraPipeline:
 
         self.live_output.start()
 
+        # Start the camera-facing work immediately. Model loading can take
+        # several seconds on a Pi, but preview, QR scan, local recording and
+        # RTSPS publishing must not wait for child NCNN processes to initialize.
+        self._threads = [
+            threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
+            threading.Thread(target=self._segment_loop, name="local-video-segmenter", daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+
         try:
             worker_count = int(values.get("inference_workers", 2))
             cpu_count = os.cpu_count() or 4
@@ -446,13 +456,11 @@ class CameraPipeline:
             )
             log.exception("YOLOv5n worker pool unavailable; camera and live stream remain active")
 
-        self._threads = [
-            threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
-            threading.Thread(target=self._ai_loop, name="camera-yolov5n-inference", daemon=True),
-            threading.Thread(target=self._segment_loop, name="local-video-segmenter", daemon=True),
-        ]
-        for thread in self._threads:
-            thread.start()
+        inference_thread = threading.Thread(
+            target=self._ai_loop, name="camera-yolov5n-inference", daemon=True
+        )
+        self._threads.append(inference_thread)
+        inference_thread.start()
 
     def set_recording_enabled(self, enabled: bool) -> dict:
         """Pause/resume only the local MP4 spool; camera, preview and RTSPS stay live."""

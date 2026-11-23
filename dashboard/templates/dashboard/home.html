@@ -22,6 +22,7 @@
         <h3>{{ device.name }}</h3><code>{{ device.device_id }}</code>
         <div class="device-meta"><span>Video FPS</span><b class="video-fps">{{ device.reported_video_fps|floatformat:1 }}</b></div>
         <div class="device-meta"><span>AI FPS</span><b class="ai-fps">{{ device.reported_inference_fps|floatformat:1 }}</b></div>
+        <div class="device-meta"><span>مدت رهگیری پیوسته</span><b class="tracking-duration">{% if device.current_state.tracking_active %}{{ device.current_state.tracking_seconds|default:0|floatformat:1 }} ثانیه · فعال{% else %}—{% endif %}</b></div>
         <div class="device-meta"><span>مدل تشخیص</span><b class="model-status">{% if device.model_loaded %}YOLOv5n فعال{% else %}مدل بارگذاری نشده{% endif %}</b></div>
         <div class="device-meta"><span>ویدئوی زنده</span><b class="stream-status">{% if device.current_state.rtsp_connected %}متصل{% else %}قطع{% endif %}</b></div>
         <div class="device-meta"><span>هشدار ارسال‌نشده</span><b class="pending-alerts">{{ device.current_state.pending_alerts|default:0 }}</b></div>
@@ -139,11 +140,13 @@ async function createPairing(){
 }
 for(const button of addButtons)button.addEventListener('click',createPairing);
 
-document.querySelectorAll('[data-disconnect-device]').forEach(button=>{
+function bindDisconnectButton(button){
+  if(button.dataset.bound==='1')return;
+  button.dataset.bound='1';
   button.addEventListener('click',async event=>{
     event.preventDefault();
     event.stopPropagation();
-    const approved=window.confirm('دسترسی این دوربین به حساب، پخش زنده و مجوزهای موقت باطل می‌شود. تاریخچه قبلی در سرور باقی می‌ماند. ادامه می‌دهی؟');
+    const approved=window.confirm('توکن دوربین و مجوزهای پخش زنده باطل می‌شوند. تاریخچه و هشدارهای قبلی در سرور باقی می‌مانند. ادامه می‌دهی؟');
     if(!approved)return;
     button.disabled=true;
     try{
@@ -153,28 +156,14 @@ document.querySelectorAll('[data-disconnect-device]').forEach(button=>{
       });
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'قطع اتصال دوربین ناموفق بود.');
-      const card=button.closest('.device-card');
-      const badge=card?.querySelector('.device-status');
-      if(badge){
-        badge.classList.remove('online');
-        badge.classList.add('offline');
-        const dot=document.createElement('i');
-        badge.replaceChildren(dot,document.createTextNode('اتصال لغو شده'));
-      }
-      const stream=card?.querySelector('.stream-status');
-      if(stream)stream.textContent='قطع';
-      button.remove();
-      const note=document.createElement('div');
-      note.className='device-disconnected-note';
-      note.textContent='اتصال لغو شده است؛ برای اتصال مجدد QR تازه بساز.';
-      card?.append(note);
-      refreshOverview();
+      await refreshOverview();
     }catch(error){
       alert(error.message);
       button.disabled=false;
     }
   });
-});
+}
+document.querySelectorAll('[data-disconnect-device]').forEach(bindDisconnectButton);
 document.getElementById('retention-form').addEventListener('submit',async event=>{
   event.preventDefault();
   const data={server_video_minutes:Number(document.getElementById('ret-video').value),alarm_image_days:Number(document.getElementById('ret-images').value),device_log_days:Number(document.getElementById('ret-logs').value)};
@@ -188,10 +177,11 @@ async function refreshOverview(){
     if(!response.ok)return;
     const data=await response.json();
     const devices=data.devices||[];
-    document.getElementById('device-count').textContent=devices.length;
-    document.getElementById('online-count').textContent=devices.filter(item=>item.is_online).length;
+    document.getElementById('device-count').textContent=devices.length.toLocaleString('fa-IR');
+    document.getElementById('online-count').textContent=devices.filter(item=>item.is_online).length.toLocaleString('fa-IR');
     for(const device of devices){
-      const card=document.querySelector('.device-card[data-device-id="'+device.device_id+'"]');
+      const card=Array.from(document.querySelectorAll('.device-card[data-device-id]'))
+        .find(item=>item.dataset.deviceId===device.device_id);
       if(!card)continue;
       const badge=card.querySelector('.device-status');
       if(badge){
@@ -205,9 +195,36 @@ async function refreshOverview(){
       set('.ai-fps',Number(device.inference_fps||0).toFixed(1));
       set('.model-status',device.model_loaded?'YOLOv5n فعال':'مدل بارگذاری نشده');
       set('.stream-status',device.rtsp_connected?'متصل':'قطع');
-      set('.pending-alerts',device.pending_alerts||0);
-      set('.pending-videos',device.pending_video_segments||0);
+      set('.pending-alerts',Number(device.pending_alerts||0).toLocaleString('fa-IR'));
+      set('.pending-videos',Number(device.pending_video_segments||0).toLocaleString('fa-IR'));
       set('.last-heartbeat',device.last_heartbeat?new Date(device.last_heartbeat).toLocaleString('fa-IR'):'هنوز دریافت نشده');
+      const dwell=Number(device.tracking_seconds||0);
+      set('.tracking-duration',device.tracking_active
+        ? dwell.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه · فعال'
+        : (dwell>0?dwell.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه':'—'));
+      const disconnect=card.querySelector('[data-disconnect-device]');
+      const note=card.querySelector('.device-disconnected-note');
+      if(device.is_paired){
+        note?.remove();
+        if(!disconnect){
+          const button=document.createElement('button');
+          button.type='button';
+          button.className='btn danger device-disconnect-btn';
+          button.dataset.disconnectDevice=device.device_id;
+          button.dataset.disconnectUrl='/devices/'+encodeURIComponent(device.device_id)+'/disconnect/';
+          button.textContent='قطع اتصال دوربین';
+          card.append(button);
+          bindDisconnectButton(button);
+        }
+      }else{
+        disconnect?.remove();
+        if(!note){
+          const text=document.createElement('div');
+          text.className='device-disconnected-note';
+          text.textContent='اتصال لغو شده است؛ برای اتصال مجدد QR تازه بساز.';
+          card.append(text);
+        }
+      }
     }
   }catch(error){console.warn('Dashboard refresh failed',error);}
 }

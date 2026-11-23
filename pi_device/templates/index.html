@@ -37,8 +37,8 @@
 
   <section class="metric-grid">
     <article class="metric-card"><span>نرخ فریم دوربین</span><strong id="video-fps">—</strong><small>هدف: 30 FPS</small></article>
-    <article class="metric-card"><span>نرخ پردازش YOLO</span><strong id="inference-fps">—</strong><small>پردازش محلی NCNN</small></article>
-    <article class="metric-card"><span>وضعیت مدل</span><strong id="model-status">در حال بررسی</strong><small>YOLOv5n · NCNN</small></article>
+    <article class="metric-card"><span>FPS واقعی YOLO</span><strong id="inference-fps">—</strong><small>فریم‌های تکمیل‌شده در ثانیه</small></article>
+    <article class="metric-card"><span>پردازه‌های مدل</span><strong id="model-status">در حال بررسی</strong><small id="inference-workers">YOLOv5n · NCNN</small></article>
     <article class="metric-card"><span>ارسال زنده به سرور</span><strong id="rtsp-status">قطع</strong><small>RTSPS / H.264</small></article>
   </section>
 
@@ -51,6 +51,18 @@
       <div class="preview-frame">
         <img id="camera-preview" src="{{ url_for('preview') }}" alt="پیش‌نمایش زنده دوربین Raspberry Pi">
         <div class="preview-overlay"><span>LOCAL PREVIEW</span><b id="preview-clock">LIVE</b></div>
+      </div>
+      <div class="recording-controls">
+        <div>
+          <b id="recording-status">{% if settings.recording_enabled %}ضبط محلی فعال است{% else %}ضبط محلی متوقف است{% endif %}</b>
+          <small>توقف ضبط فقط ذخیره و صف ویدئو را متوقف می‌کند؛ تصویر زنده، RTSPS و تشخیص YOLO فعال می‌مانند.</small>
+        </div>
+        <button
+          id="toggle-recording"
+          class="recording-btn {% if settings.recording_enabled %}is-recording{% else %}is-paused{% endif %}"
+          type="button"
+          aria-pressed="{{ 'true' if settings.recording_enabled else 'false' }}"
+        >{% if settings.recording_enabled %}توقف ضبط{% else %}شروع ضبط{% endif %}</button>
       </div>
       <p class="hint">این پیش‌نمایش از همان فریم‌های دوربین ساخته می‌شود؛ کدگذاری ویدئوی اصلی با H.264 و شتاب‌دهنده سخت‌افزاری Pi انجام می‌شود.</p>
       <div class="camera-errors" id="camera-errors" hidden></div>
@@ -155,9 +167,13 @@
         <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" value="{{ settings.video_bitrate }}">
         <small>پیشنهاد: ۱٬۰۰۰٬۰۰۰؛ encoder سخت‌افزاری Pi 4، با حجم کمتر. برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد.</small>
       </label>
-      <label>نرخ پردازش هوش مصنوعی
+      <label>حداکثر نرخ نمونه‌برداری مدل
         <input name="inference_fps" type="number" min="1" max="10" value="{{ settings.inference_fps }}">
-        <small>۱ تا ۱۰ فریم در ثانیه، مستقل از نرخ ویدئو</small>
+        <small>حداکثر فریم ارسالی به Workerها در ثانیه؛ FPS واقعی با توجه به سرعت مدل و تعداد Workerها اندازه‌گیری می‌شود.</small>
+      </label>
+      <label>تعداد پردازه‌های YOLO
+        <input name="inference_workers" type="number" min="1" max="3" value="{{ settings.inference_workers }}">
+        <small>۱ تا ۳ پردازه مستقل NCNN؛ برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد. هر پردازه مدل جداگانه بارگذاری می‌کند.</small>
       </label>
       <label>آستانه اطمینان تشخیص انسان
         <input name="alert_confidence" type="number" min="0.1" max="0.95" step="0.01" value="{{ settings.alert_confidence }}">

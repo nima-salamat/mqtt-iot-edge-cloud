@@ -1,25 +1,145 @@
 <!doctype html>
 <html lang="fa" dir="rtl">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csrf-token" content="{{ csrf_token }}"><title>Raspberry Pi 4 | MQTT Device</title><link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>مرکز کنترل دوربین | Raspberry Pi</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
 <body>
-  <div class="page-shell">
-    <header class="topbar"><div class="brand"><div class="brand-mark">Pi</div><div><b>Raspberry Pi 4</b><small>LOCAL MQTT DEVICE · {{ device_id }}</small></div></div><form action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="logout" type="submit">خروج</button></form></header>
-    <main>
-      <section class="intro"><span class="eyebrow">IOT DEVICE CONTROL PANEL</span><h1>پنل محلی <em>رزبری‌پای</em></h1><p>این وب‌سایت روی خود Raspberry Pi اجرا می‌شود. هر پیامی که ارسال کنی از طریق MQTT امن به Broker روی VPS می‌رود و در داشبورد مرکزی ثبت می‌شود.</p></section>
-      <section class="status-grid">
-        <article class="status-card"><span>اتصال به VPS</span><strong id="connection-status">در حال اتصال…</strong><small id="connection-detail">{{ 'server.echonode.website' }}</small></article>
-        <article class="status-card"><span>وضعیت خروجی</span><strong id="output-status">خاموش</strong><small id="gpio-detail">خروجی نرم‌افزاری</small></article>
-        <article class="status-card"><span>آخرین ارسال</span><strong id="last-publish">—</strong><small>MQTT QoS 1</small></article>
-      </section>
-      <section class="main-grid">
-        <article class="panel send-panel"><span class="eyebrow">PUBLISH MESSAGE</span><h2>ارسال پیام به سرور مرکزی</h2><p>یک متن دلخواه بنویس و دکمه ارسال را بزن. پیام در Topic اختصاصی این دستگاه منتشر می‌شود.</p><label for="message-input">متن پیام</label><textarea id="message-input" maxlength="500" rows="4" placeholder="مثلاً: سلام سرور، این پیام از Raspberry Pi 4 ارسال شده است."></textarea><div class="input-foot"><small>حداکثر ۵۰۰ نویسه</small><button id="send-message" class="primary">ارسال پیام به VPS <span>←</span></button></div><div class="topic"><span>MQTT TOPIC</span><code>iotlab/devices/raspberry-pi-01/events</code></div></article>
-        <article class="panel sample-panel"><span class="eyebrow">SENSOR TELEMETRY</span><h2>ارسال داده سنسور آزمایشی</h2><p>برای نمایش داده‌های IoT یک نمونه دما و رطوبت تولید و به سرور ارسال کن. در این نسخه سنسور فیزیکی لازم نیست.</p><div class="sample-visual"><div><span>دما</span><strong id="sample-temperature">—<small>°C</small></strong></div><div><span>رطوبت</span><strong id="sample-humidity">—<small>%</small></strong></div></div><button id="send-sample" class="secondary">تولید و ارسال نمونه</button><div class="topic"><span>MQTT TOPIC</span><code>iotlab/devices/raspberry-pi-01/telemetry</code></div></article>
-      </section>
-      <section class="panel output-panel"><div><span class="eyebrow">GPIO OUTPUT · OPTIONAL HARDWARE</span><h2>خروجی رزبری‌پای</h2><p>می‌توانی خروجی را از سایت محلی تغییر بدهی یا از داشبورد VPS فرمان بفرستی. با فعال‌سازی GPIO، LED متصل به پایه GPIO17 نیز روشن و خاموش می‌شود.</p></div><div class="output-actions"><button id="local-on" class="on">روشن کردن LED</button><button id="local-off" class="off">خاموش کردن LED</button></div></section>
-      <section class="panel log-panel"><div class="log-heading"><div><span class="eyebrow">DEVICE ACTIVITY</span><h2>رویدادهای دستگاه</h2></div><span class="live-mark"><i></i> LIVE</span></div><div id="activity-list" class="activity-list"><div class="empty">هنوز رویدادی ثبت نشده است.</div></div></section>
-      <footer>Raspberry Pi Local Site · MQTT over WSS · Connected to server.echonode.website</footer>
-    </main>
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-icon">Pi</span>
+    <span><b>مرکز کنترل دوربین</b><small>RASPBERRY PI · EDGE SECURITY</small></span>
+  </a>
+  <div class="top-actions">
+    <span class="local-badge"><i></i> پنل محلی</span>
+    <form action="{{ url_for('logout') }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="ghost-btn" type="submit">خروج</button>
+    </form>
   </div>
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
-</body></html>
+</header>
+<main class="page-shell">
+  <section class="hero">
+    <div>
+      <span class="eyebrow">ON-DEVICE MANAGEMENT</span>
+      <h1>دوربین امنیتی هوشمند</h1>
+      <p>تصویر زنده، تشخیص انسان روی خود Raspberry Pi، وضعیت ارسال به سرور و فضای ذخیره‌سازی محلی را مدیریت کن.</p>
+      <code class="device-code" id="device-id">{{ device_id }}</code>
+    </div>
+    <div class="hero-state">
+      <span class="status-chip offline" id="camera-status"><i></i> دوربین در حال راه‌اندازی</span>
+      <small id="last-heartbeat">Heartbeat: در انتظار اتصال</small>
+    </div>
+  </section>
+
+  <section class="metric-grid">
+    <article class="metric-card"><span>نرخ فریم دوربین</span><strong id="video-fps">—</strong><small>هدف: 30 FPS</small></article>
+    <article class="metric-card"><span>نرخ پردازش YOLO</span><strong id="inference-fps">—</strong><small>پردازش محلی NCNN</small></article>
+    <article class="metric-card"><span>وضعیت مدل</span><strong id="model-status">در حال بررسی</strong><small>YOLOv5n · NCNN</small></article>
+    <article class="metric-card"><span>ارسال زنده به سرور</span><strong id="rtsp-status">قطع</strong><small>RTSPS / H.264</small></article>
+  </section>
+
+  <section class="main-grid">
+    <article class="panel camera-panel">
+      <div class="panel-heading">
+        <div><span class="eyebrow">LIVE CAMERA</span><h2>پیش‌نمایش دوربین</h2></div>
+        <span class="live-indicator" id="preview-status"><i></i> آماده‌سازی تصویر</span>
+      </div>
+      <div class="preview-frame">
+        <img id="camera-preview" src="{{ url_for('preview') }}" alt="پیش‌نمایش زنده دوربین Raspberry Pi">
+        <div class="preview-overlay"><span>LOCAL PREVIEW</span><b id="preview-clock">LIVE</b></div>
+      </div>
+      <p class="hint">این پیش‌نمایش از همان فریم‌های دوربین ساخته می‌شود؛ کدگذاری ویدئوی اصلی با H.264 و شتاب‌دهنده سخت‌افزاری Pi انجام می‌شود.</p>
+      <div class="camera-errors" id="camera-errors" hidden></div>
+    </article>
+
+    <aside class="panel status-panel">
+      <div class="panel-heading"><div><span class="eyebrow">CONNECTION STATUS</span><h2>وضعیت ارتباط‌ها</h2></div></div>
+      <div class="status-list">
+        <div><span>اتصال MQTT</span><b id="mqtt-status">در حال بررسی</b></div>
+        <div><span>اتصال زنده RTSPS</span><b id="rtsp-health">در حال بررسی</b></div>
+        <div><span>Heartbeat سرور</span><b id="heartbeat-status">در انتظار</b></div>
+        <div><span>تصاویر هشدار در صف</span><b id="pending-alarms">0</b></div>
+        <div><span>قطعه‌های ویدئو در صف</span><b id="pending-videos">0</b></div>
+        <div><span>آخرین آپلود موفق</span><b id="last-upload">—</b></div>
+      </div>
+      <div class="pair-card">
+        <span class="eyebrow">SECURE DEVICE PAIRING</span>
+        <h3>اتصال به حساب کاربری</h3>
+        <p>در پنل وب، «افزودن دوربین» را بزن. سپس QR یک‌بارمصرف را مقابل همین دوربین قرار بده.</p>
+        <button id="scan-pairing" class="primary-btn" type="button">اسکن QR با دوربین</button>
+        <div id="pairing-state" class="pairing-state">وضعیت: دستگاه هنوز ثبت نشده است.</div>
+      </div>
+    </aside>
+  </section>
+
+  <section class="panel settings-panel">
+    <div class="panel-heading">
+      <div><span class="eyebrow">LOCAL STORAGE & EDGE AI</span><h2>تنظیمات دستگاه</h2><p class="hint">ذخیره‌سازی این بخش روی خود Raspberry Pi است و از سیاست نگهداری سرور مستقل است.</p></div>
+      <span class="settings-mark">LOCAL CONFIG</span>
+    </div>
+    <form id="settings-form" class="settings-grid">
+      <label>نگهداری ویدئوی ارسال‌شده (دقیقه)
+        <input name="local_video_retention_minutes" type="number" min="0" max="1440" value="{{ settings.local_video_retention_minutes }}">
+        <small>صفر یعنی حذف نسخه محلی پس از آپلود موفق</small>
+      </label>
+      <label>مهلت نگهداری صف آفلاین (ساعت)
+        <input name="upload_queue_retention_hours" type="number" min="1" max="168" value="{{ settings.upload_queue_retention_hours }}">
+        <small>فایل‌های ارسال‌نشده تا این مدت برای تلاش مجدد می‌مانند</small>
+      </label>
+      <label>حداکثر صف ویدئو (GB)
+        <input name="upload_queue_max_gb" type="number" min="1" max="64" value="{{ settings.upload_queue_max_gb }}">
+        <small>در پرشدن فضا، قدیمی‌ترین ویدئوی ارسال‌نشده حذف می‌شود</small>
+      </label>
+      <label>نرخ فریم ویدئو
+        <input name="video_fps" type="number" min="5" max="30" value="{{ settings.video_fps }}">
+        <small>۵ تا ۳۰ FPS؛ برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد</small>
+      </label>
+      <label>نرخ پردازش هوش مصنوعی
+        <input name="inference_fps" type="number" min="1" max="10" value="{{ settings.inference_fps }}">
+        <small>۱ تا ۱۰ فریم در ثانیه، مستقل از نرخ ویدئو</small>
+      </label>
+      <label>آستانه اطمینان تشخیص انسان
+        <input name="alert_confidence" type="number" min="0.1" max="0.95" step="0.01" value="{{ settings.alert_confidence }}">
+        <small>مقدار بالاتر هشدارهای کاذب را کاهش می‌دهد</small>
+      </label>
+      <label>فاصله بین هشدارهای متوالی (ثانیه)
+        <input name="alert_cooldown_seconds" type="number" min="1" max="300" value="{{ settings.alert_cooldown_seconds }}">
+        <small>برای جلوگیری از تولید هشدار تکراری</small>
+      </label>
+      <label>نگهداری تصویر هشدار محلی (روز)
+        <input name="local_alarm_retention_days" type="number" min="1" max="90" value="{{ settings.local_alarm_retention_days }}">
+        <small>نسخه محلی پس از تکمیل ارسال و پایان این مدت حذف می‌شود</small>
+      </label>
+      <label>نگهداری لاگ محلی (روز)
+        <input name="local_log_retention_days" type="number" min="1" max="90" value="{{ settings.local_log_retention_days }}">
+        <small>نسخه محلی لاگ‌های ارسال‌شده</small>
+      </label>
+      <label>مدت هر قطعه ویدئو (ثانیه)
+        <input name="segment_seconds" type="number" min="2" max="15" value="{{ settings.segment_seconds }}">
+        <small>برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد</small>
+      </label>
+      <div class="settings-submit">
+        <button class="primary-btn" type="submit">ذخیره تنظیمات</button>
+        <span id="settings-result" role="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel diagnostics-panel">
+    <div class="panel-heading"><div><span class="eyebrow">RETRY & DIAGNOSTICS</span><h2>وضعیت ارسال و خطاها</h2></div></div>
+    <div class="diagnostic-grid">
+      <div><span>وضعیت احراز هویت دستگاه</span><b id="device-pair-status">ثبت‌نشده</b></div>
+      <div><span>تعداد ویدئوهای آپلودشده</span><b id="uploaded-segments">0</b></div>
+      <div><span>آخرین خطای دوربین / مدل</span><b id="model-error">—</b></div>
+      <div><span>آخرین خطای ارسال</span><b id="upload-error">—</b></div>
+    </div>
+    <p class="footnote">قطع اینترنت، ضبط محلی و تشخیص انسان را متوقف نمی‌کند. قطعه‌های کامل‌شده و هشدارها در صف پایدار می‌مانند و پس از بازگشت ارتباط، ارسال مجدد انجام می‌شود. محدودیت حجم و مدت صف برای جلوگیری از پرشدن حافظه در قطعی‌های طولانی اعمال می‌شود.</p>
+  </section>
+</main>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

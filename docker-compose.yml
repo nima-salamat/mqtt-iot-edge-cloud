@@ -1,119 +1,163 @@
 services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iotlab}
+      POSTGRES_USER: ${POSTGRES_USER:-iotlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \\"${POSTGRES_USER:-iotlab}\\" -d \\"${POSTGRES_DB:-iotlab}\\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [iot-internal]
+
   broker:
     image: eclipse-mosquitto:2.1.2
-    container_name: mqtt-iot-broker
     restart: unless-stopped
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
-    environment:
-      MQTT_DEVICE_USERNAME: ${MQTT_DEVICE_USERNAME:?Set MQTT_DEVICE_USERNAME in .env}
-      MQTT_DEVICE_PASSWORD: ${MQTT_DEVICE_PASSWORD:?Set MQTT_DEVICE_PASSWORD in .env}
-      MQTT_SERVER_USERNAME: ${MQTT_SERVER_USERNAME:?Set MQTT_SERVER_USERNAME in .env}
-      MQTT_SERVER_PASSWORD: ${MQTT_SERVER_PASSWORD:?Set MQTT_SERVER_PASSWORD in .env}
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/aclfile:/mosquitto/config/aclfile:ro
       - mosquitto_data:/mosquitto/data
-    expose:
-      - "1883"
-      - "9001"
-    networks: [mqtt-internal]
+    expose: ["1883", "9001"]
+    networks: [iot-internal]
 
-  # The server UI is Streamlit. Django remains the ORM/migration layer and
-  # provides the models used by the background MQTT listener.
-  web:
+  api:
     build: .
-    container_name: mqtt-iot-web
     restart: unless-stopped
     command: >
       sh -c "python manage.py migrate --noinput &&
-             python manage.py seed_demo &&
-             streamlit run streamlit_app.py
-             --server.address=0.0.0.0
-             --server.port=8501
-             --server.headless=true"
-    environment:
+             python manage.py collectstatic --noinput &&
+             gunicorn iotlab.wsgi:application --bind 0.0.0.0:8000
+             --workers 3 --timeout 180 --access-logfile - --error-logfile -"
+    environment: &django-env
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
       DJANGO_DEBUG: "0"
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-server.echonode.website,localhost,127.0.0.1}
-      DATABASE_PATH: /app/data/db.sqlite3
-      DOMAIN: ${DOMAIN:-server.echonode.website}
-      PANEL_USERNAME: ${PANEL_USERNAME:?Set PANEL_USERNAME in .env}
-      PANEL_PASSWORD: ${PANEL_PASSWORD:?Set PANEL_PASSWORD in .env}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-https://server.echonode.website}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-iotlab}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-iotlab}"
+      MEDIA_ROOT: /app/data/media
       MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-iotlab}
       MQTT_WS_PATH: ${MQTT_WS_PATH:-/mqtt}
-      MQTT_BROKER_HOST: broker
-      MQTT_BROKER_PORT: "1883"
-      MQTT_SERVER_USERNAME: ${MQTT_SERVER_USERNAME:?Set MQTT_SERVER_USERNAME in .env}
+      MQTT_HOST: broker
+      MQTT_PORT: "9001"
+      MQTT_TLS: "0"
+      MQTT_SERVER_USERNAME: ${MQTT_SERVER_USERNAME:-django-server}
       MQTT_SERVER_PASSWORD: ${MQTT_SERVER_PASSWORD:?Set MQTT_SERVER_PASSWORD in .env}
     volumes:
-      - django_data:/app/data
-    expose:
-      - "8501"
+      - iot_media:/app/data/media
+      - iot_static:/app/staticfiles
+    expose: ["8000"]
     depends_on:
-      broker:
-        condition: service_started
+      db:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 15
       start_period: 40s
-    networks: [mqtt-internal]
+    networks: [iot-internal]
+
+  web:
+    build: .
+    restart: unless-stopped
+    command: ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+    environment:
+      <<: *django-env
+      PANEL_USERNAME: ${PANEL_USERNAME:?Set PANEL_USERNAME in .env}
+      PANEL_PASSWORD: ${PANEL_PASSWORD:?Set PANEL_PASSWORD in .env}
+      MQTT_BROKER_HOST: broker
+      MQTT_BROKER_PORT: "1883"
+    expose: ["8501"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/ops/_stcore/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [iot-internal]
 
   listener:
     build: .
-    container_name: mqtt-iot-listener
     restart: unless-stopped
     command: ["python", "manage.py", "mqtt_listener"]
-    environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
-      DJANGO_DEBUG: "0"
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-server.echonode.website,localhost,127.0.0.1}
-      DATABASE_PATH: /app/data/db.sqlite3
-      MQTT_HOST: broker
-      MQTT_PORT: "9001"
-      MQTT_WS_PATH: ${MQTT_WS_PATH:-/mqtt}
-      MQTT_TLS: "0"
-      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-iotlab}
-      MQTT_USERNAME: ${MQTT_SERVER_USERNAME:?Set MQTT_SERVER_USERNAME in .env}
-      MQTT_PASSWORD: ${MQTT_SERVER_PASSWORD:?Set MQTT_SERVER_PASSWORD in .env}
-    volumes:
-      - django_data:/app/data
+    environment: *django-env
     depends_on:
+      api:
+        condition: service_healthy
       broker:
         condition: service_started
-      web:
+    networks: [iot-internal]
+
+  retention:
+    build: .
+    restart: unless-stopped
+    command: ["python", "manage.py", "prune_iot_data", "--interval", "15"]
+    environment: *django-env
+    volumes: [iot_media:/app/data/media]
+    depends_on:
+      api:
         condition: service_healthy
-    networks: [mqtt-internal]
+    networks: [iot-internal]
+
+  mediamtx:
+    image: ${MEDIAMTX_IMAGE:-bluenviron/mediamtx:1.21.4}
+    restart: unless-stopped
+    command: ["/mediamtx.yml"]
+    environment:
+      MTX_WEBRTCADDITIONALHOSTS: ${DOMAIN:-server.echonode.website}
+      MTX_WEBRTCALLOWORIGINS: https://${DOMAIN:-server.echonode.website}
+      MTX_HLSALLOWORIGINS: https://${DOMAIN:-server.echonode.website}
+      MTX_AUTHHTTPADDRESS: http://api:8000/api/mediamtx/auth/
+    volumes:
+      - ./deploy/mediamtx.yml:/mediamtx.yml:ro
+      - ./certs:/certs:ro
+    ports:
+      - "8322:8322/tcp"
+      - "8189:8189/udp"
+    expose: ["8888", "8889"]
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [iot-internal]
 
   caddy:
     profiles: ["standalone"]
     image: caddy:2.11.9-alpine
-    container_name: mqtt-iot-caddy
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN:-server.echonode.website}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+    ports: ["80:80", "443:443", "443:443/udp"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
+      api:
+        condition: service_healthy
       web:
         condition: service_healthy
       broker:
         condition: service_started
-    networks: [mqtt-internal]
+      mediamtx:
+        condition: service_started
+    networks: [iot-internal]
 
 volumes:
-  django_data:
+  postgres_data:
   mosquitto_data:
+  iot_media:
+  iot_static:
   caddy_data:
   caddy_config:
 
 networks:
-  mqtt-internal:
+  iot-internal:
     driver: bridge

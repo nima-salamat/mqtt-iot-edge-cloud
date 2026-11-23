@@ -2,15 +2,16 @@
 set -eu
 
 if [ ! -f .env ]; then
-  echo "Copy .env.example to .env and set all secrets first." >&2
-  exit 1
-fi
-if [ ! -f mosquitto/aclfile ]; then
-  echo "Missing Mosquitto ACL file." >&2
+  echo "Copy .env.example to .env and set the secrets first." >&2
   exit 1
 fi
 if grep -Eq 'REPLACE_|YOUR_|CHANGE_ME' .env; then
-  echo "One or more placeholder secrets remain in .env. Replace them before deployment." >&2
+  echo "One or more placeholder values remain in .env." >&2
+  exit 1
+fi
+if [ ! -s certs/fullchain.pem ] || [ ! -s certs/privkey.pem ]; then
+  echo "Missing certs/fullchain.pem or certs/privkey.pem for MediaMTX RTSPS." >&2
+  echo "See certs/README.md. Do not commit the private key." >&2
   exit 1
 fi
 
@@ -18,6 +19,7 @@ set -a
 . ./.env
 set +a
 PROXY_MODE="${PROXY_MODE:-traefik-swarm}"
+
 case "$PROXY_MODE" in
   traefik-swarm)
     ./scripts/deploy_vps_swarm.sh
@@ -27,7 +29,6 @@ case "$PROXY_MODE" in
     TRAEFIK_NETWORK="${TRAEFIK_NETWORK:-traefik-public}"
     if ! docker network inspect "$TRAEFIK_NETWORK" >/dev/null 2>&1; then
       echo "Traefik Docker network '$TRAEFIK_NETWORK' was not found." >&2
-      echo "Set TRAEFIK_NETWORK to the existing shared network, or use PROXY_MODE=standalone." >&2
       exit 1
     fi
     docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
@@ -43,5 +44,7 @@ case "$PROXY_MODE" in
 esac
 
 echo
-echo "Streamlit panel: https://${DOMAIN:-server.echonode.website}"
-echo "Log in with PANEL_USERNAME and PANEL_PASSWORD from .env."
+echo "User dashboard: https://${DOMAIN:-server.echonode.website}/"
+echo "Django Admin: https://${DOMAIN:-server.echonode.website}/admin/"
+echo "Operator diagnostics: https://${DOMAIN:-server.echonode.website}/ops/"
+echo "Create the first staff user with: docker compose exec api python manage.py createsuperuser"

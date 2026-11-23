@@ -1,6 +1,25 @@
 version: "3.8"
 
 services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iotlab}
+      POSTGRES_USER: ${POSTGRES_USER:-iotlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [iot-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \\"${POSTGRES_USER:-iotlab}\\" -d \\"${POSTGRES_DB:-iotlab}\\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any}
+      placement:
+        constraints: [node.labels.mqtt-iot-edge-cloud == true]
+
   broker:
     image: eclipse-mosquitto:2.1.2
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
@@ -8,123 +27,194 @@ services:
       - ${PROJECT_DIR}/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ${PROJECT_DIR}/mosquitto/aclfile:/mosquitto/config/aclfile:ro
       - mosquitto_data:/mosquitto/data
-    networks:
-      - mqtt-internal
-      - traefik-public
+    networks: [iot-internal, traefik-public]
     deploy:
       replicas: 1
-      restart_policy:
-        condition: any
+      restart_policy: {condition: any}
       placement:
-        constraints:
-          - node.labels.mqtt-iot-edge-cloud == true
+        constraints: [node.labels.mqtt-iot-edge-cloud == true]
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NETWORK}"
-        - "traefik.http.routers.mqtt-iot-ws.rule=Host(`${DOMAIN}`) && PathPrefix(`/mqtt`)"
-        - "traefik.http.routers.mqtt-iot-ws.entrypoints=${TRAEFIK_ENTRYPOINT}"
-        - "traefik.http.routers.mqtt-iot-ws.priority=100"
-        - "traefik.http.routers.mqtt-iot-ws.tls=true"
-        - "traefik.http.routers.mqtt-iot-ws.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
-        - "traefik.http.routers.mqtt-iot-ws.service=mqtt-iot-ws"
-        - "traefik.http.services.mqtt-iot-ws.loadbalancer.server.port=9001"
+        - "traefik.http.routers.mqtt-iot-mqtt.rule=Host(`${DOMAIN}`) && PathPrefix(`/mqtt`)"
+        - "traefik.http.routers.mqtt-iot-mqtt.entrypoints=${TRAEFIK_ENTRYPOINT}"
+        - "traefik.http.routers.mqtt-iot-mqtt.priority=120"
+        - "traefik.http.routers.mqtt-iot-mqtt.tls=true"
+        - "traefik.http.routers.mqtt-iot-mqtt.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
+        - "traefik.http.routers.mqtt-iot-mqtt.service=mqtt-iot-mqtt"
+        - "traefik.http.services.mqtt-iot-mqtt.loadbalancer.server.port=9001"
 
-  # Streamlit is the public control panel. Django remains the data model/migration layer.
-  web:
+  api:
     image: ${MQTT_IOT_IMAGE}
     command: >
       sh -c "python manage.py migrate --noinput &&
-             python manage.py seed_demo &&
-             streamlit run streamlit_app.py
-             --server.address=0.0.0.0
-             --server.port=8501
-             --server.headless=true"
-    environment:
+             python manage.py collectstatic --noinput &&
+             gunicorn iotlab.wsgi:application --bind 0.0.0.0:8000
+             --workers 3 --timeout 180 --access-logfile - --error-logfile -"
+    environment: &django-env
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
       DJANGO_DEBUG: "0"
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
-      DATABASE_PATH: /app/data/db.sqlite3
-      DOMAIN: ${DOMAIN}
-      PANEL_USERNAME: ${PANEL_USERNAME}
-      PANEL_PASSWORD: ${PANEL_PASSWORD}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-iotlab}:${POSTGRES_PASSWORD}@${STACK_NAME}_db:5432/${POSTGRES_DB:-iotlab}"
+      MEDIA_ROOT: /app/data/media
       MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-iotlab}
       MQTT_WS_PATH: ${MQTT_WS_PATH:-/mqtt}
-      MQTT_BROKER_HOST: ${STACK_NAME}_broker
-      MQTT_BROKER_PORT: "1883"
+      MQTT_HOST: ${STACK_NAME}_broker
+      MQTT_PORT: "9001"
+      MQTT_TLS: "0"
       MQTT_SERVER_USERNAME: ${MQTT_SERVER_USERNAME}
       MQTT_SERVER_PASSWORD: ${MQTT_SERVER_PASSWORD}
     volumes:
-      - django_data:/app/data
-    networks:
-      - mqtt-internal
-      - traefik-public
+      - iot_media:/app/data/media
+      - iot_static:/app/staticfiles
+    networks: [iot-internal, traefik-public]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 15
       start_period: 40s
     deploy:
       replicas: 1
-      restart_policy:
-        condition: any
+      restart_policy: {condition: any}
       placement:
-        constraints:
-          - node.labels.mqtt-iot-edge-cloud == true
+        constraints: [node.labels.mqtt-iot-edge-cloud == true]
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NETWORK}"
-        - "traefik.http.routers.mqtt-iot-dashboard.rule=Host(`${DOMAIN}`) && !PathPrefix(`/mqtt`)"
-        - "traefik.http.routers.mqtt-iot-dashboard.entrypoints=${TRAEFIK_ENTRYPOINT}"
-        - "traefik.http.routers.mqtt-iot-dashboard.priority=10"
-        - "traefik.http.routers.mqtt-iot-dashboard.tls=true"
-        - "traefik.http.routers.mqtt-iot-dashboard.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
-        - "traefik.http.routers.mqtt-iot-dashboard.service=mqtt-iot-dashboard"
-        - "traefik.http.services.mqtt-iot-dashboard.loadbalancer.server.port=8501"
+        - "traefik.http.routers.mqtt-iot-api.rule=Host(`${DOMAIN}`) && !PathPrefix(`/mqtt`) && !PathPrefix(`/ops`) && !PathPrefix(`/webrtc`) && !PathPrefix(`/streams`)"
+        - "traefik.http.routers.mqtt-iot-api.entrypoints=${TRAEFIK_ENTRYPOINT}"
+        - "traefik.http.routers.mqtt-iot-api.priority=10"
+        - "traefik.http.routers.mqtt-iot-api.tls=true"
+        - "traefik.http.routers.mqtt-iot-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
+        - "traefik.http.routers.mqtt-iot-api.service=mqtt-iot-api"
+        - "traefik.http.services.mqtt-iot-api.loadbalancer.server.port=8000"
         - "traefik.http.routers.mqtt-iot-http.rule=Host(`${DOMAIN}`)"
         - "traefik.http.routers.mqtt-iot-http.entrypoints=${TRAEFIK_HTTP_ENTRYPOINT}"
         - "traefik.http.routers.mqtt-iot-http.middlewares=mqtt-iot-https-redirect"
-        - "traefik.http.routers.mqtt-iot-http.service=mqtt-iot-dashboard"
+        - "traefik.http.routers.mqtt-iot-http.service=mqtt-iot-api"
         - "traefik.http.middlewares.mqtt-iot-https-redirect.redirectscheme.scheme=https"
+
+  web:
+    image: ${MQTT_IOT_IMAGE}
+    command: ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+    environment:
+      <<: *django-env
+      PANEL_USERNAME: ${PANEL_USERNAME}
+      PANEL_PASSWORD: ${PANEL_PASSWORD}
+      MQTT_BROKER_HOST: ${STACK_NAME}_broker
+      MQTT_BROKER_PORT: "1883"
+    networks: [iot-internal, traefik-public]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/ops/_stcore/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any}
+      placement:
+        constraints: [node.labels.mqtt-iot-edge-cloud == true]
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK}"
+        - "traefik.http.routers.mqtt-iot-ops.rule=Host(`${DOMAIN}`) && PathPrefix(`/ops`)"
+        - "traefik.http.routers.mqtt-iot-ops.entrypoints=${TRAEFIK_ENTRYPOINT}"
+        - "traefik.http.routers.mqtt-iot-ops.priority=100"
+        - "traefik.http.routers.mqtt-iot-ops.tls=true"
+        - "traefik.http.routers.mqtt-iot-ops.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
+        - "traefik.http.routers.mqtt-iot-ops.service=mqtt-iot-ops"
+        - "traefik.http.services.mqtt-iot-ops.loadbalancer.server.port=8501"
+
+  mediamtx:
+    image: ${MEDIAMTX_IMAGE:-bluenviron/mediamtx:1.21.4}
+    command: ["/mediamtx.yml"]
+    environment:
+      MTX_WEBRTCADDITIONALHOSTS: ${DOMAIN}
+      MTX_WEBRTCALLOWORIGINS: https://${DOMAIN}
+      MTX_HLSALLOWORIGINS: https://${DOMAIN}
+      MTX_AUTHHTTPADDRESS: http://${STACK_NAME}_api:8000/api/mediamtx/auth/
+    volumes:
+      - ${PROJECT_DIR}/deploy/mediamtx.yml:/mediamtx.yml:ro
+      - ${PROJECT_DIR}/certs:/certs:ro
+    ports:
+      - target: 8322
+        published: 8322
+        protocol: tcp
+        mode: host
+      - target: 8189
+        published: 8189
+        protocol: udp
+        mode: host
+    networks: [iot-internal, traefik-public]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any}
+      placement:
+        constraints: [node.labels.mqtt-iot-edge-cloud == true]
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK}"
+        - "traefik.http.routers.mqtt-iot-webrtc.rule=Host(`${DOMAIN}`) && PathPrefix(`/webrtc`)"
+        - "traefik.http.routers.mqtt-iot-webrtc.entrypoints=${TRAEFIK_ENTRYPOINT}"
+        - "traefik.http.routers.mqtt-iot-webrtc.priority=90"
+        - "traefik.http.routers.mqtt-iot-webrtc.tls=true"
+        - "traefik.http.routers.mqtt-iot-webrtc.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
+        - "traefik.http.routers.mqtt-iot-webrtc.middlewares=mqtt-iot-webrtc-strip"
+        - "traefik.http.middlewares.mqtt-iot-webrtc-strip.stripprefix.prefixes=/webrtc"
+        - "traefik.http.routers.mqtt-iot-webrtc.service=mqtt-iot-webrtc"
+        - "traefik.http.services.mqtt-iot-webrtc.loadbalancer.server.port=8889"
+        - "traefik.http.routers.mqtt-iot-streams.rule=Host(`${DOMAIN}`) && PathPrefix(`/streams`)"
+        - "traefik.http.routers.mqtt-iot-streams.entrypoints=${TRAEFIK_ENTRYPOINT}"
+        - "traefik.http.routers.mqtt-iot-streams.priority=80"
+        - "traefik.http.routers.mqtt-iot-streams.tls=true"
+        - "traefik.http.routers.mqtt-iot-streams.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
+        - "traefik.http.routers.mqtt-iot-streams.middlewares=mqtt-iot-streams-strip"
+        - "traefik.http.middlewares.mqtt-iot-streams-strip.stripprefix.prefixes=/streams"
+        - "traefik.http.routers.mqtt-iot-streams.service=mqtt-iot-streams"
+        - "traefik.http.services.mqtt-iot-streams.loadbalancer.server.port=8888"
 
   listener:
     image: ${MQTT_IOT_IMAGE}
     command: ["python", "manage.py", "mqtt_listener"]
-    environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DJANGO_DEBUG: "0"
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
-      DATABASE_PATH: /app/data/db.sqlite3
-      MQTT_HOST: ${STACK_NAME}_broker
-      MQTT_PORT: "9001"
-      MQTT_WS_PATH: ${MQTT_WS_PATH:-/mqtt}
-      MQTT_TLS: "0"
-      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-iotlab}
-      MQTT_USERNAME: ${MQTT_SERVER_USERNAME}
-      MQTT_PASSWORD: ${MQTT_SERVER_PASSWORD}
-    volumes:
-      - django_data:/app/data
-    networks:
-      - mqtt-internal
+    environment: *django-env
+    networks: [iot-internal]
     deploy:
-      # The deployment script scales this to one after the Streamlit service is healthy.
       replicas: 0
-      restart_policy:
-        condition: any
+      restart_policy: {condition: any}
       placement:
-        constraints:
-          - node.labels.mqtt-iot-edge-cloud == true
+        constraints: [node.labels.mqtt-iot-edge-cloud == true]
+
+  retention:
+    image: ${MQTT_IOT_IMAGE}
+    command: ["python", "manage.py", "prune_iot_data", "--interval", "15"]
+    environment: *django-env
+    volumes: [iot_media:/app/data/media]
+    networks: [iot-internal]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any}
+      placement:
+        constraints: [node.labels.mqtt-iot-edge-cloud == true]
 
 volumes:
-  django_data:
+  postgres_data:
     external: true
-    name: ${STACK_NAME}_django_data
+    name: ${STACK_NAME}_postgres_data
   mosquitto_data:
     external: true
     name: ${STACK_NAME}_mosquitto_data
+  iot_media:
+    external: true
+    name: ${STACK_NAME}_iot_media
+  iot_static:
+    external: true
+    name: ${STACK_NAME}_iot_static
 
 networks:
-  mqtt-internal:
+  iot-internal:
     driver: overlay
     attachable: true
   traefik-public:

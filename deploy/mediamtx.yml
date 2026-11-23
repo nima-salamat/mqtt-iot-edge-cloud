@@ -1,0 +1,43 @@
+logLevel: info
+logDestinations: [stdout]
+
+api: no
+metrics: no
+pprof: no
+
+rtsp: yes
+rtspAddress: :8554
+rtspsAddress: :8322
+rtspEncryption: strict
+rtspTransports: [tcp]
+rtspServerCert: /certs/fullchain.pem
+rtspServerKey: /certs/privkey.pem
+rtspAuthMethods: [basic]
+
+hls: yes
+hlsAddress: :8888
+hlsVariant: fmp4
+hlsSegmentDuration: 2s
+hlsSegmentCount: 5
+hlsMuxerCloseAfter: 60s
+hlsAllowOrigins: ['https://server.echonode.website']
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ['https://server.echonode.website']
+webrtcLocalUDPAddress: :8189
+webrtcIPsFromInterfaces: yes
+
+authMethod: http
+authHTTPAddress: http://api:8000/api/mediamtx/auth/
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+pathDefaults:
+  source: publisher
+  overridePublisher: no
+
+paths:
+  all_others:

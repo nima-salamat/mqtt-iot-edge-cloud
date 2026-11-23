@@ -1,0 +1,159 @@
+{% extends "dashboard/base.html" %}
+{% load static %}
+{% block title %}داشبورد دوربین‌ها{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><span class="eyebrow">SMART SECURITY · EDGE AI</span><h1>مرکز نظارت تصویری</h1><p>دوربین‌های متصل، رخدادهای تشخیص انسان و وضعیت ضبط را از یک پنل مدیریت کن.</p></div>
+  <div class="hero-actions"><span class="live-pill"><i></i> سامانه فعال</span><button class="btn primary" id="add-device">افزودن دوربین <span>＋</span></button></div>
+</section>
+<section class="stats-grid">
+  <article class="stat-card"><small>دوربین‌های من</small><strong id="device-count">{{ devices|length }}</strong><span>دستگاه ثبت‌شده</span></article>
+  <article class="stat-card"><small>دوربین‌های آنلاین</small><strong id="online-count">{{ online_count }}</strong><span>وضعیت آخرین Heartbeat</span></article>
+  <article class="stat-card"><small>هشدارهای اخیر</small><strong id="alarm-count">{{ recent_alarms|length }}</strong><span>رخدادهای ذخیره‌شده</span></article>
+  <article class="stat-card"><small>ذخیره ویدئو در سرور</small><strong>{{ retention.server_video_minutes }} دقیقه</strong><span>حافظه چرخشی هر حساب</span></article>
+</section>
+<section class="section">
+  <div class="section-heading"><div><span class="eyebrow">YOUR DEVICES</span><h2>دوربین‌های ثبت‌شده</h2></div><span class="muted">هر حساب فقط دستگاه‌های خودش را می‌بیند</span></div>
+  <div class="device-grid">
+    {% for device in devices %}
+      <a class="device-card" data-device-id="{{ device.device_id }}" href="{% url 'dashboard:device-detail' device.device_id %}">
+        <div class="device-card-top"><div class="camera-icon">▣</div><span class="state device-status {% if device.is_online %}online{% else %}offline{% endif %}"><i></i>{% if device.is_online %}آنلاین{% else %}آفلاین{% endif %}</span></div>
+        <h3>{{ device.name }}</h3><code>{{ device.device_id }}</code>
+        <div class="device-meta"><span>Video FPS</span><b class="video-fps">{{ device.reported_video_fps|floatformat:1 }}</b></div>
+        <div class="device-meta"><span>AI FPS</span><b class="ai-fps">{{ device.reported_inference_fps|floatformat:1 }}</b></div>
+        <div class="device-meta"><span>مدل تشخیص</span><b class="model-status">{% if device.model_loaded %}YOLOv5n فعال{% else %}مدل بارگذاری نشده{% endif %}</b></div>
+        <div class="device-meta"><span>ویدئوی زنده</span><b class="stream-status">{% if device.current_state.rtsp_connected %}متصل{% else %}قطع{% endif %}</b></div>
+        <div class="device-meta"><span>هشدار ارسال‌نشده</span><b class="pending-alerts">{{ device.current_state.pending_alerts|default:0 }}</b></div>
+        <div class="device-meta"><span>ویدئوی ارسال‌نشده</span><b class="pending-videos">{{ device.current_state.pending_video_segments|default:0 }}</b></div>
+        <div class="device-footer"><span>آخرین ارتباط: <time class="last-heartbeat">{{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"هنوز دریافت نشده" }}</time></span><b>مشاهده دستگاه ←</b></div>
+      </a>
+    {% empty %}
+      <div class="empty-card"><div class="empty-icon">▣</div><h3>هنوز دوربینی ثبت نکرده‌ای</h3><p>از دکمه «افزودن دوربین» یک QR یک‌بارمصرف بساز و آن را با دوربین Raspberry Pi اسکن کن.</p><button class="btn primary" id="add-device-empty">شروع ثبت دوربین</button></div>
+    {% endfor %}
+  </div>
+</section>
+<section class="section">
+  <div class="section-heading"><div><span class="eyebrow">RECENT EVENTS</span><h2>آخرین هشدارها</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>نوع رخداد</th><th>دوربین</th><th>اطمینان</th><th>زمان</th><th>وضعیت</th></tr></thead><tbody id="recent-alarm-body">
+    {% for alarm in recent_alarms %}
+      <tr><td><span class="event-type">● تشخیص انسان</span></td><td><a href="{% url 'dashboard:device-detail' alarm.device.device_id %}">{{ alarm.device.name }}</a></td><td>{{ alarm.confidence|floatformat:2 }}</td><td>{{ alarm.detected_at|date:"Y-m-d H:i:s" }}</td><td>{% if alarm.acknowledged %}<span class="state online">بررسی‌شده</span>{% else %}<span class="state warning">جدید</span>{% endif %}</td></tr>
+    {% empty %}<tr><td colspan="5" class="empty">هنوز هشداری ثبت نشده است.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="section">
+  <div class="section-heading"><div><span class="eyebrow">DATA RETENTION</span><h2>مدت نگهداری اطلاعات حساب</h2></div><span class="muted">سیاست سرور؛ جدا از ذخیره‌سازی محلی Raspberry Pi</span></div>
+  <form id="retention-form" class="retention-form">
+    {% csrf_token %}
+    <label>ویدئوی اخیر سرور (دقیقه)<input type="number" min="1" max="60" id="ret-video" value="{{ retention.server_video_minutes }}"></label>
+    <label>تصاویر هشدار (روز)<input type="number" min="1" max="365" id="ret-images" value="{{ retention.alarm_image_days }}"></label>
+    <label>لاگ دستگاه (روز)<input type="number" min="1" max="365" id="ret-logs" value="{{ retention.device_log_days }}"></label>
+    <button class="btn secondary" type="submit">ذخیره سیاست نگهداری</button>
+  </form>
+</section>
+<div class="modal" id="pair-modal" aria-hidden="true"><div class="modal-panel">
+  <button class="modal-close" id="close-modal">×</button><span class="eyebrow">SECURE DEVICE PAIRING</span><h2>ثبت Raspberry Pi Camera</h2>
+  <p class="muted">این QR فقط یک‌بار قابل استفاده است و پس از دو دقیقه منقضی می‌شود. آن را فقط مقابل دوربین دستگاه خودت بگیر.</p>
+  <div class="qr-wrap"><img id="pair-qr-image" alt="کد اتصال یک‌بارمصرف"></div><code id="pair-code" class="pair-code"></code><p id="pair-expiry" class="muted"></p>
+</div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const addButtons=[document.getElementById('add-device'),document.getElementById('add-device-empty')].filter(Boolean);
+const modal=document.getElementById('pair-modal');
+const csrf=document.querySelector('input[name=csrfmiddlewaretoken]').value;
+function closeModal(){modal.classList.remove('open');modal.setAttribute('aria-hidden','true');}
+document.getElementById('close-modal').addEventListener('click',closeModal);
+modal.addEventListener('click',e=>{if(e.target===modal)closeModal();});
+let pairingTimer=null;
+function closeModal(){
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden','true');
+  if(pairingTimer){clearInterval(pairingTimer);pairingTimer=null;}
+}
+async function createPairing(){
+  for(const button of addButtons)button.disabled=true;
+  try{
+    const response=await fetch('/api/pairings/',{method:'POST',headers:{'X-CSRFToken':csrf,'Accept':'application/json'}});
+    const result=await response.json();if(!response.ok)throw new Error(result.error||'ایجاد کد اتصال ناموفق بود');
+    modal.classList.add('open');modal.setAttribute('aria-hidden','false');
+    document.getElementById('pair-qr-image').src=result.qr_data_url;
+    document.getElementById('pair-code').textContent=result.qr_payload;
+    document.getElementById('pair-expiry').textContent='اعتبار تا '+new Date(result.expires_at).toLocaleTimeString('fa-IR');
+    const expiry=new Date(result.expires_at).getTime();
+    if(pairingTimer)clearInterval(pairingTimer);
+    pairingTimer=setInterval(async()=>{
+      try{
+        const check=await fetch('/api/pairings/'+result.pairing_id+'/',{cache:'no-store'});
+        const status=await check.json();
+        if(status.status==='paired'){
+          clearInterval(pairingTimer);pairingTimer=null;
+          document.getElementById('pair-expiry').textContent='اتصال موفق بود؛ دوربین به حساب شما اضافه شد.';
+          document.getElementById('pair-code').textContent='Device: '+status.device_id;
+          setTimeout(()=>window.location.reload(),900);
+        }else if(status.status==='expired'||Date.now()>=expiry){
+          clearInterval(pairingTimer);pairingTimer=null;
+          document.getElementById('pair-expiry').textContent='مهلت QR به پایان رسید. برای اتصال مجدد کد تازه بساز.';
+        }
+      }catch(error){console.warn('Pairing status check failed',error);}
+    },2000);
+  }catch(error){alert(error.message);}finally{for(const button of addButtons)button.disabled=false;}
+}
+for(const button of addButtons)button.addEventListener('click',createPairing);
+document.getElementById('retention-form').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const data={server_video_minutes:Number(document.getElementById('ret-video').value),alarm_image_days:Number(document.getElementById('ret-images').value),device_log_days:Number(document.getElementById('ret-logs').value)};
+  const response=await fetch('/settings/retention/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':csrf},body:JSON.stringify(data)});
+  const result=await response.json();if(!response.ok)alert(result.error||'ذخیره ناموفق بود');else alert('سیاست نگهداری ذخیره شد.');
+});
+
+async function refreshOverview(){
+  try{
+    const response=await fetch('/api/dashboard/overview/',{cache:'no-store'});
+    if(!response.ok)return;
+    const data=await response.json();
+    const devices=data.devices||[], alarms=data.alarms||[];
+    document.getElementById('device-count').textContent=devices.length;
+    document.getElementById('online-count').textContent=devices.filter(item=>item.is_online).length;
+    document.getElementById('alarm-count').textContent=alarms.length;
+    for(const device of devices){
+      const card=document.querySelector('.device-card[data-device-id="'+device.device_id+'"]');
+      if(!card)continue;
+      const badge=card.querySelector('.device-status');
+      if(badge){
+        badge.classList.toggle('online',!!device.is_online);
+        badge.classList.toggle('offline',!device.is_online);
+        const dot=document.createElement('i');
+        badge.replaceChildren(dot,document.createTextNode(device.is_online?'آنلاین':'آفلاین'));
+      }
+      const set=(selector,value)=>{const node=card.querySelector(selector);if(node)node.textContent=value;};
+      set('.video-fps',Number(device.video_fps||0).toFixed(1));
+      set('.ai-fps',Number(device.inference_fps||0).toFixed(1));
+      set('.model-status',device.model_loaded?'YOLOv5n فعال':'مدل بارگذاری نشده');
+      set('.stream-status',device.rtsp_connected?'متصل':'قطع');
+      set('.pending-alerts',device.pending_alerts||0);
+      set('.pending-videos',device.pending_video_segments||0);
+      set('.last-heartbeat',device.last_heartbeat?new Date(device.last_heartbeat).toLocaleString('fa-IR'):'هنوز دریافت نشده');
+    }
+    const body=document.getElementById('recent-alarm-body');
+    body.replaceChildren();
+    if(!alarms.length){
+      const row=document.createElement('tr'),cell=document.createElement('td');
+      cell.colSpan=5;cell.className='empty';cell.textContent='هنوز هشداری ثبت نشده است.';
+      row.append(cell);body.append(row);return;
+    }
+    for(const alarm of alarms){
+      const row=document.createElement('tr');
+      const eventCell=document.createElement('td');eventCell.textContent='● تشخیص انسان';eventCell.className='event-type';
+      const deviceCell=document.createElement('td'),link=document.createElement('a');
+      link.href='/devices/'+encodeURIComponent(alarm.device_id)+'/';link.textContent=alarm.device_name;deviceCell.append(link);
+      const confidence=document.createElement('td');confidence.textContent=Number(alarm.confidence).toFixed(2);
+      const time=document.createElement('td');time.textContent=new Date(alarm.detected_at).toLocaleString('fa-IR');
+      const stateCell=document.createElement('td'),state=document.createElement('span');
+      state.className='state '+(alarm.acknowledged?'online':'warning');state.textContent=alarm.acknowledged?'بررسی‌شده':'جدید';
+      stateCell.append(state);row.append(eventCell,deviceCell,confidence,time,stateCell);body.append(row);
+    }
+  }catch(error){console.warn('Dashboard refresh failed',error);}
+}
+setInterval(refreshOverview,15000);
+</script>
+{% endblock %}

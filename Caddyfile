@@ -6,7 +6,24 @@
         reverse_proxy broker:9001
     }
 
-    handle {
+    @ops path /ops*
+    handle @ops {
         reverse_proxy web:8501
+    }
+
+    @webrtc path /webrtc/*
+    handle @webrtc {
+        uri strip_prefix /webrtc
+        reverse_proxy mediamtx:8889
+    }
+
+    @streams path /streams/*
+    handle @streams {
+        uri strip_prefix /streams
+        reverse_proxy mediamtx:8888
+    }
+
+    handle {
+        reverse_proxy api:8000
     }
 }

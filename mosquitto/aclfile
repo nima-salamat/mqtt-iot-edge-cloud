@@ -1,17 +1,9 @@
-# Raspberry Pi identity: publish device events/telemetry/status/acks;
-# subscribe only to its own command topic.
-user raspberry-pi-01
-topic write iotlab/devices/raspberry-pi-01/events
-topic write iotlab/devices/raspberry-pi-01/telemetry
-topic write iotlab/devices/raspberry-pi-01/status
-topic write iotlab/devices/raspberry-pi-01/ack
-topic read  iotlab/devices/raspberry-pi-01/command
+# Camera MQTT credentials may publish alarm notifications only.
+# Device snapshots, heartbeat, logs and MP4 segments use per-device HTTPS auth.
+user camera-edge
+topic write iotlab/devices/+/alarms
 
-# Server identity: receive device messages, publish commands, read broker stats.
+# Django listener and operator panel can read notifications and broker metrics.
 user django-server
-topic read  iotlab/devices/raspberry-pi-01/events
-topic read  iotlab/devices/raspberry-pi-01/telemetry
-topic read  iotlab/devices/raspberry-pi-01/status
-topic read  iotlab/devices/raspberry-pi-01/ack
-topic write iotlab/devices/raspberry-pi-01/command
-topic read  $SYS/#
+topic read iotlab/devices/+/alarms
+topic read $SYS/#

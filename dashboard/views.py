@@ -1,0 +1,143 @@
+from __future__ import annotations
+import json
+from datetime import timedelta
+from django.contrib.auth.decorators import login_required
+from django.http import FileResponse, Http404, JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.utils import timezone
+from django.views.decorators.http import require_POST
+from .models import Alarm, Device, DeviceLog, RetentionPolicy, VideoSegment
+
+
+def _visible_devices(user):
+    return Device.objects.select_related("owner") if user.is_staff else Device.objects.filter(owner=user)
+
+
+@login_required
+def home(request):
+    devices = _visible_devices(request.user).order_by("name", "device_id")
+    online_count = devices.filter(
+        is_online=True, last_heartbeat__gte=timezone.now() - timedelta(seconds=50)
+    ).count()
+    recent_alarms = Alarm.objects.filter(device__in=devices).select_related("device")[:12]
+    policy, _ = RetentionPolicy.objects.get_or_create(user=request.user)
+    return render(request, "dashboard/home.html", {
+        "devices": devices,
+        "online_count": online_count,
+        "recent_alarms": recent_alarms,
+        "retention": policy,
+        "is_admin": request.user.is_staff,
+    })
+
+
+@login_required
+def device_detail(request, device_id):
+    device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
+    alarms = device.alarms.all()[:50]
+    segments = device.video_segments.all()[:120]
+    logs = device.logs.all()[:50]
+    return render(request, "dashboard/device_detail.html", {
+        "device": device, "alarms": alarms, "segments": segments, "logs": logs,
+    })
+
+
+@login_required
+def alarm_image(request, alarm_id):
+    alarm = get_object_or_404(Alarm.objects.select_related("device"), pk=alarm_id)
+    if not (request.user.is_staff or alarm.device.owner_id == request.user.id):
+        raise Http404
+    if not alarm.snapshot:
+        raise Http404
+    response = FileResponse(alarm.snapshot.open("rb"), content_type="image/jpeg")
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@login_required
+def segment_file(request, segment_id):
+    segment = get_object_or_404(VideoSegment.objects.select_related("device"), pk=segment_id)
+    if not (request.user.is_staff or segment.device.owner_id == request.user.id):
+        raise Http404
+    if not segment.file:
+        raise Http404
+    response = FileResponse(segment.file.open("rb"), content_type="video/mp4")
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@login_required
+@require_POST
+def update_retention(request):
+    try:
+        values = json.loads(request.body or b"{}")
+        if not isinstance(values, dict):
+            raise ValueError
+        video = int(values.get("server_video_minutes", 10))
+        images = int(values.get("alarm_image_days", 30))
+        logs = int(values.get("device_log_days", 30))
+        if not (1 <= video <= 60 and 1 <= images <= 365 and 1 <= logs <= 365):
+            raise ValueError
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({"error": "مدت نگهداری خارج از محدوده مجاز است."}, status=400)
+    policy, _ = RetentionPolicy.objects.get_or_create(user=request.user)
+    policy.server_video_minutes = video
+    policy.alarm_image_days = images
+    policy.device_log_days = logs
+    policy.save(update_fields=["server_video_minutes", "alarm_image_days", "device_log_days", "updated_at"])
+    return JsonResponse({"status": "saved"})
+
+
+@login_required
+@require_POST
+def acknowledge_alarm(request, alarm_id):
+    alarm = get_object_or_404(Alarm.objects.select_related("device"), pk=alarm_id)
+    if not (request.user.is_staff or alarm.device.owner_id == request.user.id):
+        raise Http404
+    alarm.acknowledged = True
+    alarm.save(update_fields=["acknowledged"])
+    return JsonResponse({"status": "acknowledged"})
+
+
+@login_required
+def dashboard_overview(request):
+    devices = list(_visible_devices(request.user).order_by("name", "device_id"))
+    alarms = Alarm.objects.filter(device__in=devices).select_related("device")[:12]
+    return JsonResponse({
+        "devices": [
+            {
+                "device_id": device.device_id,
+                "name": device.name,
+                "is_online": bool(
+                    device.is_online and device.last_heartbeat
+                    and device.last_heartbeat >= timezone.now() - timedelta(seconds=50)
+                ),
+                "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
+                "video_fps": round(device.reported_video_fps, 1),
+                "inference_fps": round(device.reported_inference_fps, 1),
+                "model_loaded": device.model_loaded,
+                "camera_ready": bool(device.current_state.get("camera_ready", False)),
+                "rtsp_connected": bool(device.current_state.get("rtsp_connected", False)),
+                "pending_alerts": int(device.current_state.get("pending_alerts", 0) or 0),
+                "pending_video_segments": int(device.current_state.get("pending_video_segments", 0) or 0),
+            }
+            for device in devices
+        ],
+        "alarms": [
+            {
+                "id": alarm.pk,
+                "device_id": alarm.device_id,
+                "device_name": alarm.device.name,
+                "confidence": round(alarm.confidence, 3),
+                "detected_at": alarm.detected_at.isoformat(),
+                "acknowledged": alarm.acknowledged,
+                "has_snapshot": bool(alarm.snapshot),
+            }
+            for alarm in alarms
+        ],
+    })
+
+
+def health(request):
+    return JsonResponse({"status": "ok", "service": "iot-alarm-api"})

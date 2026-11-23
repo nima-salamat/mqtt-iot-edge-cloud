@@ -1,12 +1,10 @@
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 import os
 
-from django.db.backends.signals import connection_created
-
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "unsafe-local-only-change-me")
-DEBUG = os.environ.get("DJANGO_DEBUG", "1").lower() in {"1", "true", "yes"}
+DEBUG = os.environ.get("DJANGO_DEBUG", "0").lower() in {"1", "true", "yes"}
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-unsafe-key-change-before-deployment")
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
@@ -30,6 +28,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -39,49 +38,57 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "iotlab.urls"
-
-TEMPLATES = [
-    {
-        "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
-        "APP_DIRS": True,
-        "OPTIONS": {
-            "context_processors": [
-                "django.template.context_processors.debug",
-                "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
-                "django.contrib.messages.context_processors.messages",
-            ],
-        },
+TEMPLATES = [{
+    "BACKEND": "django.template.backends.django.DjangoTemplates",
+    "DIRS": [],
+    "APP_DIRS": True,
+    "OPTIONS": {
+        "context_processors": [
+            "django.template.context_processors.debug",
+            "django.template.context_processors.request",
+            "django.contrib.auth.context_processors.auth",
+            "django.contrib.messages.context_processors.messages",
+        ],
     },
-]
-
+}]
 WSGI_APPLICATION = "iotlab.wsgi.application"
 
-DATABASE_PATH = os.environ.get("DATABASE_PATH", str(BASE_DIR / "data" / "db.sqlite3"))
-Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": DATABASE_PATH,
-        "OPTIONS": {"timeout": 30},
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if DATABASE_URL.startswith(("postgres://", "postgresql://")):
+    parsed = urlparse(DATABASE_URL)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": unquote(parsed.path.lstrip("/")),
+            "USER": unquote(parsed.username or ""),
+            "PASSWORD": unquote(parsed.password or ""),
+            "HOST": parsed.hostname or "db",
+            "PORT": parsed.port or 5432,
+            "CONN_MAX_AGE": 60,
+            "OPTIONS": {"connect_timeout": 10},
+        }
     }
+else:
+    DATABASE_PATH = os.environ.get("DATABASE_PATH", str(BASE_DIR / "data" / "db.sqlite3"))
+    Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": DATABASE_PATH,
+            "OPTIONS": {"timeout": 30},
+        }
+    }
+
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", str(BASE_DIR / "data" / "media")))
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+MEDIA_URL = "/media/"
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
-
-
-def _configure_sqlite(sender, connection, **kwargs):
-    if connection.vendor == "sqlite":
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("PRAGMA journal_mode=WAL")
-                cursor.execute("PRAGMA synchronous=NORMAL")
-                cursor.execute("PRAGMA busy_timeout=30000")
-        except Exception:
-            # A concurrent startup/migration may briefly hold the database lock.
-            pass
-
-
-connection_created.connect(_configure_sqlite, dispatch_uid="mqtt_iot_sqlite_wal")
+WHITENOISE_MANIFEST_STRICT = False
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 12}},
@@ -90,20 +97,26 @@ LANGUAGE_CODE = "fa"
 TIME_ZONE = "Asia/Tehran"
 USE_I18N = True
 USE_TZ = True
-
-STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = []
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_CONTENT_TYPE_NOSNIFF = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 X_FRAME_OPTIONS = "DENY"
+DATA_UPLOAD_MAX_MEMORY_SIZE = 180 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 8 * 1024 * 1024
 
 MQTT_HOST = os.environ.get("MQTT_HOST", "127.0.0.1")
-MQTT_PORT = int(os.environ.get("MQTT_PORT", "443"))
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "9001"))
 MQTT_WS_PATH = os.environ.get("MQTT_WS_PATH", "/mqtt")
-MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
-MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
-MQTT_TLS = os.environ.get("MQTT_TLS", "1").lower() in {"1", "true", "yes"}
+MQTT_USERNAME = os.environ.get("MQTT_SERVER_USERNAME", os.environ.get("MQTT_USERNAME", ""))
+MQTT_PASSWORD = os.environ.get("MQTT_SERVER_PASSWORD", os.environ.get("MQTT_PASSWORD", ""))
+MQTT_TLS = os.environ.get("MQTT_TLS", "0").lower() in {"1", "true", "yes"}
 MQTT_TOPIC_PREFIX = os.environ.get("MQTT_TOPIC_PREFIX", "iotlab").strip("/")

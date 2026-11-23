@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import threading
 from datetime import timedelta
@@ -15,22 +14,14 @@ _DJANGO_LOCK = threading.Lock()
 
 
 def setup_django() -> None:
-    """Initialize Django once so Streamlit can read the existing project models."""
     global _DJANGO_READY
     if _DJANGO_READY:
         return
-
     with _DJANGO_LOCK:
         if _DJANGO_READY:
             return
         os.environ.setdefault("DJANGO_SETTINGS_MODULE", "iotlab.settings")
         django.setup()
-        # WAL allows the Streamlit reader and MQTT listener to access the same
-        # small SQLite database with fewer reader/writer lock conflicts.
-        if connection.vendor == "sqlite":
-            with connection.cursor() as cursor:
-                cursor.execute("PRAGMA journal_mode=WAL")
-                cursor.execute("PRAGMA busy_timeout=30000")
         _DJANGO_READY = True
 
 
@@ -45,115 +36,142 @@ def _db_call(callback):
 
 def get_snapshot() -> dict[str, Any]:
     def query():
-        from dashboard.models import Device, Telemetry
+        from dashboard.models import Alarm, Device, DeviceLog, VideoSegment
 
-        devices = list(
-            Device.objects.values(
-                "device_id", "name", "kind", "is_online", "last_seen", "current_state"
-            )
-        )
-        total = Telemetry.objects.count()
-        telemetry_count = Telemetry.objects.filter(topic__endswith="/telemetry").count()
-        event_count = Telemetry.objects.filter(topic__endswith="/events").count()
-        ack_count = Telemetry.objects.filter(topic__endswith="/ack").count()
-        latest = list(Telemetry.objects.select_related("device").order_by("-received_at")[:12])
-        recent = [
-            {
-                "device_id": row.device_id,
-                "device_name": row.device.name,
-                "topic": row.topic,
-                "channel": row.topic.rsplit("/", 1)[-1],
-                "payload": row.payload,
-                "qos": row.qos,
-                "received_at": row.received_at,
-            }
-            for row in latest
-        ]
-        last_seen_values = [d["last_seen"] for d in devices if d["last_seen"]]
-        latest_device_seen = max(last_seen_values) if last_seen_values else None
+        devices = list(Device.objects.select_related("owner").order_by("name", "device_id"))
+        alarms = Alarm.objects.select_related("device", "device__owner")
+        logs = DeviceLog.objects.select_related("device", "device__owner")
+        segments = VideoSegment.objects.select_related("device")
+        now = timezone.now()
+        online_count = Device.objects.filter(
+            is_online=True, last_heartbeat__gte=now - timedelta(seconds=50)
+        ).count()
         return {
-            "devices": devices,
-            "total_messages": total,
-            "telemetry_count": telemetry_count,
-            "event_count": event_count,
-            "ack_count": ack_count,
-            "recent_messages": recent,
-            "last_seen": latest_device_seen,
+            "devices": [
+                {
+                    "device_id": device.device_id,
+                    "name": device.name,
+                    "owner": device.owner.get_username() if device.owner_id else "Unassigned",
+                    "is_online": bool(device.is_online and device.last_heartbeat and
+                                      device.last_heartbeat >= now - timedelta(seconds=50)),
+                    "last_seen": device.last_seen,
+                    "last_heartbeat": device.last_heartbeat,
+                    "video_fps": device.reported_video_fps,
+                    "inference_fps": device.reported_inference_fps,
+                    "model_loaded": device.model_loaded,
+                    "state": device.current_state if isinstance(device.current_state, dict) else {},
+                }
+                for device in devices
+            ],
+            "device_count": len(devices),
+            "online_count": online_count,
+            "offline_count": max(0, len(devices) - online_count),
+            "alarm_count": alarms.count(),
+            "unacknowledged_count": alarms.filter(acknowledged=False).count(),
+            "log_count": logs.count(),
+            "error_count": logs.filter(level="error").count(),
+            "video_segment_count": segments.count(),
+            "video_bytes": sum(segments.values_list("size_bytes", flat=True)),
+            "latest_alarms": [
+                {
+                    "id": row.pk,
+                    "alert_id": row.alert_id,
+                    "device_id": row.device_id,
+                    "device_name": row.device.name,
+                    "owner": row.device.owner.get_username() if row.device.owner_id else "Unassigned",
+                    "event_type": row.event_type,
+                    "confidence": row.confidence,
+                    "detected_at": row.detected_at,
+                    "acknowledged": row.acknowledged,
+                    "has_snapshot": bool(row.snapshot),
+                }
+                for row in alarms.order_by("-detected_at")[:12]
+            ],
+            "latest_logs": [
+                {
+                    "created_at": row.created_at,
+                    "device_id": row.device_id,
+                    "device_name": row.device.name,
+                    "owner": row.device.owner.get_username() if row.device.owner_id else "Unassigned",
+                    "level": row.level,
+                    "category": row.category,
+                    "message": row.message,
+                }
+                for row in logs.order_by("-created_at")[:20]
+            ],
+            "latest_segments": [
+                {
+                    "segment_id": row.segment_id,
+                    "device_id": row.device_id,
+                    "device_name": row.device.name,
+                    "owner": row.device.owner.get_username() if row.device.owner_id else "Unassigned",
+                    "started_at": row.started_at,
+                    "duration_seconds": row.duration_seconds,
+                    "size_bytes": row.size_bytes,
+                    "uploaded_at": row.uploaded_at,
+                }
+                for row in segments.order_by("-started_at")[:12]
+            ],
         }
 
     return _db_call(query)
 
 
-def get_telemetry(hours: int = 24, limit: int = 1000) -> list[dict[str, Any]]:
-    hours = max(1, min(int(hours), 24 * 30))
-    limit = max(10, min(int(limit), 5000))
+def get_alarms(limit: int = 300, only_unacknowledged: bool = False) -> list[dict[str, Any]]:
+    limit = max(10, min(int(limit), 2000))
 
     def query():
-        from dashboard.models import Telemetry
-
-        since = timezone.now() - timedelta(hours=hours)
-        rows = (
-            Telemetry.objects.filter(
-                topic__endswith="/telemetry",
-                received_at__gte=since,
-            )
-            .order_by("-received_at")[:limit]
-        )
-        values = []
-        for row in reversed(list(rows)):
-            payload = row.payload if isinstance(row.payload, dict) else {}
-            temperature = payload.get("temperature_c")
-            humidity = payload.get("humidity_percent")
-            if not isinstance(temperature, (int, float)) and not isinstance(humidity, (int, float)):
-                continue
-            values.append(
-                {
-                    "time": row.received_at,
-                    "temperature_c": temperature,
-                    "humidity_percent": humidity,
-                    "device_id": row.device_id,
-                    "topic": row.topic,
-                }
-            )
-        return values
+        from dashboard.models import Alarm
+        rows = Alarm.objects.select_related("device", "device__owner")
+        if only_unacknowledged:
+            rows = rows.filter(acknowledged=False)
+        return [
+            {
+                "alert_id": row.alert_id,
+                "device_id": row.device_id,
+                "device_name": row.device.name,
+                "owner": row.device.owner.get_username() if row.device.owner_id else "Unassigned",
+                "event_type": row.event_type,
+                "confidence": row.confidence,
+                "detected_at": row.detected_at,
+                "acknowledged": row.acknowledged,
+                "has_snapshot": bool(row.snapshot),
+                "bbox_count": len(row.bbox) if isinstance(row.bbox, list) else 0,
+                "model": (row.details or {}).get("model", "—"),
+            }
+            for row in rows.order_by("-detected_at")[:limit]
+        ]
 
     return _db_call(query)
 
 
-def get_messages(
-    channel: str = "all",
-    search: str = "",
-    limit: int = 300,
-) -> list[dict[str, Any]]:
+def get_logs(limit: int = 300, minimum_level: str = "all") -> list[dict[str, Any]]:
     limit = max(10, min(int(limit), 2000))
 
     def query():
-        from dashboard.models import Telemetry
-
-        rows = Telemetry.objects.select_related("device").order_by("-received_at")
-        if channel in {"events", "telemetry", "ack"}:
-            rows = rows.filter(topic__endswith=f"/{channel}")
-
-        results = []
-        for row in rows[:2000]:
-            payload = row.payload if isinstance(row.payload, dict) else {}
-            searchable = f"{row.topic} {json.dumps(payload, ensure_ascii=False)}".casefold()
-            if search and search.casefold() not in searchable:
-                continue
-            results.append(
-                {
-                    "device_id": row.device_id,
-                    "device": row.device.name,
-                    "channel": row.topic.rsplit("/", 1)[-1],
-                    "topic": row.topic,
-                    "payload": payload,
-                    "qos": row.qos,
-                    "received_at": row.received_at,
-                }
-            )
-            if len(results) >= limit:
-                break
-        return results
+        from dashboard.models import DeviceLog
+        rows = DeviceLog.objects.select_related("device", "device__owner")
+        if minimum_level != "all":
+            levels = {
+                "debug": ["debug", "info", "warning", "error"],
+                "info": ["info", "warning", "error"],
+                "warning": ["warning", "error"],
+                "error": ["error"],
+            }.get(minimum_level, ["debug", "info", "warning", "error"])
+            rows = rows.filter(level__in=levels)
+        return [
+            {
+                "created_at": row.created_at,
+                "device_id": row.device_id,
+                "device_name": row.device.name,
+                "owner": row.device.owner.get_username() if row.device.owner_id else "Unassigned",
+                "level": row.level,
+                "category": row.category,
+                "message": row.message,
+                "details": row.details if isinstance(row.details, dict) else {},
+            }
+            for row in rows.order_by("-created_at")[:limit]
+        ]
 
     return _db_call(query)
 
@@ -163,7 +181,7 @@ def get_database_status() -> tuple[bool, str]:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
-        return True, "SQLite connected"
+        return True, f"{connection.vendor} connected"
 
     try:
         return _db_call(query)

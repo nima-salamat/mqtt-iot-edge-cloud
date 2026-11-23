@@ -1,7 +1,6 @@
 .env
 .env.*
 !.env.example
-pi_device/.env.pi.example
 .streamlit/secrets.toml
 .venv/
 venv/
@@ -14,7 +13,13 @@ __pycache__/
 *.pid
 *.sock
 staticfiles/
+media/
+data/
 mosquitto/password_file
+certs/*.pem
+certs/*.key
+pi_device/models/*.bin
+pi_device/models/*.param
 instance/
 .DS_Store
 .pytest_cache/

@@ -1,0 +1,30 @@
+{% load static %}
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ورود به سامانه آلارم</title>
+  <link rel="stylesheet" href="{% static 'dashboard/app.css' %}">
+</head>
+<body class="auth-page">
+<main class="auth-card">
+  <div class="brand-mark">◈</div>
+  <span class="eyebrow">IOT ALARM · SECURE ACCESS</span>
+  <h1>ورود به مرکز نظارت</h1>
+  <p class="muted">برای مشاهده دوربین‌های ثبت‌شده و هشدارهای حساب خود وارد شو.</p>
+  {% if form.errors %}<div class="alert danger">نام کاربری یا گذرواژه صحیح نیست.</div>{% endif %}
+  {% if next and user.is_authenticated %}<div class="alert warning">حساب فعلی اجازه دسترسی به این بخش را ندارد.</div>{% endif %}
+  <form method="post" action="{% url 'login' %}" class="stack">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next|default:'/' }}">
+    <label for="id_username">نام کاربری</label>
+    <input id="id_username" name="username" type="text" autocomplete="username" required autofocus>
+    <label for="id_password">گذرواژه</label>
+    <input id="id_password" name="password" type="password" autocomplete="current-password" required>
+    <button class="btn primary block" type="submit">ورود به حساب</button>
+  </form>
+  <p class="auth-note">حساب‌های کاربری توسط مدیر سامانه ساخته می‌شوند.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{% load static %}
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}سامانه آلارم هوشمند{% endblock %} · IoT Alarm</title>
+  <link rel="stylesheet" href="{% static 'dashboard/app.css' %}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="{% url 'dashboard:home' %}">
+    <span class="brand-mark">◈</span>
+    <span><b>سامانه آلارم هوشمند</b><small>EDGE AI · CAMERA SECURITY</small></span>
+  </a>
+  <nav>
+    <a href="{% url 'dashboard:home' %}">داشبورد</a>
+    {% if request.user.is_staff %}<a href="{% url 'admin:index' %}">مدیریت کاربران و دستگاه‌ها</a>{% endif %}
+  </nav>
+  <div class="account">
+    <span>{{ request.user.get_username }}</span>
+    <form action="{% url 'logout' %}" method="post">{% csrf_token %}<button class="btn ghost" type="submit">خروج</button></form>
+  </div>
+</header>
+<main class="page-shell">
+  {% if messages %}<div class="messages">{% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="site-footer"><span>IoT Alarm Platform</span><span>Django · Mosquitto · MediaMTX · Raspberry Pi 4</span></footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

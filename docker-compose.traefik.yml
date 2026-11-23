@@ -1,40 +1,72 @@
-# Optional integration for an already-running Traefik Docker provider.
-# Set TRAEFIK_NETWORK, TRAEFIK_ENTRYPOINT and TRAEFIK_CERT_RESOLVER in .env.
+# Compose overlay for an existing Traefik Docker provider.
 services:
-  broker:
-    networks:
-      - mqtt-internal
-      - traefik-public
+  api:
+    networks: [iot-internal, traefik-public]
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
-      - "traefik.http.routers.mqtt-iot-ws.rule=Host(`${DOMAIN:-server.echonode.website}`) && PathPrefix(`/mqtt`)"
-      - "traefik.http.routers.mqtt-iot-ws.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
-      - "traefik.http.routers.mqtt-iot-ws.priority=100"
-      - "traefik.http.routers.mqtt-iot-ws.tls=true"
-      - "traefik.http.routers.mqtt-iot-ws.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
-      - "traefik.http.routers.mqtt-iot-ws.service=mqtt-iot-ws"
-      - "traefik.http.services.mqtt-iot-ws.loadbalancer.server.port=9001"
-
-  web:
-    networks:
-      - mqtt-internal
-      - traefik-public
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
-      - "traefik.http.routers.mqtt-iot-dashboard.rule=Host(`${DOMAIN:-server.echonode.website}`) && !PathPrefix(`/mqtt`)"
-      - "traefik.http.routers.mqtt-iot-dashboard.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
-      - "traefik.http.routers.mqtt-iot-dashboard.priority=10"
-      - "traefik.http.routers.mqtt-iot-dashboard.tls=true"
-      - "traefik.http.routers.mqtt-iot-dashboard.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
-      - "traefik.http.routers.mqtt-iot-dashboard.service=mqtt-iot-dashboard"
-      - "traefik.http.services.mqtt-iot-dashboard.loadbalancer.server.port=8501"
+      - "traefik.http.routers.mqtt-iot-api.rule=Host(`${DOMAIN:-server.echonode.website}`) && !PathPrefix(`/mqtt`) && !PathPrefix(`/ops`) && !PathPrefix(`/webrtc`) && !PathPrefix(`/streams`)"
+      - "traefik.http.routers.mqtt-iot-api.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.mqtt-iot-api.priority=10"
+      - "traefik.http.routers.mqtt-iot-api.tls=true"
+      - "traefik.http.routers.mqtt-iot-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.mqtt-iot-api.service=mqtt-iot-api"
+      - "traefik.http.services.mqtt-iot-api.loadbalancer.server.port=8000"
       - "traefik.http.routers.mqtt-iot-http.rule=Host(`${DOMAIN:-server.echonode.website}`)"
       - "traefik.http.routers.mqtt-iot-http.entrypoints=web"
       - "traefik.http.routers.mqtt-iot-http.middlewares=mqtt-iot-https-redirect"
-      - "traefik.http.routers.mqtt-iot-http.service=mqtt-iot-dashboard"
+      - "traefik.http.routers.mqtt-iot-http.service=mqtt-iot-api"
       - "traefik.http.middlewares.mqtt-iot-https-redirect.redirectscheme.scheme=https"
+
+  web:
+    networks: [iot-internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
+      - "traefik.http.routers.mqtt-iot-ops.rule=Host(`${DOMAIN:-server.echonode.website}`) && PathPrefix(`/ops`)"
+      - "traefik.http.routers.mqtt-iot-ops.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.mqtt-iot-ops.priority=100"
+      - "traefik.http.routers.mqtt-iot-ops.tls=true"
+      - "traefik.http.routers.mqtt-iot-ops.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.mqtt-iot-ops.service=mqtt-iot-ops"
+      - "traefik.http.services.mqtt-iot-ops.loadbalancer.server.port=8501"
+
+  broker:
+    networks: [iot-internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
+      - "traefik.http.routers.mqtt-iot-mqtt.rule=Host(`${DOMAIN:-server.echonode.website}`) && PathPrefix(`/mqtt`)"
+      - "traefik.http.routers.mqtt-iot-mqtt.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.mqtt-iot-mqtt.priority=120"
+      - "traefik.http.routers.mqtt-iot-mqtt.tls=true"
+      - "traefik.http.routers.mqtt-iot-mqtt.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.mqtt-iot-mqtt.service=mqtt-iot-mqtt"
+      - "traefik.http.services.mqtt-iot-mqtt.loadbalancer.server.port=9001"
+
+  mediamtx:
+    networks: [iot-internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
+      - "traefik.http.routers.mqtt-iot-webrtc.rule=Host(`${DOMAIN:-server.echonode.website}`) && PathPrefix(`/webrtc`)"
+      - "traefik.http.routers.mqtt-iot-webrtc.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.mqtt-iot-webrtc.priority=90"
+      - "traefik.http.routers.mqtt-iot-webrtc.tls=true"
+      - "traefik.http.routers.mqtt-iot-webrtc.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.mqtt-iot-webrtc.middlewares=mqtt-iot-webrtc-strip"
+      - "traefik.http.middlewares.mqtt-iot-webrtc-strip.stripprefix.prefixes=/webrtc"
+      - "traefik.http.routers.mqtt-iot-webrtc.service=mqtt-iot-webrtc"
+      - "traefik.http.services.mqtt-iot-webrtc.loadbalancer.server.port=8889"
+      - "traefik.http.routers.mqtt-iot-streams.rule=Host(`${DOMAIN:-server.echonode.website}`) && PathPrefix(`/streams`)"
+      - "traefik.http.routers.mqtt-iot-streams.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.mqtt-iot-streams.priority=80"
+      - "traefik.http.routers.mqtt-iot-streams.tls=true"
+      - "traefik.http.routers.mqtt-iot-streams.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.mqtt-iot-streams.middlewares=mqtt-iot-streams-strip"
+      - "traefik.http.middlewares.mqtt-iot-streams-strip.stripprefix.prefixes=/streams"
+      - "traefik.http.routers.mqtt-iot-streams.service=mqtt-iot-streams"
+      - "traefik.http.services.mqtt-iot-streams.loadbalancer.server.port=8888"
 
 networks:
   traefik-public:

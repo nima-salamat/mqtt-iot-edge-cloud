@@ -1,5 +1,5 @@
 [Unit]
-Description=MQTT IoT local web panel and device client (Raspberry Pi 4)
+Description=IoT Alarm Camera Agent (Raspberry Pi 4 / Picamera2 / YOLOv5n NCNN)
 After=network-online.target
 Wants=network-online.target
 
@@ -9,10 +9,22 @@ User=mqttiot
 Group=mqttiot
 WorkingDirectory=/opt/mqtt-iot-edge-cloud
 EnvironmentFile=/etc/mqtt-iot-pi.env
+Environment=PYTHONPATH=/opt/mqtt-iot-edge-cloud
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HOME=/var/lib/mqttiot
+Environment=TMPDIR=/var/lib/mqttiot/tmp
+UMask=0077
 ExecStart=/opt/mqtt-iot-edge-cloud/.venv/bin/python -m pi_device.app
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
+TimeoutStopSec=45
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mqttiot
 
 [Install]
 WantedBy=multi-user.target

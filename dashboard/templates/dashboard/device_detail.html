@@ -1,0 +1,183 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ device.name }}{% endblock %}
+{% block content %}
+<form id="csrf-token-form" hidden>{% csrf_token %}</form>
+<div class="breadcrumb"><a href="{% url 'dashboard:home' %}">داشبورد</a><span> / </span>{{ device.name }}</div>
+<section class="hero compact">
+  <div><span class="eyebrow">CAMERA DEVICE</span><h1>{{ device.name }}</h1><p><code>{{ device.device_id }}</code></p></div>
+  <div class="hero-actions"><span class="state {% if device.is_online %}online{% else %}offline{% endif %}"><i></i>{% if device.is_online %}آنلاین{% else %}آفلاین{% endif %}</span><span class="muted">آخرین Heartbeat: {{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"—" }}</span></div>
+</section>
+<div class="detail-grid">
+  <section class="panel">
+    <div class="section-heading">
+      <div><span class="eyebrow">LIVE VIEW</span><h2>پخش زنده دوربین</h2></div>
+      <div class="inline-actions"><button class="btn primary" id="start-live" type="button">اتصال به تصویر زنده</button><button class="btn secondary" id="stop-live" type="button" disabled>قطع پخش</button></div>
+    </div>
+    <video id="live-video" autoplay playsinline muted></video>
+    <p id="live-status" class="muted">برای ایجاد دسترسی موقت و مشاهده زنده روی اتصال کلیک کن.</p>
+  </section>
+  <section class="panel">
+    <span class="eyebrow">EDGE HEALTH</span><h2>وضعیت پردازش روی Pi</h2>
+    <div class="health-list">
+      <div><span>وضعیت مدل</span><b>{% if device.model_loaded %}YOLOv5n NCNN فعال{% else %}مدل بارگذاری نشده{% endif %}</b></div>
+      <div><span>ارسال زنده RTSPS</span><b>{% if device.current_state.rtsp_connected %}متصل{% else %}در حال اتصال مجدد{% endif %}</b></div>
+      <div><span>دوربین Pi</span><b>{% if device.current_state.camera_ready %}آماده{% else %}نامشخص{% endif %}</b></div>
+      <div><span>Video FPS</span><b>{{ device.reported_video_fps|floatformat:1 }}</b></div>
+      <div><span>Inference FPS</span><b>{{ device.reported_inference_fps|floatformat:1 }}</b></div>
+      <div><span>هشدارهای ارسال‌نشده</span><b>{{ device.current_state.pending_alerts|default:0 }}</b></div>
+      <div><span>ویدئوهای ارسال‌نشده</span><b>{{ device.current_state.pending_video_segments|default:0 }}</b></div>
+      <div><span>اتصال MQTT</span><b>{% if device.current_state.mqtt_connected %}متصل{% else %}قطع{% endif %}</b></div>
+      <div><span>آخرین ارتباط</span><b>{{ device.last_seen|date:"Y-m-d H:i:s"|default:"—" }}</b></div>
+    </div>
+  </section>
+</div>
+
+<section class="section">
+  <div class="section-heading"><div><span class="eyebrow">PERSON DETECTION</span><h2>هشدارها و تصاویر ثبت‌شده</h2></div><span class="muted">آخرین ۵۰ هشدار این دوربین</span></div>
+  <div class="alarm-grid">
+    {% for alarm in alarms %}
+      <article class="alarm-card">
+        {% if alarm.snapshot %}
+          <a href="{% url 'dashboard:alarm-image' alarm.pk %}" target="_blank" rel="noopener"><img src="{% url 'dashboard:alarm-image' alarm.pk %}" alt="تصویر هشدار تشخیص انسان"></a>
+        {% else %}<div class="no-image">تصویر موجود نیست</div>{% endif %}
+        <div class="alarm-body">
+          <div class="alarm-title"><b>تشخیص انسان</b><span class="state {% if alarm.acknowledged %}online{% else %}warning{% endif %}">{% if alarm.acknowledged %}بررسی‌شده{% else %}جدید{% endif %}</span></div>
+          <p class="muted">Confidence: {{ alarm.confidence|floatformat:3 }}</p>
+          <p class="muted">{{ alarm.detected_at|date:"Y-m-d H:i:s" }}</p>
+          <details><summary>جزئیات تشخیص</summary><pre>{{ alarm.bbox }}</pre></details>
+          {% if not alarm.acknowledged %}
+            <form class="ack-form" method="post" action="{% url 'dashboard:acknowledge-alarm' alarm.pk %}">
+              {% csrf_token %}<button class="btn secondary" type="submit">علامت‌گذاری به‌عنوان بررسی‌شده</button>
+            </form>
+          {% endif %}
+        </div>
+      </article>
+    {% empty %}
+      <div class="empty-card"><h3>هنوز هشداری ثبت نشده است</h3><p class="muted">با تشخیص انسان توسط مدل YOLOv5n، تصویر با Bounding Box در این بخش ظاهر می‌شود.</p></div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-heading"><div><span class="eyebrow">RECORDED VIDEO</span><h2>قطعه‌های ویدئوی ذخیره‌شده روی سرور</h2></div><span class="muted">با توجه به مدت نگهداری حساب</span></div>
+  <div class="table-wrap"><table><thead><tr><th>زمان شروع</th><th>مدت</th><th>حجم</th><th>فایل</th></tr></thead><tbody>
+    {% for segment in segments %}
+      <tr><td>{{ segment.started_at|date:"Y-m-d H:i:s" }}</td><td>{{ segment.duration_seconds }} ثانیه</td><td>{{ segment.size_bytes|filesizeformat }}</td><td><a href="{% url 'dashboard:segment-file' segment.pk %}" target="_blank" rel="noopener">پخش / دریافت</a></td></tr>
+    {% empty %}<tr><td colspan="4" class="empty">هنوز قطعه ویدئویی دریافت نشده است.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="section">
+  <div class="section-heading"><div><span class="eyebrow">DEVICE LOGS</span><h2>آخرین لاگ‌های دستگاه</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>زمان</th><th>سطح</th><th>دسته</th><th>پیام</th></tr></thead><tbody>
+    {% for item in logs %}
+      <tr><td>{{ item.created_at|date:"Y-m-d H:i:s" }}</td><td>{{ item.level|upper }}</td><td>{{ item.category }}</td><td>{{ item.message }}</td></tr>
+    {% empty %}<tr><td colspan="4" class="empty">لاگی ثبت نشده است.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const deviceId = "{{ device.device_id|escapejs }}";
+  const csrf = document.querySelector('#csrf-token-form input[name=csrfmiddlewaretoken]')?.value || '';
+  const video = document.getElementById('live-video');
+  const status = document.getElementById('live-status');
+  const start = document.getElementById('start-live');
+  const stop = document.getElementById('stop-live');
+  let peer = null;
+  let sessionUrl = null;
+  let authHeader = null;
+
+  function waitForIce(pc) {
+    if (pc.iceGatheringState === 'complete') return Promise.resolve();
+    return new Promise(resolve => {
+      const timer = setTimeout(resolve, 6000);
+      pc.addEventListener('icegatheringstatechange', () => {
+        if (pc.iceGatheringState === 'complete') {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+  }
+
+  async function stopStream() {
+    if (peer) peer.close();
+    peer = null;
+    video.srcObject = null;
+    if (sessionUrl && authHeader) {
+      try { await fetch(sessionUrl, {method: 'DELETE', headers: {'Authorization': authHeader}}); } catch (_) {}
+    }
+    sessionUrl = null;
+    authHeader = null;
+    start.disabled = false;
+    stop.disabled = true;
+    status.textContent = 'پخش زنده قطع شد.';
+  }
+
+  start.addEventListener('click', async () => {
+    start.disabled = true;
+    status.textContent = 'در حال دریافت مجوز پخش زنده…';
+    try {
+      const grantResponse = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/stream-grant/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrf, 'Accept': 'application/json'}
+      });
+      const grant = await grantResponse.json();
+      if (!grantResponse.ok) throw new Error(grant.error || 'دریافت مجوز زنده ناموفق بود.');
+      authHeader = 'Basic ' + btoa(grant.username + ':' + grant.token);
+
+      peer = new RTCPeerConnection({iceServers: []});
+      peer.addTransceiver('video', {direction: 'recvonly'});
+      peer.ontrack = event => {
+        video.srcObject = event.streams[0];
+        video.play().catch(() => {});
+      };
+      peer.onconnectionstatechange = () => {
+        if (peer && ['failed', 'disconnected', 'closed'].includes(peer.connectionState)) {
+          status.textContent = 'ارتباط WebRTC قطع شد.';
+        }
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      await waitForIce(peer);
+      const response = await fetch('/webrtc/' + encodeURIComponent(deviceId) + '/whep', {
+        method: 'POST',
+        headers: {'Authorization': authHeader, 'Content-Type': 'application/sdp'},
+        body: peer.localDescription.sdp
+      });
+      if (!response.ok) throw new Error('MediaMTX پاسخ WHEP ناموفق برگرداند: ' + response.status);
+      const answer = await response.text();
+      const location = response.headers.get('Location');
+      if (location) {
+        const mediaSession = new URL(location, window.location.origin);
+        let sessionPath = mediaSession.pathname;
+        if (!sessionPath.startsWith('/webrtc/')) {
+          sessionPath = '/webrtc' + (sessionPath.startsWith('/') ? '' : '/') + sessionPath;
+        }
+        const sameOriginSession = new URL(sessionPath, window.location.origin);
+        sameOriginSession.search = mediaSession.search;
+        sessionUrl = sameOriginSession.toString();
+      }
+      await peer.setRemoteDescription({type: 'answer', sdp: answer});
+      status.textContent = 'پخش زنده برقرار شد. مجوز این نشست موقت است.';
+      stop.disabled = false;
+    } catch (error) {
+      status.textContent = error.message;
+      await stopStream();
+      start.disabled = false;
+    }
+  });
+  stop.addEventListener('click', stopStream);
+  window.addEventListener('pagehide', () => { if (sessionUrl && authHeader) fetch(sessionUrl, {method:'DELETE',headers:{'Authorization':authHeader},keepalive:true}); });
+  document.querySelectorAll('.ack-form').forEach(form => form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const response = await fetch(form.action, {method:'POST',headers:{'X-CSRFToken':csrf,'Accept':'application/json'}});
+    if (response.ok) window.location.reload();
+    else alert('تغییر وضعیت هشدار ناموفق بود.');
+  }));
+})();
+</script>
+{% endblock %}

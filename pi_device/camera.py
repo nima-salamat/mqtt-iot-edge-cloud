@@ -22,6 +22,7 @@ except (ImportError, OSError):
     _zbar_decode = None
 
 from .detector import YoloV5nDetector
+from .inference_pool import AdaptiveInferencePool
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +113,103 @@ class ReconnectingRtspOutput:
         # still being delivered.
 
 
+
+def _switchable_output_class():
+    """Create a Picamera2 Output that can attach/detach MP4 recording at keyframes."""
+    from picamera2.outputs import Output
+
+    class SwitchableOutput(Output):
+        def __init__(self, initial_output=None):
+            super().__init__()
+            self._output = initial_output
+            self._pending_output = None
+            self._switch_pending = False
+            self._switch_done = threading.Event()
+            self._lock = threading.RLock()
+            self._streams = []
+
+        def start(self):
+            super().start()
+            with self._lock:
+                output = self._output
+            if output is not None:
+                output.start()
+
+        def _add_stream(self, encoder_stream, codec_name, **kwargs):
+            stream = (encoder_stream, codec_name, dict(kwargs))
+            with self._lock:
+                self._streams.append(stream)
+                output = self._output
+            if output is not None:
+                output._add_stream(encoder_stream, codec_name, **kwargs)
+
+        def switch_output(self, new_output, timeout=12.0):
+            # Prepare the new muxer and its stream definitions before asking
+            # outputframe() to switch on an H.264 keyframe.
+            with self._lock:
+                if self._switch_pending:
+                    raise RuntimeError("A local recording transition is already in progress")
+                old_output = self._output
+                streams = list(self._streams)
+
+            if new_output is not None:
+                new_output.start()
+                try:
+                    for encoder_stream, codec_name, kwargs in streams:
+                        new_output._add_stream(encoder_stream, codec_name, **kwargs)
+                except Exception:
+                    new_output.stop()
+                    raise
+
+            with self._lock:
+                self._pending_output = new_output
+                self._switch_pending = True
+                self._switch_done.clear()
+
+            if not self._switch_done.wait(timeout=max(1.0, float(timeout))):
+                with self._lock:
+                    if self._switch_pending and self._pending_output is new_output:
+                        self._pending_output = None
+                        self._switch_pending = False
+                if new_output is not None:
+                    new_output.stop()
+                raise TimeoutError("Timed out waiting for an H.264 keyframe to change recording state")
+
+            # outputframe has stopped referencing the previous output, so it is
+            # now safe to finalize its MP4 container on this control thread.
+            if old_output is not None:
+                old_output.stop()
+
+        def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+            with self._lock:
+                if keyframe and self._switch_pending:
+                    self._output = self._pending_output
+                    self._pending_output = None
+                    self._switch_pending = False
+                    self._switch_done.set()
+                output = self._output
+            if output is not None:
+                output.outputframe(frame, keyframe, timestamp, packet, audio)
+
+        def stop(self):
+            super().stop()
+            with self._lock:
+                outputs = (self._output, self._pending_output if self._switch_pending else None)
+                self._output = None
+                self._pending_output = None
+                self._switch_pending = False
+            seen = set()
+            for output in outputs:
+                if output is not None and id(output) not in seen:
+                    seen.add(id(output))
+                    try:
+                        output.stop()
+                    except Exception:
+                        log.exception("Could not close a local recording output")
+
+    return SwitchableOutput
+
+
 class CameraPipeline:
     def __init__(self, device_id, settings_store, bridge, uploader):
         self.device_id = device_id
@@ -128,6 +226,7 @@ class CameraPipeline:
         self.local_output = None
         self.live_output = None
         self.detector = None
+        self.inference_pool = None
         self.latest_jpeg = None
         self.latest_frame_at = 0.0
         self._latest_bgr = None
@@ -136,6 +235,14 @@ class CameraPipeline:
         self._last_encoder_count = 0
         self.video_fps = 0.0
         self.inference_fps = 0.0
+        self.inference_latency_ms = 0.0
+        self.inference_dropped_frames = 0
+        self._inference_completed_at = deque(maxlen=100)
+        self._inference_pool_started_at = 0.0
+        self._last_processed_frame_sequence = 0
+        self._inflight_frames = {}
+        self._frame_sequence = 0
+        self._latest_frame_sequence = 0
         self.model_error = ""
         self.camera_error = ""
         self._stop = threading.Event()
@@ -154,6 +261,8 @@ class CameraPipeline:
         self._frames_lock = threading.RLock()
         self._current_segment = None
         self._current_marker = None
+        self._recording_lock = threading.RLock()
+        self.recording_enabled = bool(settings_store.get().get("recording_enabled", True))
 
     def _pending_alarm_count(self):
         return sum(
@@ -198,6 +307,7 @@ class CameraPipeline:
             stale_marker.unlink(missing_ok=True)
 
         values = self.settings_store.get()
+        self.recording_enabled = bool(values.get("recording_enabled", True))
         picam2 = Picamera2()
         marker = None
         local_output = None
@@ -216,11 +326,14 @@ class CameraPipeline:
             )
             picam2.configure(config)
 
-            segment = self._segment_path()
-            marker = self._mark_open(segment)
-            first_segment = PyavOutput(str(segment), format="mp4")
-            first_segment.error_callback = lambda error: log.error("Local MP4 segment failed: %s", error)
-            local_output = SplittableOutput(first_segment)
+            segment = None
+            first_segment = None
+            if self.recording_enabled:
+                segment = self._segment_path()
+                marker = self._mark_open(segment)
+                first_segment = PyavOutput(str(segment), format="mp4")
+                first_segment.error_callback = lambda error: log.error("Local MP4 segment failed: %s", error)
+            local_output = _switchable_output_class()(first_segment)
             live_output = ReconnectingRtspOutput(self.device_id, self.uploader.state_provider)
             encoder = H264Encoder(
                 bitrate=values["video_bitrate"],
@@ -272,17 +385,36 @@ class CameraPipeline:
         self.live_output.start()
 
         try:
-            self.detector = YoloV5nDetector(confidence=values["alert_confidence"])
+            worker_count = int(values.get("inference_workers", 2))
+            cpu_count = os.cpu_count() or 4
+            ncnn_threads = max(1, min(3, (cpu_count - 1) // worker_count))
+            pool = AdaptiveInferencePool(
+                worker_count=worker_count,
+                model_dir=os.getenv("MODEL_DIR", str(Path(__file__).parent / "models")),
+                confidence=float(values["alert_confidence"]),
+                ncnn_threads=ncnn_threads,
+            )
+            try:
+                pool.start(timeout=75)
+            except Exception:
+                pool.stop()
+                raise
+            self.inference_pool = pool
+            self._inference_pool_started_at = time.monotonic()
             self.bridge.model_loaded = True
-            self.bridge.publish_log("info", "YOLOv5n NCNN model loaded", {"model": "yolov5n-ncnn"})
+            self.bridge.publish_log("info", "YOLOv5n NCNN adaptive worker pool loaded", {
+                "model": "yolov5n-ncnn",
+                "workers": worker_count,
+                "ncnn_threads_per_worker": ncnn_threads,
+            })
         except Exception as exc:
-            self.detector = None
+            self.inference_pool = None
             self.model_error = str(exc)
             self.bridge.model_loaded = False
             self.bridge.publish_log(
-                "error", "YOLOv5n NCNN model could not be loaded", {"error": self.model_error}
+                "error", "YOLOv5n NCNN worker pool could not be loaded", {"error": self.model_error}
             )
-            log.exception("YOLOv5n unavailable; recording and streaming remain active")
+            log.exception("YOLOv5n worker pool unavailable; camera and live stream remain active")
 
         self._threads = [
             threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
@@ -292,19 +424,72 @@ class CameraPipeline:
         for thread in self._threads:
             thread.start()
 
-    def _segment_loop(self):
+    def set_recording_enabled(self, enabled: bool) -> dict:
+        """Pause/resume only the local MP4 spool; camera, preview and RTSPS stay live."""
         from picamera2.outputs import PyavOutput
-        while not self._stop.wait(int(self.settings_store.get()["segment_seconds"])):
-            try:
+
+        enabled = bool(enabled)
+        with self._recording_lock:
+            if enabled == self.recording_enabled:
+                return {"recording_enabled": self.recording_enabled}
+            if self.picam2 is None or self.local_output is None:
+                self.recording_enabled = enabled
+                self.settings_store.update({"recording_enabled": enabled})
+                return {"recording_enabled": enabled}
+
+            if enabled:
                 next_path = self._segment_path()
                 next_marker = self._mark_open(next_path)
                 output = PyavOutput(str(next_path), format="mp4")
-                output.error_callback = lambda error: log.error("MP4 spool output error: %s", error)
+                output.error_callback = lambda error: log.error("Local MP4 segment failed: %s", error)
+                try:
+                    self.local_output.switch_output(output)
+                except Exception:
+                    next_marker.unlink(missing_ok=True)
+                    raise
+                self._current_segment = next_path
+                self._current_marker = next_marker
+                self.recording_enabled = True
+                self.settings_store.update({"recording_enabled": True})
+                log.info("Local video recording resumed; RTSPS live output was not restarted")
+            else:
                 old_marker = self._current_marker
-                self.local_output.split_output(output)
-                # Old output has now closed and is safe for the HTTP uploader to read.
-                old_marker.unlink(missing_ok=True)
-                self._current_segment, self._current_marker = next_path, next_marker
+                # The current MP4 is finalized at the next keyframe. The live
+                # H.264 output and camera capture are left untouched.
+                self.local_output.switch_output(None)
+                if old_marker:
+                    old_marker.unlink(missing_ok=True)
+                self._current_segment = None
+                self._current_marker = None
+                self.recording_enabled = False
+                self.settings_store.update({"recording_enabled": False})
+                log.info("Local video recording paused; camera and RTSPS remain live")
+
+        return {"recording_enabled": self.recording_enabled}
+
+    def _segment_loop(self):
+        from picamera2.outputs import PyavOutput
+        while not self._stop.wait(int(self.settings_store.get()["segment_seconds"])):
+            if not self.recording_enabled:
+                continue
+            try:
+                with self._recording_lock:
+                    if not self.recording_enabled or self.local_output is None:
+                        continue
+                    next_path = self._segment_path()
+                    next_marker = self._mark_open(next_path)
+                    output = PyavOutput(str(next_path), format="mp4")
+                    output.error_callback = lambda error: log.error("MP4 spool output error: %s", error)
+                    old_marker = self._current_marker
+                    try:
+                        self.local_output.switch_output(output)
+                    except Exception:
+                        next_marker.unlink(missing_ok=True)
+                        raise
+                    # Old output has now closed and is safe for the HTTP uploader to read.
+                    if old_marker:
+                        old_marker.unlink(missing_ok=True)
+                    self._current_segment, self._current_marker = next_path, next_marker
             except Exception:
                 log.exception("Could not rotate local video segment")
 

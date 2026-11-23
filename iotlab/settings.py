@@ -7,11 +7,15 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEBUG = os.environ.get("DJANGO_DEBUG", "0").lower() in {"1", "true", "yes"}
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-unsafe-key-change-before-deployment")
-ALLOWED_HOSTS = [
+_configured_allowed_hosts = [
     host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,api").split(",")
     if host.strip()
 ]
+# MediaMTX calls Django directly over the private Compose network using the
+# service hostname "api". Keep that internal Host header valid even when an
+# operator supplies a public-only DJANGO_ALLOWED_HOSTS value.
+ALLOWED_HOSTS = list(dict.fromkeys([*_configured_allowed_hosts, "api"]))
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")

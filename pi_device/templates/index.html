@@ -151,6 +151,10 @@
         <input name="video_fps" type="number" min="5" max="30" value="{{ settings.video_fps }}">
         <small>۵ تا ۳۰ FPS؛ برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد</small>
       </label>
+      <label>بیت‌ریت ویدئوی H.264 (بیت بر ثانیه)
+        <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" value="{{ settings.video_bitrate }}">
+        <small>پیشنهاد: ۱٬۰۰۰٬۰۰۰؛ encoder سخت‌افزاری Pi 4، با حجم کمتر. برای اعمال نیاز به راه‌اندازی مجدد سرویس دارد.</small>
+      </label>
       <label>نرخ پردازش هوش مصنوعی
         <input name="inference_fps" type="number" min="1" max="10" value="{{ settings.inference_fps }}">
         <small>۱ تا ۱۰ فریم در ثانیه، مستقل از نرخ ویدئو</small>

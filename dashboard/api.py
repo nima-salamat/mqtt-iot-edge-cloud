@@ -46,7 +46,14 @@ def create_pairing(request):
         expires_at=now + timedelta(minutes=2),
     )
     qr_payload = f"iot-alarm-pair:{raw_code}"
-    image = qrcode.make(qr_payload, image_factory=SvgPathImage, border=3)
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=16,
+        border=4,
+    )
+    qr.add_data(qr_payload)
+    qr.make(fit=True)
+    image = qr.make_image(image_factory=SvgPathImage)
     buffer = io.BytesIO()
     image.save(buffer)
     qr_data_url = "data:image/svg+xml;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")

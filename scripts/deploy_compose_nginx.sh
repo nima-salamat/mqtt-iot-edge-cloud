@@ -20,7 +20,11 @@ source ./scripts/load_compose_env.sh
 load_compose_env .env docker-compose.yml
 
 DOMAIN="${DOMAIN:-server.echonode.website}"
+DOCKER_REGISTRY="${DOCKER_REGISTRY:-docker.io}"
 DATABASE_MODE="${DATABASE_MODE:-postgres}"
+
+[[ "$DOCKER_REGISTRY" =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || \
+  fail "DOCKER_REGISTRY must be a registry host only (for example docker.io or registry.example.com:5000), without https:// or a path."
 HOST_CERT_DIR="${HOST_CERT_DIR:-}"
 MEDIA_TLS_CERT="${MEDIA_TLS_CERT:-}"
 MEDIA_TLS_KEY="${MEDIA_TLS_KEY:-}"

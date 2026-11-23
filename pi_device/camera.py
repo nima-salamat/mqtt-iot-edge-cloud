@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -12,6 +13,14 @@ from pathlib import Path
 from urllib.parse import quote
 import cv2
 import requests
+
+try:
+    # Debian/Raspberry Pi OS supplies the native libzbar0 shared library.
+    # pyzbar uses it for QR decoding when OpenCV was built without QUIRC.
+    from pyzbar.pyzbar import decode as _zbar_decode
+except (ImportError, OSError):
+    _zbar_decode = None
+
 from .detector import YoloV5nDetector
 
 log = logging.getLogger(__name__)
@@ -301,59 +310,74 @@ class CameraPipeline:
 
     @staticmethod
     def _decode_pairing_qr(detector, frame):
-        """Decode the short-lived pairing QR despite small size or uneven screen brightness."""
+        """Decode pairing QR with ZBar; use OpenCV only when ZBar is unavailable."""
         if frame is None:
             return ""
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
-        candidates = [gray]
-
-        # A screen viewed from a distance can leave only a few pixels per QR
-        # module in the 640x360 lores stream. Upscaling helps the detector find
-        # and rectify those modules without changing the source camera stream.
-        enlarged = cv2.resize(gray, None, fx=1.75, fy=1.75, interpolation=cv2.INTER_CUBIC)
-        candidates.append(enlarged)
-
-        # Laptop/phone screens can have reflections or brightness gradients.
-        candidates.append(cv2.adaptiveThreshold(
+        enlarged = cv2.resize(
+            gray, None, fx=1.75, fy=1.75, interpolation=cv2.INTER_CUBIC
+        )
+        adaptive = cv2.adaptiveThreshold(
             enlarged, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY, 31, 7,
-        ))
+        )
 
-        for candidate in candidates:
+        def extract_code(value):
+            if isinstance(value, bytes):
+                value = value.decode("utf-8", errors="strict")
+            value = str(value).strip()
+            prefix = "iot-alarm-pair:"
+            if not value.startswith(prefix):
+                return ""
+            code = value[len(prefix):].strip()
+            return code if re.fullmatch(r"[A-Za-z0-9_-]{32,128}", code) else ""
+
+        if _zbar_decode is not None:
+            # ZBar is explicitly installed on the Pi; unlike this system's
+            # OpenCV build, it does not depend on the optional QUIRC module.
+            for candidate in (gray, enlarged, adaptive):
+                try:
+                    for symbol in _zbar_decode(candidate):
+                        code = extract_code(symbol.data)
+                        if code:
+                            return code
+                except Exception:
+                    log.debug("ZBar QR decode attempt failed", exc_info=True)
+            return ""
+
+        # Fallback for systems where libzbar/pyzbar could not be installed.
+        for candidate in (gray, enlarged, adaptive):
             try:
                 decoded, _, _ = detector.detectAndDecode(candidate)
-                if decoded:
-                    value = decoded.strip()
-                    if value.startswith("iot-alarm-pair:"):
-                        code = value.partition(":")[2].strip()
-                        if len(code) >= 32:
-                            return code
-            except cv2.error:
-                log.debug("Single QR decode attempt failed", exc_info=True)
+                code = extract_code(decoded) if decoded else ""
+                if code:
+                    return code
+            except (cv2.error, UnicodeDecodeError):
+                log.debug("OpenCV QR decode attempt failed", exc_info=True)
 
-            # Multi-decode is useful when the camera sees more than one QR
-            # (for example, a QR on a nearby screen or printed label).
             multi_decode = getattr(detector, "detectAndDecodeMulti", None)
             if multi_decode is not None:
                 try:
                     result = multi_decode(candidate)
                     if result and result[0]:
                         for decoded in result[1]:
-                            value = str(decoded).strip()
-                            if value.startswith("iot-alarm-pair:"):
-                                code = value.partition(":")[2].strip()
-                                if len(code) >= 32:
-                                    return code
-                except cv2.error:
-                    log.debug("Multi QR decode attempt failed", exc_info=True)
-
+                            code = extract_code(decoded)
+                            if code:
+                                return code
+                except (cv2.error, UnicodeDecodeError):
+                    log.debug("OpenCV multi-QR decode attempt failed", exc_info=True)
         return ""
 
     def _capture_loop(self):
         """Keep camera capture and the local MJPEG preview independent of AI inference."""
         last_qr_scan = 0.0
         qr_detector = cv2.QRCodeDetector()
+        if _zbar_decode is None:
+            log.warning(
+                "pyzbar/libzbar is unavailable; QR scanning will fall back to OpenCV, "
+                "which may be built without QUIRC support"
+            )
         preview_interval = 1.0 / 15.0
         while not self._stop.is_set():
             try:

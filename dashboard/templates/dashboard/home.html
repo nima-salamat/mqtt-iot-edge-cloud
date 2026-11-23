@@ -16,7 +16,8 @@
   <div class="section-heading"><div><span class="eyebrow">YOUR DEVICES</span><h2>دوربین‌های ثبت‌شده</h2></div><span class="muted">هر حساب فقط دستگاه‌های خودش را می‌بیند</span></div>
   <div class="device-grid">
     {% for device in devices %}
-      <a class="device-card" data-device-id="{{ device.device_id }}" href="{% url 'dashboard:device-detail' device.device_id %}">
+      <article class="device-card" data-device-id="{{ device.device_id }}">
+        <a class="device-card-link" href="{% url 'dashboard:device-detail' device.device_id %}">
         <div class="device-card-top"><div class="camera-icon">▣</div><span class="state device-status {% if device.is_online %}online{% else %}offline{% endif %}"><i></i>{% if device.is_online %}آنلاین{% else %}آفلاین{% endif %}</span></div>
         <h3>{{ device.name }}</h3><code>{{ device.device_id }}</code>
         <div class="device-meta"><span>Video FPS</span><b class="video-fps">{{ device.reported_video_fps|floatformat:1 }}</b></div>
@@ -26,7 +27,13 @@
         <div class="device-meta"><span>هشدار ارسال‌نشده</span><b class="pending-alerts">{{ device.current_state.pending_alerts|default:0 }}</b></div>
         <div class="device-meta"><span>ویدئوی ارسال‌نشده</span><b class="pending-videos">{{ device.current_state.pending_video_segments|default:0 }}</b></div>
         <div class="device-footer"><span>آخرین ارتباط: <time class="last-heartbeat">{{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"هنوز دریافت نشده" }}</time></span><b>مشاهده دستگاه ←</b></div>
-      </a>
+        </a>
+        {% if device.api_token_hash %}
+          <button class="btn danger device-disconnect-btn" type="button" data-disconnect-device="{{ device.device_id }}" data-disconnect-url="{% url 'dashboard:device-disconnect' device.device_id %}">قطع اتصال دوربین</button>
+        {% else %}
+          <div class="device-disconnected-note">اتصال لغو شده است؛ برای اتصال مجدد QR تازه بساز.</div>
+        {% endif %}
+      </article>
     {% empty %}
       <div class="empty-card"><div class="empty-icon">▣</div><h3>هنوز دوربینی ثبت نکرده‌ای</h3><p>از دکمه «افزودن دوربین» یک QR یک‌بارمصرف بساز و آن را با دوربین Raspberry Pi اسکن کن.</p><button class="btn primary" id="add-device-empty">شروع ثبت دوربین</button></div>
     {% endfor %}
@@ -131,6 +138,43 @@ async function createPairing(){
   }catch(error){alert(error.message);}finally{for(const button of addButtons)button.disabled=false;}
 }
 for(const button of addButtons)button.addEventListener('click',createPairing);
+
+document.querySelectorAll('[data-disconnect-device]').forEach(button=>{
+  button.addEventListener('click',async event=>{
+    event.preventDefault();
+    event.stopPropagation();
+    const approved=window.confirm('دسترسی این دوربین به حساب، پخش زنده و مجوزهای موقت باطل می‌شود. تاریخچه قبلی در سرور باقی می‌ماند. ادامه می‌دهی؟');
+    if(!approved)return;
+    button.disabled=true;
+    try{
+      const response=await fetch(button.dataset.disconnectUrl,{
+        method:'POST',
+        headers:{'X-CSRFToken':csrf,'Accept':'application/json'}
+      });
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error||'قطع اتصال دوربین ناموفق بود.');
+      const card=button.closest('.device-card');
+      const badge=card?.querySelector('.device-status');
+      if(badge){
+        badge.classList.remove('online');
+        badge.classList.add('offline');
+        const dot=document.createElement('i');
+        badge.replaceChildren(dot,document.createTextNode('اتصال لغو شده'));
+      }
+      const stream=card?.querySelector('.stream-status');
+      if(stream)stream.textContent='قطع';
+      button.remove();
+      const note=document.createElement('div');
+      note.className='device-disconnected-note';
+      note.textContent='اتصال لغو شده است؛ برای اتصال مجدد QR تازه بساز.';
+      card?.append(note);
+      refreshOverview();
+    }catch(error){
+      alert(error.message);
+      button.disabled=false;
+    }
+  });
+});
 document.getElementById('retention-form').addEventListener('submit',async event=>{
   event.preventDefault();
   const data={server_video_minutes:Number(document.getElementById('ret-video').value),alarm_image_days:Number(document.getElementById('ret-images').value),device_log_days:Number(document.getElementById('ret-logs').value)};

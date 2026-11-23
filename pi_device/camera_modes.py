@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 
 def select_sensor_mode(
@@ -58,3 +59,41 @@ def select_sensor_mode(
         key=lambda item: (item[3], -item[1] * item[2]),
     )
     return selected[0], selected[3]
+
+
+
+def parse_v4l2_modes(output: str) -> list[dict[str, Any]]:
+    """Parse discrete resolution/FPS entries from v4l2-ctl --list-formats-ext."""
+    found: dict[tuple[int, int], float] = {}
+    pattern = re.compile(
+        r"Size:\\s*Discrete\\s+(\\d+)\\s*x\\s*(\\d+)(.*?)(?=\\n\\s*(?:Size:|\\[\\d+\\]:)|\\Z)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for match in pattern.finditer(str(output or "")):
+        try:
+            width, height = int(match.group(1)), int(match.group(2))
+        except (TypeError, ValueError):
+            continue
+        section = match.group(3)
+        rates = [
+            float(value)
+            for value in re.findall(
+                r"\\(([0-9]+(?:\\.[0-9]+)?)\\s*fps\\)",
+                section,
+                re.IGNORECASE,
+            )
+        ]
+        if not rates:
+            intervals = re.findall(
+                r"Interval:\\s*Discrete\\s+([0-9]+(?:\\.[0-9]+)?)s",
+                section,
+                re.IGNORECASE,
+            )
+            rates = [1.0 / float(value) for value in intervals if float(value) > 0]
+        if width > 0 and height > 0 and rates:
+            size = (width, height)
+            found[size] = max(found.get(size, 0.0), max(rates))
+    return [
+        {"size": size, "fps": fps, "source": "v4l2"}
+        for size, fps in sorted(found.items(), key=lambda item: (item[0][0] * item[0][1], item[1]))
+    ]

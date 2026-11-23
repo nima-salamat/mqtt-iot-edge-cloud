@@ -61,6 +61,17 @@ class DurableUploader:
     def _headers(self):
         return {"Authorization": f"Bearer {self._token()}", "X-Device-ID": self.device_id}
 
+    def _sorted_queue_files(self, folder: Path, pattern: str):
+        # Snapshot mtimes under the same lock used by queue clearing and cleanup.
+        with self._queue_lock:
+            items = []
+            for path in folder.glob(pattern):
+                try:
+                    items.append((path.stat().st_mtime, path))
+                except OSError:
+                    continue
+            return [path for _mtime, path in sorted(items, key=lambda item: item[0])]
+
     def _run(self):
         backoff = 2
         while not self._stop.is_set():
@@ -127,7 +138,7 @@ class DurableUploader:
         self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
 
     def _upload_alarms(self):
-        for meta_path in sorted(self.alarm_dir.glob("*.json"), key=lambda p: p.stat().st_mtime):
+        for meta_path in self._sorted_queue_files(self.alarm_dir, "*.json"):
             if self._stop.is_set():
                 return
             # Lock one item at a time so the local panel can clear the remaining
@@ -180,7 +191,7 @@ class DurableUploader:
                     log.exception("Could not sync alarm %s", meta_path)
 
     def _upload_logs(self):
-        for path in sorted(self.log_dir.glob("*.json"), key=lambda p: p.stat().st_mtime):
+        for path in self._sorted_queue_files(self.log_dir, "*.json"):
             if self._stop.is_set():
                 return
             with self._queue_lock:
@@ -205,7 +216,7 @@ class DurableUploader:
                     log.exception("Could not upload log %s", path)
 
     def _upload_segments(self):
-        for path in sorted(self.video_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime):
+        for path in self._sorted_queue_files(self.video_dir, "*.mp4"):
             if self._stop.is_set():
                 return
             with self._queue_lock:

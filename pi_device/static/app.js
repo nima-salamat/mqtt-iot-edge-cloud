@@ -231,6 +231,9 @@
     const button = $('toggle-recording');
     const current = button.getAttribute('aria-pressed') === 'true';
     const enabled = !current;
+    if (current && !window.confirm(
+      'ضبط ویدئو متوقف می‌شود و قطعه نیمه‌تمام حذف خواهد شد. دوربین زنده و YOLO روشن می‌مانند. ادامه می‌دهی؟'
+    )) return;
     button.dataset.busy = '1';
     button.disabled = true;
     text('recording-status', enabled ? 'در حال شروع ضبط…' : 'در حال توقف ضبط در مرز فریم کلیدی…');

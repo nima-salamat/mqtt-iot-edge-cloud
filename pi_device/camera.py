@@ -480,18 +480,25 @@ class CameraPipeline:
                     self.settings_store.update({"recording_enabled": True})
                     raise
 
-                # The uploader uses this same lock. Delete the open partial file
-                # before removing its .open marker, so it can never race and
-                # upload a segment that the operator asked us to discard.
-                with self.uploader._queue_lock:
-                    if old_segment:
-                        old_segment.unlink(missing_ok=True)
-                    if old_marker:
-                        old_marker.unlink(missing_ok=True)
-
                 self._current_segment = None
                 self._current_marker = None
                 self.recording_enabled = False
+
+                # The uploader uses this same lock. Delete the open partial file
+                # before removing its .open marker, so it can never race and
+                # upload a segment that the operator asked us to discard. If
+                # deletion fails, leave the marker in place to keep it unqueued.
+                try:
+                    with self.uploader._queue_lock:
+                        if old_segment:
+                            old_segment.unlink(missing_ok=True)
+                        if old_marker:
+                            old_marker.unlink(missing_ok=True)
+                except OSError:
+                    log.exception(
+                        "Could not remove the partial recording; its open marker is retained if present"
+                    )
+
                 log.info("Local recording paused; partial segment discarded; video queue delivery paused")
 
         return {"recording_enabled": self.recording_enabled}

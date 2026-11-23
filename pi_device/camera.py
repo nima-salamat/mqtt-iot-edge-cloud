@@ -21,7 +21,6 @@ try:
 except (ImportError, OSError):
     _zbar_decode = None
 
-from .detector import YoloV5nDetector
 from .inference_pool import AdaptiveInferencePool
 
 log = logging.getLogger(__name__)
@@ -225,7 +224,6 @@ class CameraPipeline:
         self.encoder = None
         self.local_output = None
         self.live_output = None
-        self.detector = None
         self.inference_pool = None
         self.latest_jpeg = None
         self.latest_frame_at = 0.0
@@ -647,10 +645,14 @@ class CameraPipeline:
                     self._frame_count = 0
                     self._fps_started = now
 
+                inference_pool_ready = bool(
+                    self.inference_pool
+                    and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count
+                )
                 self.bridge.set_metrics(
                     self.video_fps,
                     self.inference_fps,
-                    self.inference_pool is not None,
+                    inference_pool_ready,
                     self._pending_alarm_count(),
                     pending_videos=self._pending_video_count(),
                     rtsp_connected=bool(self.live_output and self.live_output.connected),
@@ -940,7 +942,11 @@ class CameraPipeline:
                 "worker_latency_ms": [],
                 "last_error": self.model_error,
             },
-            "model_loaded": bool(self.inference_pool and self.inference_pool.started),
+            "model_loaded": bool(
+                self.inference_pool
+                and self.inference_pool.started
+                and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count
+            ),
             "recording_enabled": self.recording_enabled,
             "model_error": self.model_error,
             "camera_error": self.camera_error,
@@ -992,7 +998,6 @@ class CameraPipeline:
         self.encoder = None
         self.local_output = None
         self.live_output = None
-        self.detector = None
         self.bridge.model_loaded = False
         self.inference_fps = 0.0
         self.inference_latency_ms = 0.0

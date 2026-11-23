@@ -16,9 +16,16 @@ docker run --rm --user root --entrypoint sh \
   -v "${VOLUME_NAME}:/mosquitto/data" \
   "${MOSQUITTO_IMAGE:-${DOCKER_REGISTRY:-docker.io}/eclipse-mosquitto:2.1.4-alpine}" -c '
     set -eu
-    mosquitto_passwd -b -c /mosquitto/data/password_file "$MQTT_CAMERA_EDGE_USERNAME" "$MQTT_CAMERA_EDGE_PASSWORD"
-    mosquitto_passwd -b    /mosquitto/data/password_file "$MQTT_SERVER_USERNAME" "$MQTT_SERVER_PASSWORD"
-    chown 1883:1883 /mosquitto/data/password_file
-    chmod 0640 /mosquitto/data/password_file
+    PASSWORD_FILE=/mosquitto/data/password_file
+    # Keep existing MQTT users; -c is only valid when the file does not exist.
+    if [ -e "$PASSWORD_FILE" ]; then
+      [ -f "$PASSWORD_FILE" ] || { echo "Mosquitto password path exists but is not a regular file: $PASSWORD_FILE" >&2; exit 1; }
+      mosquitto_passwd -b "$PASSWORD_FILE" "$MQTT_CAMERA_EDGE_USERNAME" "$MQTT_CAMERA_EDGE_PASSWORD"
+    else
+      mosquitto_passwd -b -c "$PASSWORD_FILE" "$MQTT_CAMERA_EDGE_USERNAME" "$MQTT_CAMERA_EDGE_PASSWORD"
+    fi
+    mosquitto_passwd -b "$PASSWORD_FILE" "$MQTT_SERVER_USERNAME" "$MQTT_SERVER_PASSWORD"
+    chown 1883:1883 "$PASSWORD_FILE"
+    chmod 0640 "$PASSWORD_FILE"
   '
 echo "Mosquitto identities created in Swarm volume $VOLUME_NAME."

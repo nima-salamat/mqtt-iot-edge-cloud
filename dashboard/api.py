@@ -136,6 +136,7 @@ def heartbeat(request):
         inference_fps = max(0.0, min(60.0, float(payload.get("inference_fps") or 0)))
         pending_alerts = max(0, int(payload.get("pending_alerts") or 0))
         pending_video_segments = max(0, int(payload.get("pending_video_segments") or 0))
+        tracking_seconds = max(0.0, min(86400.0, float(payload.get("tracking_seconds") or 0)))
     except (TypeError, ValueError):
         return JsonResponse({"error": "invalid_device_metrics"}, status=400)
     device.is_online = True
@@ -151,7 +152,7 @@ def heartbeat(request):
         "pending_alerts": pending_alerts,
         "pending_video_segments": pending_video_segments,
         "tracking_active": bool(payload.get("tracking_active", False)),
-        "tracking_seconds": max(0.0, min(86400.0, float(payload.get("tracking_seconds") or 0))),
+        "tracking_seconds": tracking_seconds,
         "model": str(payload.get("model", "yolov5n-ncnn"))[:64],
         "software_version": str(payload.get("software_version", ""))[:64],
     })

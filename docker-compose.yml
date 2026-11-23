@@ -1,9 +1,6 @@
 x-app-image: &app-image
+  # All Django/Streamlit workers share one immutable application image.
   image: ${DOCKER_REGISTRY:-docker.io}/nima-salamat/mqtt-iot-edge-cloud:${IMAGE_TAG:-latest}
-  build:
-    context: .
-    args:
-      DOCKER_REGISTRY: ${DOCKER_REGISTRY:-docker.io}
 
 services:
   db:
@@ -36,6 +33,11 @@ services:
 
   api:
     <<: *app-image
+    # Build the shared application image once. web/listener/retention reuse this tag.
+    build:
+      context: .
+      args:
+        DOCKER_REGISTRY: ${DOCKER_REGISTRY:-docker.io}
     restart: unless-stopped
     command: >
       sh -c "python manage.py migrate --noinput &&

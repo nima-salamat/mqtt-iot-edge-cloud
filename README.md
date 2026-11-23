@@ -194,13 +194,15 @@ The host certificate is not copied into the repository and no certificate contai
 
 Set `HOST_CERT_DIR` to the host directory that contains the certificate and its key. Set `MEDIA_TLS_CERT` and `MEDIA_TLS_KEY` to their paths *inside* the container under `/host-certs/`.
 
-For a Certbot installation, the usual values are:
+The current host Nginx configuration references a wildcard-certificate candidate at `/etc/ssl/echonode-wildcard/`. The sample environment uses:
 
-    HOST_CERT_DIR=/etc/letsencrypt
-    MEDIA_TLS_CERT=/host-certs/live/server.echonode.website/fullchain.pem
-    MEDIA_TLS_KEY=/host-certs/live/server.echonode.website/privkey.pem
+    HOST_CERT_DIR=/etc/ssl/echonode-wildcard
+    MEDIA_TLS_CERT=/host-certs/wildcard.crt
+    MEDIA_TLS_KEY=/host-certs/wildcard.key
 
-For certificates stored elsewhere, mount their containing directory instead and change the two in-container paths. The deployment script checks that the certificate is readable, valid for `DOMAIN`, unexpired, and matches the private key.
+Verify that these files exist and the certificate covers `server.echonode.website`. If this candidate is not the active certificate, set `HOST_CERT_DIR`, `MEDIA_TLS_CERT` and `MEDIA_TLS_KEY` to the correct certificate directory and filenames. For Certbot, mount `/etc/letsencrypt` and use `/host-certs/live/<certificate-name>/fullchain.pem` and `privkey.pem`.
+
+The deployment script checks that the certificate is readable, valid for `DOMAIN`, unexpired, and matches the private key.
 
 Mounting the whole certificate directory (rather than individual `live/` symlink files) keeps the Certbot `archive/` symlink targets available inside MediaMTX. MediaMTX may need a restart after certificate renewal to reload a renewed certificate.
 

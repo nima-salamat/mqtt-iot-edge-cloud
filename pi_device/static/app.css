@@ -349,3 +349,78 @@ button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{
 }
 
 .settings-grid .camera-source-field{display:grid;gap:8px;align-content:start;min-width:0}
+
+
+/* CCTV operator-console refinements */
+[hidden]{display:none!important}
+.console-nav{
+  position:sticky;top:76px;z-index:4;display:flex;align-items:center;gap:7px;
+  flex-wrap:wrap;padding:9px;margin:0 0 15px;border:1px solid #293f53;
+  border-radius:13px;background:rgba(8,20,32,.94);backdrop-filter:blur(14px);
+  box-shadow:0 8px 24px #0003
+}
+.console-nav a{
+  display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:9px;
+  color:#9eb6c7;text-decoration:none;font-size:10px;font-weight:700;
+  border:1px solid transparent;transition:background .15s,border-color .15s,color .15s
+}
+.console-nav a span{color:#78d9ca;font-size:14px}
+.console-nav a:hover{color:#eaf8f8;background:#193445;border-color:#31556a}
+.metric-card{position:relative;overflow:hidden}
+.metric-card:after{
+  content:"";position:absolute;inset:auto -24px -38px auto;width:100px;height:100px;
+  border-radius:50%;background:radial-gradient(circle,#6ce0cd14,transparent 70%);pointer-events:none
+}
+.metric-card-heading{display:flex;align-items:center;gap:10px;min-height:34px}
+.metric-card-heading>span:last-child{color:#9eb5c5;font-size:10px;font-weight:700}
+.metric-icon{
+  width:34px;height:34px;flex:0 0 34px;display:grid;place-items:center;
+  border:1px solid #315266;border-radius:10px;background:#102b3a;color:#83dfd0
+}
+.metric-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.metric-icon.temperature{color:#f2b77a;background:#352b26;border-color:#71523d}
+.metric-icon.memory{color:#8fb9ed;background:#1b2c45;border-color:#3c5678}
+.metric-icon.storage{color:#b1a0e6;background:#2b2945;border-color:#4b4773}
+.metric-icon.cpu{color:#78dec0}
+.metric-icon.ai{color:#89c0ee}
+.metric-icon.camera{color:#7cdbd0}
+.metric-card strong{font-variant-numeric:tabular-nums;direction:ltr;unicode-bidi:isolate;text-align:left}
+#memory-usage,#storage-usage,#system-temperature,#system-cpu,#video-fps,#inference-fps{direction:ltr;unicode-bidi:isolate;text-align:left}
+#memory-usage-note,#storage-usage-note{direction:rtl;unicode-bidi:isolate;display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+#memory-usage-note bdi,#storage-usage-note bdi{direction:ltr;unicode-bidi:isolate}
+#memory-usage-note span,#storage-usage-note span{white-space:nowrap}
+.status-list .tracking-status-item{display:grid;grid-template-columns:1fr auto;align-items:center}
+.status-list .tracking-status-item small{grid-column:1/-1;color:#82b9ab;font-size:9px;direction:rtl}
+.paired-connection-card{border-color:#326d5c;background:linear-gradient(145deg,#143b37,#102c31)}
+.paired-connection-card h3{color:#a4ead5}
+.detection-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.detection-toolbar .danger-btn{width:auto;grid-column:auto;padding:8px 12px}
+.alarm-thumb-card{position:relative}
+.alarm-thumb-heading{position:relative;padding-inline-end:0}
+.alarm-card-menu{position:relative;margin-inline-start:auto;flex:0 0 auto}
+.alarm-card-menu summary{
+  list-style:none;display:grid;place-items:center;width:28px;height:27px;border:1px solid #344e63;
+  border-radius:8px;background:#112336;color:#d4e6ef;font-size:19px;line-height:1;cursor:pointer
+}
+.alarm-card-menu summary::-webkit-details-marker{display:none}
+.alarm-card-menu[open] summary{border-color:#6bb9ad;background:#183b43}
+.alarm-delete-action{
+  position:absolute;z-index:7;top:31px;left:0;white-space:nowrap;
+  border:1px solid #754752;border-radius:8px;background:#3a2730;color:#f4c2ca;
+  padding:8px 12px;font:600 10px Vazirmatn,sans-serif;cursor:pointer;
+  box-shadow:0 8px 20px #0008
+}
+.alarm-delete-action:hover{background:#53323d}
+.alarm-delete-action:disabled{opacity:.5;cursor:wait}
+.camera-source-field .utility-btn{justify-self:start}
+.settings-group summary{scroll-margin-top:150px}
+.settings-grid input:disabled{opacity:.55;cursor:not-allowed}
+#memory-usage{font-variant-numeric:tabular-nums}
+@media(max-width:700px){
+  .console-nav{top:67px;overflow-x:auto;flex-wrap:nowrap;white-space:nowrap}
+  .console-nav a{flex:0 0 auto;padding:7px 10px}
+  .metric-card-heading{gap:7px}
+  .metric-icon{width:30px;height:30px;flex-basis:30px}
+  .metric-icon svg{width:17px;height:17px}
+  .detection-toolbar{width:100%;justify-content:space-between}
+}

@@ -2,8 +2,10 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from django.contrib.auth.decorators import login_required
+from django.db.models import Max
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from .models import Alarm, Device, DeviceLog, RetentionPolicy, VideoSegment
@@ -19,12 +21,15 @@ def home(request):
     online_count = devices.filter(
         is_online=True, last_heartbeat__gte=timezone.now() - timedelta(seconds=50)
     ).count()
-    recent_alarms = Alarm.objects.filter(device__in=devices).select_related("device")[:12]
+    alarm_queryset = Alarm.objects.filter(device__in=devices)
+    recent_alarms = alarm_queryset.select_related("device")[:12]
+    alarm_cursor = alarm_queryset.aggregate(max_id=Max("pk"))["max_id"] or 0
     policy, _ = RetentionPolicy.objects.get_or_create(user=request.user)
     return render(request, "dashboard/home.html", {
         "devices": devices,
         "online_count": online_count,
         "recent_alarms": recent_alarms,
+        "alarm_cursor": alarm_cursor,
         "retention": policy,
         "is_admin": request.user.is_staff,
     })
@@ -33,11 +38,14 @@ def home(request):
 @login_required
 def device_detail(request, device_id):
     device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
-    alarms = device.alarms.all()[:50]
+    alarm_queryset = device.alarms.all()
+    alarms = alarm_queryset[:50]
+    alarm_cursor = alarm_queryset.aggregate(max_id=Max("pk"))["max_id"] or 0
     segments = device.video_segments.all()[:120]
     logs = device.logs.all()[:50]
     return render(request, "dashboard/device_detail.html", {
-        "device": device, "alarms": alarms, "segments": segments, "logs": logs,
+        "device": device, "alarms": alarms, "alarm_cursor": alarm_cursor,
+        "segments": segments, "logs": logs,
     })
 
 
@@ -136,6 +144,52 @@ def dashboard_overview(request):
             }
             for alarm in alarms
         ],
+    })
+
+
+@login_required
+def dashboard_alerts(request):
+    """Return only newly-created alerts for the signed-in user's devices."""
+    try:
+        after = int(request.GET.get("after", "0"))
+        if after < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "invalid_alert_cursor"}, status=400)
+
+    visible_devices = _visible_devices(request.user)
+    device_id = request.GET.get("device_id", "").strip()
+    if device_id:
+        get_object_or_404(visible_devices, device_id=device_id)
+        queryset = Alarm.objects.filter(device_id=device_id)
+    else:
+        queryset = Alarm.objects.filter(device__in=visible_devices)
+
+    batch = list(
+        queryset.filter(pk__gt=after)
+        .select_related("device")
+        .order_by("pk")[:51]
+    )
+    has_more = len(batch) > 50
+    batch = batch[:50]
+    alerts = []
+    for alarm in batch:
+        alerts.append({
+            "id": alarm.pk,
+            "device_id": alarm.device_id,
+            "device_name": alarm.device.name,
+            "confidence": round(alarm.confidence, 3),
+            "detected_at": alarm.detected_at.isoformat(),
+            "acknowledged": alarm.acknowledged,
+            "has_snapshot": bool(alarm.snapshot),
+            "image_url": reverse("dashboard:alarm-image", args=[alarm.pk]) if alarm.snapshot else None,
+            "device_url": reverse("dashboard:device-detail", args=[alarm.device_id]),
+        })
+
+    return JsonResponse({
+        "alerts": alerts,
+        "next_cursor": alerts[-1]["id"] if alerts else after,
+        "has_more": has_more,
     })
 
 

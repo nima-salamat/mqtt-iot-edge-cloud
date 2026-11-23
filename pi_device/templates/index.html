@@ -35,17 +35,49 @@
     </div>
   </section>
 
+  <nav class="console-nav" aria-label="بخش‌های پنل دوربین">
+    <a href="#camera-live"><span>◉</span> تصویر زنده</a>
+    <a href="#local-detections"><span>⌖</span> تشخیص‌ها</a>
+    <a href="#device-settings"><span>⚙</span> تنظیمات دستگاه</a>
+    <a href="#device-health"><span>▥</span> سلامت سیستم</a>
+  </nav>
+
   <section class="metric-grid">
-    <article class="metric-card"><span>نرخ فریم دوربین</span><strong id="video-fps">—</strong><small id="video-fps-target">مقدار ذخیره‌شده: {{ settings.video_fps }} FPS</small></article>
-    <article class="metric-card"><span>FPS واقعی YOLO</span><strong id="inference-fps">—</strong><small>فریم‌های تکمیل‌شده در ثانیه</small></article>
-    <article class="metric-card"><span>پردازه‌های مدل</span><strong id="model-status">در حال بررسی</strong><small id="inference-workers">YOLOv5n · NCNN</small></article>
-    <article class="metric-card"><span>ارسال زنده به سرور</span><strong id="rtsp-status">قطع</strong><small>RTSPS / H.264</small></article>
-    <article class="metric-card"><span>دمای پردازنده Pi</span><strong id="system-temperature">—</strong><small id="system-temperature-note">در انتظار داده سخت‌افزاری</small></article>
-    <article class="metric-card"><span>مصرف RAM</span><strong id="memory-usage">—</strong><small id="memory-usage-note">در انتظار داده سیستم</small></article>
-    <article class="metric-card"><span>فضای ذخیره‌سازی</span><strong id="storage-usage">—</strong><div class="metric-progress"><span id="storage-progress"></span></div><small id="storage-usage-note">فضای آزاد حافظه</small></article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h4l1.4-2h5.2l1.4 2h4A1.5 1.5 0 0 1 21.5 9v9a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 18V9A1.5 1.5 0 0 1 4 7.5Z"/><circle cx="12" cy="13.5" r="4"/></svg></span><span>نرخ فریم دوربین</span></div>
+      <strong id="video-fps" dir="ltr">—</strong><small id="video-fps-target">در انتظار تشخیص قابلیت سنسور</small>
+    </article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon ai"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 9h6v6H9zM9 2.5v2.5M15 2.5v2.5M9 19v2.5M15 19v2.5M2.5 9H5M2.5 15H5M19 9h2.5M19 15h2.5"/></svg></span><span>سرعت واقعی YOLO</span></div>
+      <strong id="inference-fps" dir="ltr">—</strong><small>پردازش‌های تکمیل‌شده در هر ثانیه</small>
+    </article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon workers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="8.5" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 11v1.5h11V11M12 12.5V14"/></svg></span><span>پردازه‌های مدل</span></div>
+      <strong id="model-status">در حال بررسی</strong><small id="inference-workers">YOLOv5n · NCNN</small>
+    </article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon network"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8.5a13.5 13.5 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9.5 15.5a4 4 0 0 1 5 0M12 19h.01"/></svg></span><span>ارسال زنده به سرور</span></div>
+      <strong id="rtsp-status">قطع</strong><small>RTSPS / H.264</small>
+    </article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon cpu"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 9h6v6H9zM9 2.5v3M15 2.5v3M9 18.5v3M15 18.5v3M2.5 9h3M2.5 15h3M18.5 9h3M18.5 15h3"/></svg></span><span>مصرف پردازنده</span></div>
+      <strong id="system-cpu" dir="ltr">—</strong><small id="system-cpu-note">CPU Usage</small>
+    </article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon temperature"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 14.8V5a3 3 0 0 0-6 0v9.8a5 5 0 1 0 6 0Z"/><path d="M11 7v10M15.5 6h2M15.5 9h2"/></svg></span><span>دمای پردازنده Pi</span></div>
+      <strong id="system-temperature" dir="ltr">—</strong><small id="system-temperature-note">در انتظار داده سخت‌افزاری</small>
+    </article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon memory"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 9h2v6H8zM12 9h4v6h-4zM2 9v6M22 9v6M7 3v3M12 3v3M17 3v3M7 18v3M12 18v3M17 18v3"/></svg></span><span>مصرف RAM</span></div>
+      <strong id="memory-usage" dir="ltr">—</strong><small id="memory-usage-note" dir="rtl">در انتظار داده سیستم</small>
+    </article>
+    <article class="metric-card">
+      <div class="metric-card-heading"><span class="metric-icon storage"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 8h10M7 12h.01M7 16h.01M17 15h1"/></svg></span><span>فضای ذخیره‌سازی</span></div>
+      <strong id="storage-usage" dir="ltr">—</strong><div class="metric-progress"><span id="storage-progress"></span></div><small id="storage-usage-note" dir="rtl">فضای آزاد حافظه</small>
+    </article>
   </section>
 
-  <section class="main-grid">
+  <section class="main-grid" id="camera-live">
     <article class="panel camera-panel">
       <div class="panel-heading camera-heading">
         <div><span class="eyebrow">LIVE CAMERA</span><h2>پیش‌نمایش دوربین</h2></div>
@@ -88,7 +120,7 @@
         <div><span>قطعه‌های ویدئو در صف</span><b id="pending-videos">0</b></div>
         <div><span>آخرین آپلود موفق</span><b id="last-upload">—</b></div>
       </div>
-      <div class="pair-card">
+      <div class="pair-card" id="pair-card">
         <span class="eyebrow">SECURE DEVICE PAIRING</span>
         <h3>اتصال به حساب کاربری</h3>
         <p>در پنل وب، «افزودن دوربین» را بزن. می‌توانی QR را با دوربین اسکن کنی یا متن کد زیر QR را کپی و اینجا وارد کنی.</p>
@@ -112,20 +144,29 @@
         </form>
         <div id="pairing-state" class="pairing-state">وضعیت: دستگاه هنوز ثبت نشده است.</div>
       </div>
+      <div class="pair-card paired-connection-card" id="paired-connection-card" hidden>
+        <span class="eyebrow">DEVICE LINK</span>
+        <h3>دوربین به حساب متصل است</h3>
+        <p>دسترسی سرور و ارسال رخدادها فعال است. برای لغو Pairing و ابطال دسترسی، از دکمه زیر استفاده کن.</p>
+        <button id="disconnect-camera" class="danger-btn" type="button">قطع اتصال دوربین از حساب</button>
+      </div>
     </aside>
   </section>
 
-  <section class="panel detections-panel">
+  <section class="panel detections-panel" id="local-detections">
     <div class="panel-heading">
       <div><span class="eyebrow">LOCAL DETECTIONS</span><h2>تصاویر ثبت‌شده تشخیص انسان</h2><p class="hint">آخرین تصاویر ذخیره‌شده روی خود Raspberry Pi؛ مستقل از وضعیت اتصال اینترنت.</p></div>
-      <span class="settings-mark" id="alarm-gallery-count">۰ تصویر</span>
+      <div class="detection-toolbar">
+        <span class="settings-mark" id="alarm-gallery-count">۰ تصویر</span>
+        <button id="cleanup-alarms" class="danger-btn" type="button">پاک‌سازی همه تشخیص‌ها</button>
+      </div>
     </div>
     <div id="alarm-gallery" class="alarm-gallery" aria-live="polite">
       <div class="gallery-empty">هنوز تصویری از تشخیص انسان ثبت نشده است.</div>
     </div>
   </section>
 
-  <section class="panel queue-panel">
+  <section class="panel queue-panel" id="device-queues">
     <div class="panel-heading">
       <div><span class="eyebrow">DURABLE OUTBOX</span><h2>مدیریت صف ارسال</h2><p class="hint">فقط موارد ارسال‌نشده حذف می‌شوند. فایل‌های آپلودشده و آرشیو لاگ‌ها دست‌نخورده باقی می‌مانند.</p></div>
       <span class="settings-mark">LOCAL QUEUES</span>
@@ -151,7 +192,7 @@
     <p id="queue-action-status" class="queue-action-status" role="status"></p>
   </section>
 
-  <section class="panel settings-panel">
+  <section class="panel settings-panel" id="device-settings">
     <div class="panel-heading">
       <div><span class="eyebrow">LOCAL STORAGE & EDGE AI</span><h2>تنظیمات دستگاه</h2><p class="hint">ذخیره‌سازی این بخش روی خود Raspberry Pi است و از سیاست نگهداری سرور مستقل است.</p></div>
       <span class="settings-mark">LOCAL CONFIG</span>
@@ -184,11 +225,12 @@
                 <option value="true" {% if settings.video_fps_auto %}selected{% endif %}>خودکار؛ سریع‌ترین mode سازگار سنسور</option>
                 <option value="false" {% if not settings.video_fps_auto %}selected{% endif %}>دستی؛ نرخ درخواستی</option>
               </select>
-              <small>در حالت خودکار، Picamera2 یا جدول V4L2 وب‌کم سریع‌ترین mode سازگار با وضوح انتخابی را می‌خواند؛ منبع شبکه از نرخ پیش‌فرض خودش استفاده می‌کند و FPS واقعی جداگانه اندازه‌گیری می‌شود.</small>
+              <small>در حالت خودکار، سریع‌ترین mode سازگار سنسور انتخاب می‌شود. در حالت دستی، فقط نرخ‌های قابل پشتیبانی همین دوربین پیشنهاد می‌شوند.</small>
             </label>
+            <datalist id="camera-fps-options"></datalist>
             <label>نرخ فریم در حالت دستی
-              <input name="video_fps" type="number" min="1" max="120" step="1" inputmode="numeric" required value="{{ settings.video_fps }}">
-              <small>۱ تا ۱۲۰ FPS؛ مقدار واقعی با توجه به قابلیت سنسور و اندازه‌گیری فریم‌های دریافتی نمایش داده می‌شود.</small>
+              <input name="video_fps" type="number" min="1" max="1000" step="1" list="camera-fps-options" inputmode="numeric" required value="{{ settings.video_fps }}">
+              <small>حد بالای قابل انتخاب با توجه به قابلیت واقعی دوربین تعیین می‌شود؛ نرخ دریافتی هم جداگانه اندازه‌گیری می‌شود.</small>
             </label>
             <label>بیت‌ریت H.264 (بیت بر ثانیه)
               <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" inputmode="numeric" required value="{{ settings.video_bitrate }}">
@@ -212,8 +254,8 @@
           </summary>
           <div class="settings-grid">
             <label>حداکثر نرخ نمونه‌برداری YOLO
-              <input name="inference_fps" type="number" min="1" max="60" step="1" inputmode="numeric" required value="{{ settings.inference_fps }}">
-              <small>۱ تا ۶۰ FPS درخواستی؛ نرخ واقعی با ظرفیت اندازه‌گیری‌شده Workerها، دما و بار CPU محدود می‌شود.</small>
+              <input name="inference_fps" type="number" min="1" max="1000" step="1" list="camera-fps-options" inputmode="numeric" required value="{{ settings.inference_fps }}">
+              <small>سقف ورودی مدل از حداکثر FPS واقعی دوربین بیشتر نمی‌شود؛ ظرفیت پردازشی Workerها نیز نرخ نهایی را محدود می‌کند.</small>
             </label>
             <label>تعداد پردازه‌های YOLO
               <input name="inference_workers" type="number" min="1" max="8" step="1" inputmode="numeric" required value="{{ settings.inference_workers }}">
@@ -274,7 +316,7 @@
     </form>
   </section>
 
-  <section class="panel diagnostics-panel">
+  <section class="panel diagnostics-panel" id="device-health">
     <div class="panel-heading"><div><span class="eyebrow">RETRY & DIAGNOSTICS</span><h2>وضعیت ارسال و خطاها</h2></div></div>
     <div class="diagnostic-grid">
       <div><span>وضعیت احراز هویت دستگاه</span><b id="device-pair-status">ثبت‌نشده</b></div>

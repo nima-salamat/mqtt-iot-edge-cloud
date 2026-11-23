@@ -289,7 +289,7 @@ class CameraPipeline:
     def start(self):
         from picamera2 import Picamera2
         from picamera2.encoders import H264Encoder
-        from picamera2.outputs import PyavOutput, SplittableOutput
+        from picamera2.outputs import PyavOutput
 
         if self.picam2 is not None:
             return
@@ -307,8 +307,6 @@ class CameraPipeline:
             self.inference_fps = 0.0
             self.inference_latency_ms = 0.0
             self.inference_dropped_frames = 0
-            self._last_detections = []
-            self._last_detection_at = 0.0
             self._last_detections = []
             self._last_detection_at = 0.0
         self.model_error = ""
@@ -620,7 +618,6 @@ class CameraPipeline:
                     self._frame_sequence += 1
                     self._latest_frame_sequence = self._frame_sequence
                     self._latest_bgr_at = now
-                    detections = list(self._last_detections)
                     detections = list(self._last_detections)
                     detection_age = now - self._last_detection_at if self._last_detection_at else 999.0
 

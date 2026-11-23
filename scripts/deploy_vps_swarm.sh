@@ -13,10 +13,18 @@ if grep -Eq 'REPLACE_|YOUR_|CHANGE_ME' .env; then
   exit 1
 fi
 
-# Export the simple KEY=value entries so Docker Stack interpolation can read them.
 set -a
 . ./.env
 set +a
+
+: "${DOMAIN:?Set DOMAIN in .env}"
+: "${PANEL_USERNAME:?Set PANEL_USERNAME in .env}"
+: "${PANEL_PASSWORD:?Set PANEL_PASSWORD in .env}"
+: "${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}"
+: "${MQTT_DEVICE_USERNAME:?Set MQTT_DEVICE_USERNAME in .env}"
+: "${MQTT_DEVICE_PASSWORD:?Set MQTT_DEVICE_PASSWORD in .env}"
+: "${MQTT_SERVER_USERNAME:?Set MQTT_SERVER_USERNAME in .env}"
+: "${MQTT_SERVER_PASSWORD:?Set MQTT_SERVER_PASSWORD in .env}"
 
 : "${STACK_NAME:=mqtt-iot}"
 : "${MQTT_IOT_IMAGE:=mqtt-iot-edge-cloud:local}"
@@ -47,7 +55,6 @@ fi
 docker node update --label-add mqtt-iot-edge-cloud=true "$NODE_ID" >/dev/null
 
 docker volume create "${STACK_NAME}_django_data" >/dev/null
-docker volume create "${STACK_NAME}_static_data" >/dev/null
 ./scripts/create_mqtt_users_swarm.sh
 
 docker build -t "$MQTT_IOT_IMAGE" .
@@ -56,7 +63,7 @@ docker stack deploy --resolve-image never -c docker-stack.traefik-swarm.yml "$ST
 WEB_SERVICE="${STACK_NAME}_web"
 LISTENER_SERVICE="${STACK_NAME}_listener"
 
-# Wait until Django has completed migrations and its HTTP healthcheck is healthy.
+# Wait until Streamlit is healthy after Django migrations and demo-device registration.
 READY=0
 COUNT=0
 while [ "$COUNT" -lt 90 ]; do
@@ -73,7 +80,7 @@ while [ "$COUNT" -lt 90 ]; do
 done
 
 if [ "$READY" -ne 1 ]; then
-  echo "Django did not become healthy. Listener remains scaled to zero." >&2
+  echo "Streamlit did not become healthy. Listener remains scaled to zero." >&2
   echo "Inspect: docker service logs ${WEB_SERVICE}" >&2
   exit 1
 fi
@@ -81,6 +88,6 @@ fi
 docker service scale "${LISTENER_SERVICE}=1"
 echo
 echo "Swarm stack '$STACK_NAME' deployed."
-echo "Dashboard: https://${DOMAIN}"
+echo "Streamlit panel: https://${DOMAIN}"
+echo "Login with PANEL_USERNAME and PANEL_PASSWORD configured in .env."
 echo "Listener: ${LISTENER_SERVICE} (1 replica)"
-echo "Create the Django admin user by executing 'python manage.py createsuperuser' inside a running ${WEB_SERVICE} task."

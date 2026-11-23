@@ -4,11 +4,6 @@ services:
   broker:
     image: eclipse-mosquitto:2.1.2
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
-    environment:
-      MQTT_DEVICE_USERNAME: ${MQTT_DEVICE_USERNAME}
-      MQTT_DEVICE_PASSWORD: ${MQTT_DEVICE_PASSWORD}
-      MQTT_SERVER_USERNAME: ${MQTT_SERVER_USERNAME}
-      MQTT_SERVER_PASSWORD: ${MQTT_SERVER_PASSWORD}
     volumes:
       - ${PROJECT_DIR}/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ${PROJECT_DIR}/mosquitto/aclfile:/mosquitto/config/aclfile:ro
@@ -34,38 +29,41 @@ services:
         - "traefik.http.routers.mqtt-iot-ws.service=mqtt-iot-ws"
         - "traefik.http.services.mqtt-iot-ws.loadbalancer.server.port=9001"
 
+  # Streamlit is the public control panel. Django remains the data model/migration layer.
   web:
     image: ${MQTT_IOT_IMAGE}
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py seed_demo &&
-             python manage.py collectstatic --noinput &&
-             gunicorn iotlab.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 60"
+             streamlit run streamlit_app.py
+             --server.address=0.0.0.0
+             --server.port=8501
+             --server.headless=true"
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
+      DJANGO_DEBUG: "0"
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
-      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
       DATABASE_PATH: /app/data/db.sqlite3
-      MQTT_HOST: ${STACK_NAME}_broker
-      MQTT_PORT: "9001"
-      MQTT_WS_PATH: ${MQTT_WS_PATH:-/mqtt}
-      MQTT_TLS: "0"
+      DOMAIN: ${DOMAIN}
+      PANEL_USERNAME: ${PANEL_USERNAME}
+      PANEL_PASSWORD: ${PANEL_PASSWORD}
       MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-iotlab}
-      MQTT_USERNAME: ${MQTT_SERVER_USERNAME}
-      MQTT_PASSWORD: ${MQTT_SERVER_PASSWORD}
+      MQTT_WS_PATH: ${MQTT_WS_PATH:-/mqtt}
+      MQTT_BROKER_HOST: ${STACK_NAME}_broker
+      MQTT_BROKER_PORT: "1883"
+      MQTT_SERVER_USERNAME: ${MQTT_SERVER_USERNAME}
+      MQTT_SERVER_PASSWORD: ${MQTT_SERVER_PASSWORD}
     volumes:
       - django_data:/app/data
-      - static_data:/app/staticfiles
     networks:
       - mqtt-internal
       - traefik-public
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/health/', headers={'X-Forwarded-Proto':'https'}); urllib.request.urlopen(r, timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 15
-      start_period: 30s
+      start_period: 40s
     deploy:
       replicas: 1
       restart_policy:
@@ -82,7 +80,7 @@ services:
         - "traefik.http.routers.mqtt-iot-dashboard.tls=true"
         - "traefik.http.routers.mqtt-iot-dashboard.tls.certresolver=${TRAEFIK_CERT_RESOLVER}"
         - "traefik.http.routers.mqtt-iot-dashboard.service=mqtt-iot-dashboard"
-        - "traefik.http.services.mqtt-iot-dashboard.loadbalancer.server.port=8000"
+        - "traefik.http.services.mqtt-iot-dashboard.loadbalancer.server.port=8501"
         - "traefik.http.routers.mqtt-iot-http.rule=Host(`${DOMAIN}`)"
         - "traefik.http.routers.mqtt-iot-http.entrypoints=${TRAEFIK_HTTP_ENTRYPOINT}"
         - "traefik.http.routers.mqtt-iot-http.middlewares=mqtt-iot-https-redirect"
@@ -109,7 +107,7 @@ services:
     networks:
       - mqtt-internal
     deploy:
-      # Start after the web service has completed migrations/collectstatic.
+      # The deployment script scales this to one after the Streamlit service is healthy.
       replicas: 0
       restart_policy:
         condition: any
@@ -124,9 +122,6 @@ volumes:
   mosquitto_data:
     external: true
     name: ${STACK_NAME}_mosquitto_data
-  static_data:
-    external: true
-    name: ${STACK_NAME}_static_data
 
 networks:
   mqtt-internal:

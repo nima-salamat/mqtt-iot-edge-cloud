@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 pi_device/.env.pi.example
+.streamlit/secrets.toml
 .venv/
 venv/
 __pycache__/
@@ -16,3 +17,4 @@ staticfiles/
 mosquitto/password_file
 instance/
 .DS_Store
+.pytest_cache/

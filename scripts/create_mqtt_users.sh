@@ -5,9 +5,10 @@ if [ ! -f .env ]; then
   echo "Missing .env. Copy .env.example to .env and fill its secrets first." >&2
   exit 1
 fi
+set -a
+. ./.env
+set +a
 
-# Mosquitto stores password hashes in its persistent data volume.
-# The raw passwords are not written into the project files.
 docker compose run --rm --no-deps --entrypoint sh broker -c '
   set -eu
   mosquitto_passwd -b -c /mosquitto/data/password_file "$MQTT_DEVICE_USERNAME" "$MQTT_DEVICE_PASSWORD"

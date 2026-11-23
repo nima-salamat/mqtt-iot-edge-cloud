@@ -88,7 +88,9 @@ class Command(BaseCommand):
 
                 device.is_online = True
                 device.last_seen = now
-                device.current_state = payload
+                current_state = device.current_state if isinstance(device.current_state, dict) else {}
+                current_state.update(payload)
+                device.current_state = current_state
                 device.save(update_fields=["is_online", "last_seen", "current_state"])
                 Telemetry.objects.create(
                     device=device,

@@ -45,7 +45,7 @@ class RaspberryPiMqttBridge:
                 self.led = LED(int(os.getenv("GPIO_PIN", "17")))
                 self.led.off()
                 log.info("GPIO output enabled on BCM pin %s", os.getenv("GPIO_PIN", "17"))
-            except Exception as exc:  # The UI and MQTT demo can still run without GPIO hardware.
+            except Exception as exc:
                 self.gpio_enabled = False
                 self.last_error = f"GPIO initialization failed: {exc}"
                 log.exception("Could not initialize GPIO output")
@@ -90,8 +90,6 @@ class RaspberryPiMqttBridge:
     def stop(self) -> None:
         try:
             if self.client.is_connected():
-                # Give the retained offline status a chance to receive PUBACK
-                # before disconnecting. The broker's Will still covers crashes.
                 info = self.client.publish(
                     self.topic_status,
                     json.dumps({"device_id": self.device_id, "status": "offline", "reported_at": utc_now()}),
@@ -141,25 +139,45 @@ class RaspberryPiMqttBridge:
             log.warning("Ignoring invalid command payload")
             return
 
-        if message.topic != self.topic_command or payload.get("command") != "set_output":
-            log.warning("Ignoring unsupported command on topic %s", message.topic)
-            return
-        state = payload.get("state")
-        if state not in {"on", "off"}:
+        if message.topic != self.topic_command:
+            log.warning("Ignoring command on unexpected topic %s", message.topic)
             return
 
-        self._apply_output(state)
-        acknowledgement = {
+        command = payload.get("command")
+        acknowledgement: dict[str, Any] = {
             "device_id": self.device_id,
-            "command": "set_output",
-            "state": state,
-            "output_state": state,
-            "result": "applied",
+            "command": command,
+            "command_id": payload.get("command_id"),
+            "result": "rejected",
             "applied_at": utc_now(),
-            "source": "cloud-dashboard",
         }
+
+        if command == "set_output":
+            state = payload.get("state")
+            if state not in {"on", "off"}:
+                log.warning("Ignoring invalid output command: %r", payload)
+                return
+            self._apply_output(state)
+            acknowledgement.update({"state": state, "output_state": state, "result": "applied"})
+            self._record_local("فرمان خروجی از داشبورد", acknowledgement)
+
+        elif command == "send_message":
+            text = payload.get("message")
+            if not isinstance(text, str) or not text.strip() or len(text) > 500:
+                log.warning("Ignoring invalid device message")
+                return
+            acknowledgement.update({"message": text.strip(), "result": "received"})
+            self._record_local("پیام دریافت‌شده از داشبورد", {"message": text.strip(), "received_at": utc_now()})
+
+        elif command == "ping":
+            acknowledgement.update({"result": "pong", "device_time": utc_now()})
+            self._record_local("درخواست Ping از داشبورد", acknowledgement)
+
+        else:
+            log.warning("Unsupported command received: %r", command)
+            return
+
         self._publish(self.topic_ack, acknowledgement, wait=False)
-        self._record_local("فرمان دریافتی از سرور", acknowledgement)
 
     def _apply_output(self, state: str) -> None:
         with self.lock:

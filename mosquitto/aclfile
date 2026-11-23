@@ -1,5 +1,5 @@
-# Raspberry Pi identity: it may publish its own events/telemetry/status/acks
-# and receive commands sent by the cloud dashboard.
+# Raspberry Pi identity: publish device events/telemetry/status/acks;
+# subscribe only to its own command topic.
 user raspberry-pi-01
 topic write iotlab/devices/raspberry-pi-01/events
 topic write iotlab/devices/raspberry-pi-01/telemetry
@@ -7,10 +7,11 @@ topic write iotlab/devices/raspberry-pi-01/status
 topic write iotlab/devices/raspberry-pi-01/ack
 topic read  iotlab/devices/raspberry-pi-01/command
 
-# Django identity: it may receive messages from the Pi and publish commands.
+# Server identity: receive device messages, publish commands, read broker stats.
 user django-server
 topic read  iotlab/devices/raspberry-pi-01/events
 topic read  iotlab/devices/raspberry-pi-01/telemetry
 topic read  iotlab/devices/raspberry-pi-01/status
 topic read  iotlab/devices/raspberry-pi-01/ack
 topic write iotlab/devices/raspberry-pi-01/command
+topic read  $SYS/#

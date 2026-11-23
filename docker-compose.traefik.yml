@@ -29,7 +29,7 @@ services:
       - "traefik.http.routers.mqtt-iot-dashboard.tls=true"
       - "traefik.http.routers.mqtt-iot-dashboard.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
       - "traefik.http.routers.mqtt-iot-dashboard.service=mqtt-iot-dashboard"
-      - "traefik.http.services.mqtt-iot-dashboard.loadbalancer.server.port=8000"
+      - "traefik.http.services.mqtt-iot-dashboard.loadbalancer.server.port=8501"
       - "traefik.http.routers.mqtt-iot-http.rule=Host(`${DOMAIN:-server.echonode.website}`)"
       - "traefik.http.routers.mqtt-iot-http.entrypoints=web"
       - "traefik.http.routers.mqtt-iot-http.middlewares=mqtt-iot-https-redirect"

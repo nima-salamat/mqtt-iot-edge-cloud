@@ -35,6 +35,12 @@ jobs:
           DJANGO_DEBUG: "0"
           DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
         run: python manage.py makemigrations --check --dry-run
+      - name: Collect static assets
+        env:
+          DJANGO_SECRET_KEY: ci-only-secret-key-not-for-production
+          DJANGO_DEBUG: "0"
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+        run: python manage.py collectstatic --noinput
       - name: Run Django tests
         env:
           DJANGO_SECRET_KEY: ci-only-secret-key-not-for-production

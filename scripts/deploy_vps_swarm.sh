@@ -45,7 +45,7 @@ fi
 : "${TRAEFIK_CERT_RESOLVER:=letsencrypt}"
 : "${POSTGRES_DB:=iotlab}"
 : "${POSTGRES_USER:=iotlab}"
-: "${MOSQUITTO_IMAGE:=${DOCKER_REGISTRY%/}/eclipse-mosquitto:2.1.2-alpine}"
+: "${MOSQUITTO_IMAGE:=${DOCKER_REGISTRY%/}/eclipse-mosquitto:2.1.4-alpine}"
 : "${MEDIAMTX_IMAGE:=${DOCKER_REGISTRY%/}/bluenviron/mediamtx:1.21.4}"
 : "${MQTT_IOT_IMAGE:=${DOCKER_REGISTRY%/}/nima-salamat/mqtt-iot-edge-cloud:${IMAGE_TAG}}"
 : "${MQTT_TOPIC_PREFIX:=iotlab}"

@@ -32,8 +32,18 @@
       text('pending-alarms', state.pending_alarms ?? 0);
       text('pending-videos', state.pending_video_segments ?? 0);
       text('last-upload', timeLabel(state.last_upload_at));
-      text('pairing-state', 'وضعیت اتصال: ' + (state.pairing_status || 'نامشخص'));
-      text('device-pair-status', state.pairing_status || 'نامشخص');
+      const pairingStatus = state.pairing_status || 'نامشخص';
+      const pairingLabels = {
+        not_paired: 'دستگاه هنوز به حسابی متصل نشده است.',
+        scanning: 'در حال اسکن QR؛ اگر تا پایان مهلت تشخیص داده نشد، کد را دستی وارد کن.',
+        submitting: 'کد دریافت شد؛ در حال اعتبارسنجی توسط سرور…',
+        paired: 'اتصال دستگاه با موفقیت انجام شد.',
+        expired: 'مهلت اسکن تمام شد و QR تشخیص داده نشد؛ کد را دستی وارد کن یا دوباره اسکن کن.'
+      };
+      text('pairing-state', pairingLabels[pairingStatus] || (
+        pairingStatus.startsWith('failed:') ? 'خطای اتصال: ' + pairingStatus.slice(7) : 'وضعیت اتصال: ' + pairingStatus
+      ));
+      text('device-pair-status', pairingStatus);
       text('uploaded-segments', state.uploaded_segments ?? 0);
       text('model-error', state.model_error || state.camera_error || '—');
       text('upload-error', state.last_upload_error || '—');

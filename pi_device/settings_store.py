@@ -34,7 +34,9 @@ DEFAULTS: dict[str, Any] = {
     "video_fps": _env_int("VIDEO_FPS", 30),
     "video_bitrate": _video_bitrate_default(),
     "segment_seconds": _env_int("VIDEO_SEGMENT_SECONDS", 5),
-    "inference_fps": _env_int("INFERENCE_FPS", 5),
+    "inference_fps": _env_int("INFERENCE_FPS", 10),
+    "inference_workers": _env_int("INFERENCE_WORKERS", 2),
+    "recording_enabled": True,
     "alert_confidence": _env_float("ALERT_CONFIDENCE", 0.45),
     "alert_cooldown_seconds": _env_int("ALERT_COOLDOWN_SECONDS", 15),
     "alert_clear_seconds": _env_int("ALERT_CLEAR_SECONDS", 4),
@@ -50,6 +52,7 @@ RANGES = {
     "video_bitrate": (500_000, 8_000_000),
     "segment_seconds": (2, 15),
     "inference_fps": (1, 10),
+    "inference_workers": (1, 3),
     "alert_confidence": (0.10, 0.95),
     "alert_cooldown_seconds": (1, 300),
     "alert_clear_seconds": (1, 60),
@@ -65,6 +68,12 @@ def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
     result = dict(DEFAULTS)
     for key, raw in value.items():
         if key not in DEFAULTS or key in {"video_width", "video_height"}:
+            continue
+        if key == "recording_enabled":
+            if isinstance(raw, bool):
+                result[key] = raw
+            elif isinstance(raw, str) and raw.strip().lower() in {"true", "false", "1", "0"}:
+                result[key] = raw.strip().lower() in {"true", "1"}
             continue
         low, high = RANGES.get(key, (None, None))
         try:
@@ -121,7 +130,7 @@ class SettingsStore:
             old = dict(self._value)
             self._value = normalize_settings({**old, **changes})
             self._save_locked()
-            restart_keys = {"video_fps", "video_bitrate", "segment_seconds"}
+            restart_keys = {"video_fps", "video_bitrate", "segment_seconds", "inference_workers"}
             restart_required = [
                 key for key in changes
                 if key in restart_keys and self._value[key] != old[key]

@@ -1,9 +1,10 @@
 """Unit tests for the adaptive multi-process YOLO scheduler."""
 from __future__ import annotations
 
+import queue
 import unittest
 
-from pi_device.inference_pool import AdaptiveWorkerScheduler
+from pi_device.inference_pool import AdaptiveInferencePool, AdaptiveWorkerScheduler
 
 
 class AdaptiveWorkerSchedulerTests(unittest.TestCase):
@@ -60,6 +61,75 @@ class AdaptiveWorkerSchedulerTests(unittest.TestCase):
     def test_no_available_worker_returns_none(self):
         scheduler = AdaptiveWorkerScheduler(2)
         self.assertIsNone(scheduler.choose([]))
+
+
+    def test_pool_capacity_counts_only_ready_live_workers(self):
+        class FakeProcess:
+            def __init__(self, alive):
+                self.alive = alive
+
+            def is_alive(self):
+                return self.alive
+
+        pool = AdaptiveInferencePool(worker_count=2)
+        pool.started = True
+        pool.processes = [FakeProcess(True), FakeProcess(True)]
+        pool.ready_workers = {0}
+
+        state = pool.snapshot()
+        self.assertEqual(state["ready_workers"], 1)
+        self.assertAlmostEqual(state["estimated_capacity_fps"], 4.0, places=2)
+
+        pool.ready_workers.add(1)
+        self.assertAlmostEqual(pool.snapshot()["estimated_capacity_fps"], 8.0, places=2)
+
+    def test_dead_worker_is_respawned_and_inflight_frame_is_reported_as_dropped(self):
+        class FakeQueue:
+            def get_nowait(self):
+                raise queue.Empty
+
+            def put_nowait(self, item):
+                pass
+
+        class FakeProcess:
+            def __init__(self, alive=False):
+                self.alive = alive
+
+            def start(self):
+                self.alive = True
+
+            def join(self, timeout=None):
+                pass
+
+            def is_alive(self):
+                return self.alive
+
+        class FakeContext:
+            def Process(self, **kwargs):
+                return FakeProcess()
+
+        pool = AdaptiveInferencePool(worker_count=1)
+        pool.started = True
+        pool.context = FakeContext()
+        pool.result_queue = FakeQueue()
+        pool.task_queues = [FakeQueue()]
+        pool.processes = [FakeProcess(alive=False)]
+        pool.ready_workers = {0}
+        pool.scheduler.mark_assigned(0)
+        pool._inflight_by_worker[0] = 123
+
+        pool._restart_dead_workers()
+
+        self.assertTrue(pool.processes[0].is_alive())
+        self.assertNotIn(0, pool.ready_workers)
+        self.assertFalse(pool.scheduler.workers[0].busy)
+        self.assertEqual(pool._pending_failures[0]["frame_sequence"], 123)
+        self.assertTrue(pool._pending_failures[0]["worker_failed"])
+
+        failed = pool.collect(timeout=0)
+        self.assertEqual(len(failed), 1)
+        self.assertTrue(failed[0]["worker_failed"])
+        self.assertEqual(failed[0]["frame_sequence"], 123)
 
     def test_invalid_worker_count_is_rejected(self):
         with self.assertRaises(ValueError):

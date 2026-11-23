@@ -209,6 +209,32 @@
     }
   });
   window.addEventListener('pagehide', () => { if (sessionUrl && authHeader) fetch(sessionUrl, {method:'DELETE',headers:{'Authorization':authHeader},keepalive:true}); });
+  async function refreshDeviceTracking(){
+    try{
+      const response=await fetch('/api/dashboard/overview/',{cache:'no-store'});
+      if(!response.ok)return;
+      const payload=await response.json();
+      const device=(payload.devices||[]).find(item=>item.device_id===deviceId);
+      if(!device)return;
+      const seconds=Number(device.tracking_seconds||0);
+      const label=document.getElementById('tracking-duration');
+      if(label){
+        label.textContent=device.tracking_active
+          ? 'در حال رهگیری · '+seconds.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه'
+          : (seconds>0?'آخرین رهگیری · '+seconds.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه':'—');
+      }
+      const badge=document.getElementById('device-connection-state');
+      if(badge && !device.is_paired){
+        badge.classList.remove('online');
+        badge.classList.add('offline');
+        const dot=document.createElement('i');
+        badge.replaceChildren(dot,document.createTextNode('اتصال لغو شده'));
+      }
+    }catch(error){console.warn('Could not refresh camera tracking state',error);}
+  }
+  refreshDeviceTracking();
+  setInterval(refreshDeviceTracking,5000);
+
   document.querySelectorAll('.ack-form').forEach(form => form.addEventListener('submit', async event => {
     event.preventDefault();
     const response = await fetch(form.action, {method:'POST',headers:{'X-CSRFToken':csrf,'Accept':'application/json'}});

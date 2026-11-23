@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   db:
-    image: postgres:17-alpine
+    image: ${DOCKER_REGISTRY:-docker.io}/library/postgres:17-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iotlab}
       POSTGRES_USER: ${POSTGRES_USER:-iotlab}
@@ -21,7 +21,7 @@ services:
         constraints: [node.labels.mqtt-iot-edge-cloud == true]
 
   broker:
-    image: eclipse-mosquitto:2.1.2
+    image: ${DOCKER_REGISTRY:-docker.io}/eclipse-mosquitto:2.1.2
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
     volumes:
       - ${PROJECT_DIR}/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
@@ -129,7 +129,7 @@ services:
         - "traefik.http.services.mqtt-iot-ops.loadbalancer.server.port=8501"
 
   mediamtx:
-    image: ${MEDIAMTX_IMAGE:-bluenviron/mediamtx:1.21.4}
+    image: ${MEDIAMTX_IMAGE}
     command: ["/mediamtx.yml"]
     environment:
       MTX_WEBRTCADDITIONALHOSTS: ${DOMAIN}

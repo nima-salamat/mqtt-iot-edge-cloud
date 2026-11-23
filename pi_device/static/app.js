@@ -235,12 +235,18 @@
       const dot = document.createElement('i');
       status.replaceChildren(dot, document.createTextNode(cameraOnline ? ' دوربین آماده' : ' دوربین آماده نیست'));
       text('video-fps', Number(state.video_fps || 0).toFixed(1) + ' FPS');
+      text('video-fps-target', 'مقدار ذخیره‌شده: ' +
+        Number(state.target_video_fps || state.settings?.video_fps || 30).toLocaleString('fa-IR') + ' FPS');
       text('inference-fps', Number(state.inference_fps || 0).toFixed(1) + ' FPS');
-      text('model-status', state.model_loaded ? 'فعال' : 'بارگذاری نشده');
       const pool = state.inference_pool || {};
       const workers = Number(pool.workers || state.settings?.inference_workers || 0);
       const readyWorkers = Number(pool.ready_workers || 0);
       const busyWorkers = Number(pool.busy_workers || 0);
+      const modelLabel = workers > 0 && readyWorkers === workers
+        ? 'همه آماده'
+        : (readyWorkers > 0 ? readyWorkers + '/' + workers + ' آماده' :
+          (state.model_error ? 'خطای بارگذاری' : 'در حال بارگذاری'));
+      text('model-status', modelLabel);
       const latency = Number(pool.average_latency_ms || state.inference_latency_ms || 0);
       const workerLatencies = Array.isArray(pool.worker_latency_ms)
         ? pool.worker_latency_ms

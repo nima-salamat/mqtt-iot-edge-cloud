@@ -1,6 +1,6 @@
 services:
-  # This service is profile-gated in the base Compose file. The SQLite
-  # override removes the API's dependency so PostgreSQL is not started.
+  # The SQLite override puts PostgreSQL behind an opt-in profile and removes
+  # the API dependency, so the database container is not started in this mode.
   db:
     profiles: ["postgres"]
 

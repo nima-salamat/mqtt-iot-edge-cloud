@@ -1,0 +1,27 @@
+services:
+  api:
+    ports:
+      - "127.0.0.1:${API_BIND_PORT:-18000}:8000"
+
+  web:
+    command:
+      - streamlit
+      - run
+      - streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --server.baseUrlPath=ops
+    ports:
+      - "127.0.0.1:${OPS_BIND_PORT:-18501}:8501"
+
+  broker:
+    ports:
+      - "127.0.0.1:${MQTT_WS_BIND_PORT:-19001}:9001"
+
+  mediamtx:
+    environment:
+      MTX_RTSPSERVERCERT: ${MEDIA_TLS_CERT:?Set MEDIA_TLS_CERT in .env}
+      MTX_RTSPSERVERKEY: ${MEDIA_TLS_KEY:?Set MEDIA_TLS_KEY in .env}
+    volumes:
+      - ${HOST_CERT_DIR:?Set HOST_CERT_DIR in .env}:/host-certs:ro

@@ -71,6 +71,240 @@ class ReconnectingRtspOutput:
         self._wake.set()
         log.warning("RTSPS output failed; local recording continues: %s", self.error)
 
+    def start(self):
+        self._thread = threading.Thread(target=self._reconnect_loop, name="rtsps-reconnect", daemon=True)
+        self._thread.start()
+
+    def credentials_changed(self):
+        self._wake.set()
+
+    def _reconnect_loop(self):
+        while not self._stop.is_set():
+            if self.connected:
+                self._wake.wait(2)
+                self._wake.clear()
+                continue
+            try:
+                replacement = self._new_output()
+                if replacement is None:
+                    self._wake.wait(5)
+                    self._wake.clear()
+                    continue
+                # SplittableOutput changes outputs at the next keyframe, without stopping H.264.
+                self.output.split_output(replacement)
+                self.connected = True
+                self.error = ""
+                self._backoff = 2
+                log.info("Live RTSPS publishing resumed for device %s", self.device_id)
+            except Exception as exc:
+                self.connected = False
+                self.error = self._redact_error(exc)
+                log.info("RTSPS unavailable; retry in %ss: %s", self._backoff, self.error)
+                self._stop.wait(self._backoff)
+                self._backoff = min(60, self._backoff * 2)
+
+    def stop(self):
+        self._stop.set()
+        self._wake.set()
+        if self._thread:
+            # split_output can be waiting for a keyframe; it is a daemon thread.
+            self._thread.join(timeout=4)
+        # The encoder owns this SplittableOutput and closes its active child
+        # when Picamera2 stops the encoder. Do not stop it while frames are
+        # still being delivered.
+
+
+
+def _switchable_output_class():
+    """Create a Picamera2 Output that can attach/detach MP4 recording at keyframes."""
+    from picamera2.outputs import Output
+
+    class SwitchableOutput(Output):
+        def __init__(self, initial_output=None):
+            super().__init__()
+            self._output = initial_output
+            self._pending_output = None
+            self._switch_pending = False
+            self._switch_done = threading.Event()
+            self._lock = threading.RLock()
+            self._streams = []
+
+        def start(self):
+            super().start()
+            with self._lock:
+                output = self._output
+            if output is not None:
+                output.start()
+
+        def _add_stream(self, encoder_stream, codec_name, **kwargs):
+            stream = (encoder_stream, codec_name, dict(kwargs))
+            with self._lock:
+                self._streams.append(stream)
+                output = self._output
+            if output is not None:
+                output._add_stream(encoder_stream, codec_name, **kwargs)
+
+        def switch_output(self, new_output, timeout=12.0):
+            # Prepare the new muxer and its stream definitions before asking
+            # outputframe() to switch on an H.264 keyframe.
+            with self._lock:
+                if self._switch_pending:
+                    raise RuntimeError("A local recording transition is already in progress")
+                old_output = self._output
+                streams = list(self._streams)
+
+            if new_output is not None:
+                new_output.start()
+                try:
+                    for encoder_stream, codec_name, kwargs in streams:
+                        new_output._add_stream(encoder_stream, codec_name, **kwargs)
+                except Exception:
+                    new_output.stop()
+                    raise
+
+            with self._lock:
+                self._pending_output = new_output
+                self._switch_pending = True
+                self._switch_done.clear()
+
+            completed = self._switch_done.wait(timeout=max(1.0, float(timeout)))
+            if not completed:
+                with self._lock:
+                    # A keyframe can race the timeout boundary. Treat an already
+                    # completed pointer swap as success instead of closing the
+                    # output that the encoder has just begun using.
+                    completed = not self._switch_pending and self._output is new_output
+                    if not completed and self._switch_pending and self._pending_output is new_output:
+                        self._pending_output = None
+                        self._switch_pending = False
+                if not completed:
+                    if new_output is not None:
+                        new_output.stop()
+                    raise TimeoutError("Timed out waiting for an H.264 keyframe to change recording state")
+
+            # outputframe has stopped referencing the previous output, so it is
+            # now safe to finalize its MP4 container on this control thread.
+            if old_output is not None:
+                old_output.stop()
+
+        def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+            with self._lock:
+                if keyframe and self._switch_pending:
+                    self._output = self._pending_output
+                    self._pending_output = None
+                    self._switch_pending = False
+                    self._switch_done.set()
+                output = self._output
+            if output is not None:
+                output.outputframe(frame, keyframe, timestamp, packet, audio)
+
+        def stop(self):
+            super().stop()
+            with self._lock:
+                outputs = (self._output, self._pending_output if self._switch_pending else None)
+                self._output = None
+                self._pending_output = None
+                self._switch_pending = False
+            seen = set()
+            for output in outputs:
+                if output is not None and id(output) not in seen:
+                    seen.add(id(output))
+                    try:
+                        output.stop()
+                    except Exception:
+                        log.exception("Could not close a local recording output")
+
+    return SwitchableOutput
+
+
+class CameraPipeline:
+    def __init__(self, device_id, settings_store, bridge, uploader):
+        self.device_id = device_id
+        self.settings_store = settings_store
+        self.bridge = bridge
+        self.uploader = uploader
+        self.data_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot"))
+        self.video_dir = self.data_dir / "video"
+        self.alarm_dir = self.data_dir / "alarms"
+        self.video_dir.mkdir(parents=True, exist_ok=True)
+        self.alarm_dir.mkdir(parents=True, exist_ok=True)
+        self.picam2 = None
+        self._opencv_capture = None
+        self.camera_backend = str(settings_store.get().get("camera_backend", "picamera2"))
+        self.camera_source = str(settings_store.get().get("camera_source", "0"))
+        self.camera_model = ""
+        self.camera_resolution = ""
+        self.camera_max_fps = 0.0
+        self.target_video_fps = float(settings_store.get().get("video_fps", 30))
+        self.available_video_modes = []
+        self.video_fps_options = []
+        self.encoder = None
+        self.local_output = None
+        self.live_output = None
+        self.inference_pool = None
+        self.latest_jpeg = None
+        self.latest_frame_at = 0.0
+        self._latest_bgr = None
+        self._latest_bgr_at = 0.0
+        self._last_detection_at = 0.0
+        self._last_preview_at = 0.0
+        self._last_encoder_count = 0
+        self.video_fps = 0.0
+        self.inference_fps = 0.0
+        self.inference_latency_ms = 0.0
+        self.inference_dropped_frames = 0
+        self._inference_completed_at = deque(maxlen=100)
+        self._inference_pool_started_at = 0.0
+        self._last_processed_frame_sequence = 0
+        self._inflight_frames = {}
+        self._frame_sequence = 0
+        self._latest_frame_sequence = 0
+        self.model_error = ""
+        self.camera_error = ""
+        self._stop = threading.Event()
+        self._pair_requested_until = 0.0
+        self._pair_status = "paired" if uploader.state_provider().get("api_token") else "not_paired"
+        self._pair_lock = threading.RLock()
+        self._pair_in_progress = False
+        self._threads = []
+        self._alert_active = False
+        self._last_person_at = 0.0
+        self._tracking_started_at = 0.0
+        self._tracking_active = False
+        self._tracking_seconds = 0.0
+        self._last_alert_at = 0.0
+        self._last_detections = []
+        self._detection_history = deque(maxlen=3)
+        self._frame_count = 0
+        self._fps_started = time.monotonic()
+        self._frames_lock = threading.RLock()
+        self._current_segment = None
+        self._current_marker = None
+        self._recording_lock = threading.RLock()
+        self.recording_enabled = bool(settings_store.get().get("recording_enabled", True))
+        self._local_recording_attached = False
+
+    def _pending_alarm_count(self):
+        return sum(
+            1 for item in self.alarm_dir.glob("*.json")
+            if not item.with_suffix(".published").exists()
+        )
+
+    def _pending_video_count(self):
+        return sum(
+            1 for item in self.video_dir.glob("*.mp4")
+            if not item.with_suffix(".open").exists()
+            and not item.with_suffix(".uploaded").exists()
+        )
+
+    def _segment_path(self):
+        return self.video_dir / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.mp4"
+
+    def _mark_open(self, path):
+        marker = path.with_suffix(".open")
+        marker.touch()
+        return marker
+
     def is_running(self):
         """Whether the selected camera backend currently owns an open device."""
         if self.picam2 is not None:
@@ -96,11 +330,15 @@ class ReconnectingRtspOutput:
             self._last_detection_at = 0.0
         self._frame_count = 0
         self._fps_started = time.monotonic()
+        self._tracking_started_at = 0.0
+        self._tracking_active = False
+        self._tracking_seconds = 0.0
+        self._last_person_at = 0.0
         self.model_error = ""
         self.camera_error = ""
 
     def _start_inference_pool(self, values):
-        """Start the same bounded YOLO pool for either camera capture backend."""
+        """Start the bounded NCNN worker pool for either camera backend."""
         try:
             worker_count = int(values.get("inference_workers", 2))
             cpu_count = os.cpu_count() or 4
@@ -141,7 +379,7 @@ class ReconnectingRtspOutput:
 
     @staticmethod
     def _probe_v4l2_modes(raw_source):
-        """Return discrete USB camera formats when v4l2-ctl is installed."""
+        """Read a USB camera's discrete formats/FPS when v4l2-ctl is installed."""
         if "://" in raw_source:
             return []
         if raw_source.isdigit():
@@ -166,12 +404,7 @@ class ReconnectingRtspOutput:
             return []
 
     def _start_opencv(self, values):
-        """Open a UVC/V4L2 webcam or a network video source through OpenCV.
-
-        V4L2 mode tables are used when available; actual delivered FPS is
-        measured in the capture loop rather than trusting driver metadata.
-        Hardware H.264 recording and RTSPS publishing remain Picamera2-only.
-        """
+        """Open a UVC/V4L2 webcam or network camera for preview and YOLO."""
         self._reset_frame_state()
         raw_source = str(values.get("camera_source", "0")).strip() or "0"
         source = int(raw_source) if raw_source.isdigit() else raw_source
@@ -187,26 +420,36 @@ class ReconnectingRtspOutput:
         auto_fps = bool(values.get("video_fps_auto", True))
         requested_fps = float(values.get("video_fps", 30))
         sensor_modes = self._probe_v4l2_modes(raw_source)
+        output_width = int(values["video_width"])
+        output_height = int(values["video_height"])
+        compatible_modes = [
+            mode for mode in sensor_modes
+            if int(mode["size"][0]) >= output_width and int(mode["size"][1]) >= output_height
+        ]
         selected_mode, selected_fps = select_sensor_mode(
-            sensor_modes,
-            int(values["video_width"]),
-            int(values["video_height"]),
+            compatible_modes or sensor_modes,
+            output_width,
+            output_height,
             requested_fps,
             auto=auto_fps,
         )
+        self.available_video_modes = compatible_modes or sensor_modes
+        self.video_fps_options = sorted({
+            round(float(mode["fps"]), 2)
+            for mode in self.available_video_modes
+            if float(mode.get("fps", 0) or 0) > 0
+        })
+        selected_size = (
+            tuple(selected_mode["size"])
+            if selected_mode else (output_width, output_height)
+        )
         try:
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            selected_fourcc = str(selected_mode.get("fourcc", "")) if selected_mode else ""
-            if len(selected_fourcc) == 4:
+            if selected_mode and len(str(selected_mode.get("fourcc", ""))) == 4:
                 capture.set(
                     cv2.CAP_PROP_FOURCC,
-                    cv2.VideoWriter_fourcc(*selected_fourcc),
+                    cv2.VideoWriter_fourcc(*str(selected_mode["fourcc"])),
                 )
-            selected_size = (
-                tuple(selected_mode["size"])
-                if selected_mode
-                else (int(values["video_width"]), int(values["video_height"]))
-            )
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(selected_size[0]))
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(selected_size[1]))
             if selected_mode:
@@ -227,19 +470,23 @@ class ReconnectingRtspOutput:
         self._local_recording_attached = False
         self.camera_backend = "opencv"
         self.camera_source = raw_source
-        self.camera_model = ("OpenCV network source" if "://" in raw_source else f"OpenCV device {raw_source}")
+        self.camera_model = (
+            "OpenCV network source" if "://" in raw_source
+            else f"OpenCV device {raw_source}"
+        )
         reported_rate = float(capture.get(cv2.CAP_PROP_FPS) or 0)
         compatible_rates = [
-            float(mode["fps"])
-            for mode in sensor_modes
-            if int(mode["size"][0]) >= int(values["video_width"])
-            and int(mode["size"][1]) >= int(values["video_height"])
+            float(mode["fps"]) for mode in (compatible_modes or sensor_modes)
+            if float(mode.get("fps", 0) or 0) > 0
         ]
         self.camera_max_fps = max(compatible_rates, default=max(0.0, reported_rate))
         self.target_video_fps = (
             selected_fps if selected_mode
             else (reported_rate if auto_fps else requested_fps)
         )
+        if self.camera_max_fps <= 0 and self.target_video_fps > 0:
+            self.camera_max_fps = self.target_video_fps
+        self.camera_resolution = f"{int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or selected_size[0])}x{int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or selected_size[1])}"
         self._threads = [
             threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
         ]
@@ -270,7 +517,6 @@ class ReconnectingRtspOutput:
         from picamera2.outputs import PyavOutput
 
         self._reset_frame_state()
-        # Incomplete MP4s from a power loss have no final container index.
         for stale_marker in self.video_dir.glob("*.open"):
             stale_marker.with_suffix(".mp4").unlink(missing_ok=True)
             stale_marker.unlink(missing_ok=True)
@@ -281,7 +527,6 @@ class ReconnectingRtspOutput:
         except (TypeError, ValueError):
             camera_num = 0
             self.camera_source = "0"
-
         picam2 = Picamera2(camera_num=camera_num)
         marker = None
         local_output = None
@@ -293,42 +538,46 @@ class ReconnectingRtspOutput:
         requested_fps = float(values.get("video_fps", 30))
         auto_fps = bool(values.get("video_fps_auto", True))
         try:
-            try:
-                sensor_modes = list(picam2.sensor_modes or [])
-                selected_mode, selected_fps = select_sensor_mode(
-                    sensor_modes,
-                    int(values["video_width"]),
-                    int(values["video_height"]),
-                    requested_fps,
-                    auto=auto_fps,
-                )
-                if selected_mode:
-                    sensor_configuration = {
-                        "output_size": tuple(selected_mode["size"]),
-                        "bit_depth": int(selected_mode["bit_depth"]),
-                    }
-                compatible_rates = []
-                for mode in sensor_modes:
-                    try:
-                        mode_size = mode.get("size", ())
-                        if (
-                            len(mode_size) >= 2
-                            and int(mode_size[0]) >= int(values["video_width"])
-                            and int(mode_size[1]) >= int(values["video_height"])
-                        ):
-                            compatible_rates.append(float(mode.get("fps", 0) or 0))
-                    except (TypeError, ValueError):
-                        continue
-                self.camera_max_fps = max(compatible_rates, default=selected_fps)
-                self.target_video_fps = selected_fps
-            except Exception:
-                log.exception("Could not inspect Picamera2 sensor modes; using configured FPS")
-                self.target_video_fps = requested_fps
-
+            sensor_modes = list(picam2.sensor_modes or [])
+            output_width = int(values["video_width"])
+            output_height = int(values["video_height"])
+            compatible_modes = [
+                mode for mode in sensor_modes
+                if int(mode.get("size", (0, 0))[0]) >= output_width
+                and int(mode.get("size", (0, 0))[1]) >= output_height
+                and float(mode.get("fps", 0) or 0) > 0
+            ]
+            selected_mode, selected_fps = select_sensor_mode(
+                compatible_modes or sensor_modes,
+                output_width,
+                output_height,
+                requested_fps,
+                auto=auto_fps,
+            )
+            self.available_video_modes = compatible_modes or sensor_modes
+            self.video_fps_options = sorted({
+                round(float(mode["fps"]), 2)
+                for mode in self.available_video_modes
+                if float(mode.get("fps", 0) or 0) > 0
+            })
+            if selected_mode:
+                sensor_configuration = {
+                    "output_size": tuple(selected_mode["size"]),
+                    "bit_depth": int(selected_mode["bit_depth"]),
+                }
+            compatible_rates = [
+                float(mode.get("fps", 0) or 0)
+                for mode in self.available_video_modes
+            ]
+            self.camera_max_fps = max(compatible_rates, default=selected_fps)
+            self.target_video_fps = selected_fps
+            if not auto_fps and self.camera_max_fps > 0 and requested_fps > self.camera_max_fps:
+                clamped_setting = max(1, int(self.camera_max_fps))
+                values, _ = self.settings_store.update({"video_fps": clamped_setting})
             effective_fps = max(1.0, float(self.target_video_fps or requested_fps))
             frame_duration = max(1, int(round(1_000_000 / effective_fps)))
             config_options = {
-                "main": {"size": (values["video_width"], values["video_height"]), "format": "YUV420"},
+                "main": {"size": (output_width, output_height), "format": "YUV420"},
                 "lores": {"size": (640, 360), "format": "YUV420"},
                 "controls": {"FrameDurationLimits": (frame_duration, frame_duration)},
                 "buffer_count": 8,
@@ -346,7 +595,7 @@ class ReconnectingRtspOutput:
                     self.camera_model = f"Picamera2 camera {camera_num}"
             except Exception:
                 self.camera_model = f"Picamera2 camera {camera_num}"
-            self.camera_resolution = f"{values['video_width']}x{values['video_height']}"
+            self.camera_resolution = f"{output_width}x{output_height}"
 
             segment = None
             first_segment = None
@@ -364,14 +613,10 @@ class ReconnectingRtspOutput:
                 iperiod=encoder_fps,
                 framerate=encoder_fps,
             )
-            # Newer Picamera2 releases expose the VC4 hardware selection on
-            # their LibavH264Encoder wrapper; older releases select hardware
-            # directly in H264Encoder. Never silently use software on this Pi 4.
             if hasattr(encoder, "use_hw"):
                 encoder.use_hw = True
                 if not encoder.use_hw:
                     raise RuntimeError("Picamera2 did not enable the Pi 4 VC4 H.264 encoder")
-            # One hardware encoder feeds the rolling MP4 files and RTSPS stream.
             encoder.output = [local_output, live_output.output]
             picam2.start_encoder(encoder)
             encoder_started = True
@@ -593,22 +838,21 @@ class ReconnectingRtspOutput:
         return ""
 
     @staticmethod
-    def _i420_to_bgr(frame, width, height, stream_name):
+    def _i420_to_bgr(frame, width, height, name):
         if frame is None:
-            raise RuntimeError(f"Camera returned an empty {stream_name} frame")
+            raise RuntimeError(f"Camera returned an empty {name} frame")
         if frame.ndim == 3 and frame.shape[-1] == 1:
             frame = frame.reshape((height * 3 // 2, width))
         expected = (height * 3 // 2, width)
         if frame.shape != expected:
             if frame.size != width * height * 3 // 2:
                 raise RuntimeError(
-                    f"Unexpected {stream_name} YUV420 shape: {frame.shape}; expected {expected}"
+                    f"Unexpected {name} YUV420 shape: {frame.shape}; expected {expected}"
                 )
             frame = frame.reshape(expected)
         return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
 
     def _capture_loop(self):
-        """Read synchronized high-resolution preview and low-resolution AI frames."""
         if self.camera_backend == "opencv":
             self._capture_opencv_loop()
             return
@@ -616,14 +860,10 @@ class ReconnectingRtspOutput:
         last_qr_scan = 0.0
         qr_detector = cv2.QRCodeDetector()
         if _zbar_decode is None:
-            log.warning(
-                "pyzbar/libzbar is unavailable; QR scanning will fall back to OpenCV, "
-                "which may be built without QUIRC support"
-            )
+            log.warning("pyzbar/libzbar is unavailable; QR scanning will fall back to OpenCV")
         preview_interval = 1.0 / 20.0
         values = self.settings_store.get()
-        main_width = int(values["video_width"])
-        main_height = int(values["video_height"])
+        main_width, main_height = int(values["video_width"]), int(values["video_height"])
         while not self._stop.is_set():
             try:
                 request = self.picam2.capture_request()
@@ -632,10 +872,6 @@ class ReconnectingRtspOutput:
                     lores_yuv = request.make_array("lores")
                 finally:
                     request.release()
-
-                # Both arrays come from the same libcamera request. The main
-                # stream drives the operator preview; lores is reserved for
-                # QR scanning and NCNN to keep its CPU budget low.
                 preview_source = self._i420_to_bgr(main_yuv, main_width, main_height, "main")
                 frame = self._i420_to_bgr(lores_yuv, 640, 360, "lores")
                 now = time.monotonic()
@@ -644,15 +880,10 @@ class ReconnectingRtspOutput:
                 if self._pair_requested_until and now >= self._pair_requested_until:
                     self._pair_requested_until = 0.0
                     self._pair_status = "expired"
-                    log.warning(
-                        "Pairing QR scan expired without decoding a supported QR code; "
-                        "use manual code entry or try again with the QR closer to the camera"
-                    )
                 if self._pair_requested_until > now and now - last_qr_scan >= 0.35:
                     last_qr_scan = now
                     pairing_code = self._decode_pairing_qr(qr_detector, frame)
                     if pairing_code:
-                        log.info("Pairing QR detected; submitting one-time code")
                         self._complete_pairing(pairing_code)
 
                 with self._frames_lock:
@@ -665,8 +896,7 @@ class ReconnectingRtspOutput:
 
                 preview = preview_source.copy()
                 if detections and detection_age < 1.0:
-                    sx = preview.shape[1] / max(1, frame.shape[1])
-                    sy = preview.shape[0] / max(1, frame.shape[0])
+                    sx, sy = preview.shape[1] / 640.0, preview.shape[0] / 360.0
                     scaled = []
                     for item in detections:
                         mapped = dict(item)
@@ -676,12 +906,10 @@ class ReconnectingRtspOutput:
                             int(round(x2 * sx)), int(round(y2 * sy)),
                         ]
                         scaled.append(mapped)
-                    self._draw_boxes(preview, scaled)
+                    self._draw_boxes(preview, scaled, self._tracking_seconds)
 
                 if now - self._last_preview_at >= preview_interval:
-                    ok, encoded = cv2.imencode(
-                        ".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92]
-                    )
+                    ok, encoded = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92])
                     with self._frames_lock:
                         self.latest_jpeg = encoded.tobytes() if ok else None
                         self.latest_frame_at = time.time()
@@ -695,14 +923,9 @@ class ReconnectingRtspOutput:
                     self._frame_count = 0
                     self._fps_started = now
 
-                inference_pool_ready = bool(
-                    self.inference_pool
-                    and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count
-                )
                 self.bridge.set_metrics(
-                    self.video_fps,
-                    self.inference_fps,
-                    inference_pool_ready,
+                    self.video_fps, self.inference_fps,
+                    bool(self.inference_pool and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count),
                     self._pending_alarm_count(),
                     pending_videos=self._pending_video_count(),
                     rtsp_connected=bool(self.live_output and self.live_output.connected),
@@ -711,13 +934,10 @@ class ReconnectingRtspOutput:
             except Exception as exc:
                 self.camera_error = str(exc)
                 log.exception("Picamera2 capture/preview error")
-                self.bridge.publish_log(
-                    "error", "Camera capture or preview failed", {"error": str(exc)}
-                )
+                self.bridge.publish_log("error", "Camera capture or preview failed", {"error": str(exc)})
                 self._stop.wait(0.5)
 
     def _capture_opencv_loop(self):
-        """Capture a USB/UVC/V4L2 webcam or network video source with OpenCV."""
         last_qr_scan = 0.0
         qr_detector = cv2.QRCodeDetector()
         preview_interval = 1.0 / 20.0
@@ -731,7 +951,6 @@ class ReconnectingRtspOutput:
                     self.camera_error = "OpenCV did not return a frame from the selected source"
                     self._stop.wait(0.1)
                     continue
-
                 height, width = preview_source.shape[:2]
                 if width <= 0 or height <= 0:
                     continue
@@ -741,7 +960,6 @@ class ReconnectingRtspOutput:
                 )
                 now = time.monotonic()
                 self.camera_error = ""
-
                 if self._pair_requested_until and now >= self._pair_requested_until:
                     self._pair_requested_until = 0.0
                     self._pair_status = "expired"
@@ -750,7 +968,6 @@ class ReconnectingRtspOutput:
                     pairing_code = self._decode_pairing_qr(qr_detector, frame)
                     if pairing_code:
                         self._complete_pairing(pairing_code)
-
                 with self._frames_lock:
                     self._latest_bgr = frame.copy()
                     self._frame_sequence += 1
@@ -758,11 +975,9 @@ class ReconnectingRtspOutput:
                     self._latest_bgr_at = now
                     detections = list(self._last_detections)
                     detection_age = now - self._last_detection_at if self._last_detection_at else 999.0
-
                 preview = preview_source.copy()
                 if detections and detection_age < 1.0:
-                    sx = width / 640.0
-                    sy = height / 360.0
+                    sx, sy = width / 640.0, height / 360.0
                     scaled = []
                     for item in detections:
                         mapped = dict(item)
@@ -772,17 +987,13 @@ class ReconnectingRtspOutput:
                             int(round(x2 * sx)), int(round(y2 * sy)),
                         ]
                         scaled.append(mapped)
-                    self._draw_boxes(preview, scaled)
-
+                    self._draw_boxes(preview, scaled, self._tracking_seconds)
                 if now - self._last_preview_at >= preview_interval:
-                    ok, encoded = cv2.imencode(
-                        ".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92]
-                    )
+                    ok, encoded = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92])
                     with self._frames_lock:
                         self.latest_jpeg = encoded.tobytes() if ok else None
                         self.latest_frame_at = time.time()
                     self._last_preview_at = now
-
                 self.camera_resolution = f"{width}x{height}"
                 self._frame_count += 1
                 if now - self._fps_started >= 2.0:
@@ -790,14 +1001,9 @@ class ReconnectingRtspOutput:
                     self.video_fps = self._frame_count / elapsed
                     self._frame_count = 0
                     self._fps_started = now
-
                 self.bridge.set_metrics(
-                    self.video_fps,
-                    self.inference_fps,
-                    bool(
-                        self.inference_pool
-                        and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count
-                    ),
+                    self.video_fps, self.inference_fps,
+                    bool(self.inference_pool and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count),
                     self._pending_alarm_count(),
                     pending_videos=0,
                     rtsp_connected=False,
@@ -862,8 +1068,7 @@ class ReconnectingRtspOutput:
                         self._last_detection_at = now
 
                     self._detection_history.append(bool(detections))
-                    if detections or self._alert_active:
-                        self._process_detections(frame, detections, now)
+                    self._process_detections(frame, detections, now)
 
                 # Recalculate the rolling completion rate even when no new
                 # result arrives, so a stalled worker pool visibly decays to 0 FPS.
@@ -889,7 +1094,8 @@ class ReconnectingRtspOutput:
                 if estimated_capacity <= 0:
                     self._stop.wait(0.05)
                     continue
-                effective_rate = min(configured_cap, estimated_capacity)
+                camera_cap = self.camera_max_fps if self.camera_max_fps > 0 else configured_cap
+                effective_rate = min(configured_cap, estimated_capacity, camera_cap)
                 interval = 1.0 / effective_rate
                 now = time.monotonic()
                 if now >= next_dispatch_at:
@@ -932,7 +1138,20 @@ class ReconnectingRtspOutput:
     def _process_detections(self, frame, detections, now):
         confirmed = sum(self._detection_history) >= 2
         if detections:
+            if not self._tracking_active:
+                self._tracking_started_at = now
+                self._tracking_active = True
             self._last_person_at = now
+            self._tracking_seconds = max(0.0, now - self._tracking_started_at)
+        elif self._tracking_active:
+            if now - self._last_person_at >= self.settings_store.get()["alert_clear_seconds"]:
+                self._tracking_seconds = max(
+                    0.0, self._last_person_at - self._tracking_started_at
+                )
+                self._tracking_active = False
+                self._tracking_started_at = 0.0
+        self.bridge.set_tracking(self._tracking_active, self._tracking_seconds)
+
         if confirmed and detections:
             values = self.settings_store.get()
             if not self._alert_active and now - self._last_alert_at >= values["alert_cooldown_seconds"]:
@@ -942,6 +1161,18 @@ class ReconnectingRtspOutput:
         elif not detections and self._alert_active:
             if now - self._last_person_at >= self.settings_store.get()["alert_clear_seconds"]:
                 self._alert_active = False
+
+    @staticmethod
+    def _draw_boxes(frame, detections, tracking_seconds=0.0):
+        for item in detections:
+            x1, y1, x2, y2 = item["bbox"]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 220, 120), 2)
+            label = f"PERSON {item['confidence']:.2f}"
+            if tracking_seconds > 0:
+                label += f" · {tracking_seconds:.1f}s"
+            cv2.putText(frame, label,
+                        (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.48, (40, 220, 120), 1, cv2.LINE_AA)
 
     @staticmethod
     def _draw_boxes(frame, detections):
@@ -957,7 +1188,7 @@ class ReconnectingRtspOutput:
         image_name = f"{alert_id}.jpg"
         image_path = self.alarm_dir / image_name
         alarm_frame = frame.copy()
-        self._draw_boxes(alarm_frame, detections)
+        self._draw_boxes(alarm_frame, detections, self._tracking_seconds)
         ok, encoded = cv2.imencode(".jpg", alarm_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         if not ok:
             return
@@ -1055,6 +1286,7 @@ class ReconnectingRtspOutput:
             os.chmod(temporary, 0o600)
             temporary.replace(target)
             self.uploader.state_provider = lambda: credentials
+            self.uploader.credentials_revoked = False
             if self.live_output:
                 self.live_output.credentials_changed()
             self._pair_status = "paired"
@@ -1071,7 +1303,7 @@ class ReconnectingRtspOutput:
     def _is_camera_ready(self):
         with self._frames_lock:
             return bool(
-                self.is_running()
+                self.picam2 is not None
                 and self.latest_jpeg is not None
                 and self.latest_frame_at
                 and time.time() - self.latest_frame_at < 2.5
@@ -1080,6 +1312,9 @@ class ReconnectingRtspOutput:
     def snapshot(self):
         preview_ready = self._is_camera_ready()
         values = self.settings_store.get()
+        paired = bool((self.uploader.state_provider() or {}).get("api_token"))
+        if not paired and self._pair_status == "paired":
+            self._pair_status = "not_paired"
         return {
             "device_id": self.device_id,
             "camera_ready": preview_ready,
@@ -1089,12 +1324,14 @@ class ReconnectingRtspOutput:
             "camera_model": self.camera_model,
             "camera_resolution": self.camera_resolution,
             "camera_max_fps": round(self.camera_max_fps, 2),
+            "video_fps_options": self.video_fps_options,
             "video_fps_auto": bool(values.get("video_fps_auto", True)),
+            "target_video_fps": round(self.target_video_fps or values["video_fps"], 2),
             "recording_supported": self.camera_backend == "picamera2",
             "live_publish_supported": self.camera_backend == "picamera2",
             "video_fps": round(self.video_fps, 2),
-            "target_video_fps": round(self.target_video_fps or values["video_fps"], 2),
             "inference_fps": round(self.inference_fps, 2),
+            "inference_fps_limit": round(self.camera_max_fps, 2),
             "inference_latency_ms": round(self.inference_latency_ms, 1),
             "inference_dropped_frames": self.inference_dropped_frames,
             "inference_pool": self.inference_pool.snapshot() if self.inference_pool else {
@@ -1118,7 +1355,9 @@ class ReconnectingRtspOutput:
             "camera_error": self.camera_error,
             "rtsp_connected": bool(self.live_output and self.live_output.connected),
             "rtsp_error": self.live_output.error if self.live_output else "",
-            "pairing_status": self._pair_status,
+            "pairing_status": self._pair_status if paired else "not_paired",
+            "tracking_active": self._tracking_active,
+            "tracking_seconds": round(self._tracking_seconds, 1),
             "local_video_retention_minutes": values["local_video_retention_minutes"],
             "local_alarm_retention_days": values["local_alarm_retention_days"],
             "local_log_retention_days": values["local_log_retention_days"],
@@ -1172,6 +1411,7 @@ class ReconnectingRtspOutput:
         self.live_output = None
         if self.camera_backend == "opencv":
             self.recording_enabled = False
+        self.bridge.set_tracking(False, self._tracking_seconds)
         self.bridge.model_loaded = False
         self.inference_fps = 0.0
         self.inference_latency_ms = 0.0

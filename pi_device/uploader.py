@@ -72,6 +72,16 @@ class DurableUploader:
                     continue
             return [path for _mtime, path in sorted(items, key=lambda item: item[0])]
 
+    def _alarm_snapshot_path(self, meta_path: Path, payload: dict) -> Path:
+        alert_id = meta_path.stem
+        if (
+            not re.fullmatch(r"[a-fA-F0-9]{32}", alert_id)
+            or payload.get("alert_id") != alert_id
+            or payload.get("image") != f"{alert_id}.jpg"
+        ):
+            raise ValueError(f"Invalid or unsafe local alarm metadata: {meta_path.name}")
+        return self.alarm_dir / f"{alert_id}.jpg"
+
     def _run(self):
         backoff = 2
         while not self._stop.is_set():
@@ -144,14 +154,11 @@ class DurableUploader:
             # Lock one item at a time so the local panel can clear the remaining
             # queue without racing a file that is currently being uploaded.
             with self._queue_lock:
-                if not meta_path.is_file():
+                if not meta_path.is_file() or meta_path.is_symlink():
                     continue
                 try:
                     payload = json.loads(meta_path.read_text(encoding="utf-8"))
-                    image_name = str(payload.get("image", ""))
-                    if Path(image_name).name != image_name or not image_name.lower().endswith(".jpg"):
-                        raise ValueError("Unsafe alarm image filename")
-                    image_path = self.alarm_dir / image_name
+                    image_path = self._alarm_snapshot_path(meta_path, payload)
                     uploaded_marker = meta_path.with_suffix(".uploaded")
                     published_marker = meta_path.with_suffix(".published")
                     if not uploaded_marker.exists():
@@ -281,9 +288,8 @@ class DurableUploader:
                 alarm_bytes += self._file_size(meta_path)
                 try:
                     item = json.loads(meta_path.read_text(encoding="utf-8"))
-                    image_name = str(item.get("image", ""))
-                    if Path(image_name).name == image_name and image_name.lower().endswith(".jpg"):
-                        alarm_bytes += self._file_size(self.alarm_dir / image_name)
+                    image_path = self._alarm_snapshot_path(meta_path, item)
+                    alarm_bytes += self._file_size(image_path)
                 except (OSError, ValueError, TypeError):
                     continue
 
@@ -405,8 +411,8 @@ class DurableUploader:
                 continue
             try:
                 item = json.loads(meta_path.read_text(encoding="utf-8"))
-                image_path = self.alarm_dir / item.get("image", "")
-                if image_path.is_file():
+                image_path = self._alarm_snapshot_path(meta_path, item)
+                if image_path.is_file() and not image_path.is_symlink():
                     alarm_bytes += image_path.stat().st_size
             except Exception:
                 log.exception("Could not inspect queued alarm %s", meta_path)
@@ -414,7 +420,7 @@ class DurableUploader:
         for meta_path in alarm_files:
             try:
                 item = json.loads(meta_path.read_text(encoding="utf-8"))
-                image_path = self.alarm_dir / item.get("image", "")
+                image_path = self._alarm_snapshot_path(meta_path, item)
                 uploaded = meta_path.with_suffix(".uploaded").exists()
                 published = meta_path.with_suffix(".published").exists()
                 age = now - meta_path.stat().st_mtime

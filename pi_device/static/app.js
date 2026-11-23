@@ -38,19 +38,39 @@
       const data = await response.json();
       const alarms = Array.isArray(data.alarms) ? data.alarms : [];
       text('alarm-gallery-count', alarms.length.toLocaleString('fa-IR') + ' تصویر');
-      gallery.replaceChildren();
+
+      const existing = new Map(
+        Array.from(gallery.querySelectorAll('[data-alert-id]'))
+          .map(card => [card.dataset.alertId, card])
+      );
+      const currentIds = new Set(alarms.map(alarm => String(alarm.alert_id)));
+
+      for (const [id, card] of existing) {
+        if (!currentIds.has(id)) card.remove();
+      }
 
       if (!alarms.length) {
-        const empty = document.createElement('div');
-        empty.className = 'gallery-empty';
-        empty.textContent = 'هنوز تصویری از تشخیص انسان ثبت نشده است.';
-        gallery.append(empty);
+        if (!gallery.querySelector('.gallery-empty')) {
+          gallery.replaceChildren();
+          const empty = document.createElement('div');
+          empty.className = 'gallery-empty';
+          empty.textContent = 'هنوز تصویری از تشخیص انسان ثبت نشده است.';
+          gallery.append(empty);
+        }
         return;
       }
 
-      for (const alarm of alarms) {
+      gallery.querySelector('.gallery-empty')?.remove();
+
+      // Keep existing cards and their image elements alive. Only new alert IDs
+      // create an <img> request; polling this JSON endpoint never reloads old photos.
+      for (const alarm of [...alarms].reverse()) {
+        const alertId = String(alarm.alert_id);
+        if (existing.has(alertId)) continue;
+
         const card = document.createElement('article');
         card.className = 'alarm-thumb-card';
+        card.dataset.alertId = alertId;
 
         const link = document.createElement('a');
         link.className = 'alarm-thumb-link';
@@ -61,6 +81,7 @@
         image.src = alarm.image_url;
         image.alt = 'تصویر ثبت‌شده از تشخیص انسان';
         image.loading = 'lazy';
+        image.decoding = 'async';
         image.onerror = () => {
           image.remove();
           const missing = document.createElement('span');
@@ -113,13 +134,13 @@
 
         body.append(heading, time, model, status, details);
         card.append(link, body);
-        gallery.append(card);
+        gallery.prepend(card);
       }
     } catch (error) {
       const message = document.createElement('div');
       message.className = 'gallery-empty';
       message.textContent = error.message;
-      gallery.replaceChildren(message);
+      if (!gallery.querySelector('.alarm-thumb-card')) gallery.replaceChildren(message);
     }
   }
 
@@ -138,6 +159,28 @@
       text('video-fps', Number(state.video_fps || 0).toFixed(1) + ' FPS');
       text('inference-fps', Number(state.inference_fps || 0).toFixed(1) + ' FPS');
       text('model-status', state.model_loaded ? 'فعال' : 'بارگذاری نشده');
+      const pool = state.inference_pool || {};
+      const workers = Number(pool.workers || state.settings?.inference_workers || 0);
+      const readyWorkers = Number(pool.ready_workers || 0);
+      const busyWorkers = Number(pool.busy_workers || 0);
+      const latency = Number(pool.average_latency_ms || state.inference_latency_ms || 0);
+      text('inference-workers',
+        readyWorkers.toLocaleString('fa-IR') + '/' + workers.toLocaleString('fa-IR') +
+        ' Worker آماده · ' + busyWorkers.toLocaleString('fa-IR') +
+        ' مشغول · میانگین ' + latency.toFixed(0) + ' ms'
+      );
+      const recordingEnabled = !!state.recording_enabled;
+      const recordingButton = $('toggle-recording');
+      const recordingStatus = $('recording-status');
+      if (recordingButton && !recordingButton.dataset.busy) {
+        recordingButton.textContent = recordingEnabled ? 'توقف ضبط' : 'شروع ضبط';
+        recordingButton.setAttribute('aria-pressed', String(recordingEnabled));
+        recordingButton.classList.toggle('is-recording', recordingEnabled);
+        recordingButton.classList.toggle('is-paused', !recordingEnabled);
+      }
+      if (recordingStatus && !recordingButton?.dataset.busy) {
+        recordingStatus.textContent = recordingEnabled ? 'ضبط محلی فعال است' : 'ضبط محلی متوقف است';
+      }
       text('rtsp-status', boolLabel(state.rtsp_connected));
       text('rtsp-health', boolLabel(state.rtsp_connected));
       text('mqtt-status', boolLabel(mqtt.mqtt_connected));
@@ -172,6 +215,38 @@
       text('preview-status', error.message);
     }
   }
+
+  $('toggle-recording').addEventListener('click', async () => {
+    const button = $('toggle-recording');
+    const current = button.getAttribute('aria-pressed') === 'true';
+    const enabled = !current;
+    button.dataset.busy = '1';
+    button.disabled = true;
+    text('recording-status', enabled ? 'در حال شروع ضبط…' : 'در حال توقف ضبط در مرز فریم کلیدی…');
+    try {
+      const response = await fetch('/api/recording/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+        body: JSON.stringify({enabled})
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'تغییر وضعیت ضبط ناموفق بود.');
+      button.setAttribute('aria-pressed', String(!!result.recording_enabled));
+      button.textContent = result.recording_enabled ? 'توقف ضبط' : 'شروع ضبط';
+      button.classList.toggle('is-recording', !!result.recording_enabled);
+      button.classList.toggle('is-paused', !result.recording_enabled);
+      text('recording-status', result.recording_enabled
+        ? 'ضبط محلی فعال است'
+        : 'ضبط محلی متوقف است؛ پخش زنده و تشخیص همچنان فعال‌اند.');
+      await refreshState();
+    } catch (error) {
+      text('recording-status', error.message);
+    } finally {
+      delete button.dataset.busy;
+      button.disabled = false;
+      refreshState();
+    }
+  });
 
   $('scan-pairing').addEventListener('click', async () => {
     const button = $('scan-pairing');
@@ -241,7 +316,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'ذخیره تنظیمات ناموفق بود.');
       text('settings-result', result.restart_required?.length
-        ? 'ذخیره شد؛ برای اعمال نرخ فریم، بیت‌ریت یا قطعه‌بندی، سرویس را راه‌اندازی مجدد کن.'
+        ? 'ذخیره شد؛ برای اعمال نرخ فریم، بیت‌ریت، تعداد پردازه‌های YOLO یا قطعه‌بندی، سرویس را راه‌اندازی مجدد کن.'
         : 'تنظیمات ذخیره شد.');
       for (const [key, value] of Object.entries(result.settings || {})) {
         const input = form.elements.namedItem(key);

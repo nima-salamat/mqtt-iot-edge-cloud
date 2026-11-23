@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import requests
 import secrets
 import threading
 import time
@@ -171,6 +172,27 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             "cameras": cameras,
         })
 
+    @flask_app.post("/api/disconnect/")
+    @authenticated
+    def disconnect_camera():
+        if not csrf_valid():
+            return jsonify({"error": "درخواست معتبر نیست؛ صفحه را دوباره بارگذاری کن."}), 403
+        try:
+            result = uploader.disconnect_from_server()
+            if camera.live_output:
+                camera.live_output.credentials_changed()
+            camera._pair_status = "not_paired"
+            camera.bridge.publish_log("warning", "Camera access disconnected by local operator", {
+                "device_id": camera.device_id,
+            })
+            return jsonify(result)
+        except requests.RequestException as exc:
+            log.exception("Could not revoke camera access on the server")
+            return jsonify({"error": "ارتباط با سرور برای لغو اتصال برقرار نشد؛ اعتبارنامه محلی نگه داشته شد."}), 502
+        except OSError as exc:
+            log.exception("Could not clear local camera credentials")
+            return jsonify({"error": "لغو اتصال انجام شد اما پاک‌کردن اعتبارنامه محلی موفق نبود."}), 500
+
     @flask_app.get("/api/state/")
     @authenticated
     def api_state():
@@ -231,6 +253,25 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             except (OSError, ValueError, TypeError):
                 log.exception("Could not read local alarm metadata %s", meta_path.name)
         return jsonify({"alarms": items})
+
+    @flask_app.delete("/api/alarms/<alert_id>/")
+    @authenticated
+    def delete_local_alarm(alert_id):
+        if not csrf_valid():
+            return jsonify({"error": "درخواست معتبر نیست؛ صفحه را دوباره بارگذاری کن."}), 403
+        try:
+            result = uploader.delete_alarm(alert_id)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"status": "deleted", **result})
+
+    @flask_app.post("/api/alarms/cleanup/")
+    @authenticated
+    def cleanup_local_alarms():
+        if not csrf_valid():
+            return jsonify({"error": "درخواست معتبر نیست؛ صفحه را دوباره بارگذاری کن."}), 403
+        result = uploader.clear_all_local_alarms()
+        return jsonify({"status": "cleaned", **result})
 
     @flask_app.get("/alarms/<alert_id>.jpg")
     @authenticated

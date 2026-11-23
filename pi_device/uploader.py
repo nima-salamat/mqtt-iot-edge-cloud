@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -318,7 +319,6 @@ class DurableUploader:
                         continue
                     # Alarm IDs are UUID hex strings. Derive the snapshot filename
                     # from the ID instead of trusting a path stored inside JSON.
-                    import re
                     if not re.fullmatch(r"[a-fA-F0-9]{32}", meta_path.stem):
                         continue
                     image_path = self.alarm_dir / f"{meta_path.stem}.jpg"

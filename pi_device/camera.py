@@ -22,6 +22,7 @@ except (ImportError, OSError):
     _zbar_decode = None
 
 from .inference_pool import AdaptiveInferencePool
+from .camera_modes import select_sensor_mode
 
 log = logging.getLogger(__name__)
 
@@ -69,235 +70,13 @@ class ReconnectingRtspOutput:
         self._wake.set()
         log.warning("RTSPS output failed; local recording continues: %s", self.error)
 
-    def start(self):
-        self._thread = threading.Thread(target=self._reconnect_loop, name="rtsps-reconnect", daemon=True)
-        self._thread.start()
-
-    def credentials_changed(self):
-        self._wake.set()
-
-    def _reconnect_loop(self):
-        while not self._stop.is_set():
-            if self.connected:
-                self._wake.wait(2)
-                self._wake.clear()
-                continue
-            try:
-                replacement = self._new_output()
-                if replacement is None:
-                    self._wake.wait(5)
-                    self._wake.clear()
-                    continue
-                # SplittableOutput changes outputs at the next keyframe, without stopping H.264.
-                self.output.split_output(replacement)
-                self.connected = True
-                self.error = ""
-                self._backoff = 2
-                log.info("Live RTSPS publishing resumed for device %s", self.device_id)
-            except Exception as exc:
-                self.connected = False
-                self.error = self._redact_error(exc)
-                log.info("RTSPS unavailable; retry in %ss: %s", self._backoff, self.error)
-                self._stop.wait(self._backoff)
-                self._backoff = min(60, self._backoff * 2)
-
-    def stop(self):
-        self._stop.set()
-        self._wake.set()
-        if self._thread:
-            # split_output can be waiting for a keyframe; it is a daemon thread.
-            self._thread.join(timeout=4)
-        # The encoder owns this SplittableOutput and closes its active child
-        # when Picamera2 stops the encoder. Do not stop it while frames are
-        # still being delivered.
-
-
-
-def _switchable_output_class():
-    """Create a Picamera2 Output that can attach/detach MP4 recording at keyframes."""
-    from picamera2.outputs import Output
-
-    class SwitchableOutput(Output):
-        def __init__(self, initial_output=None):
-            super().__init__()
-            self._output = initial_output
-            self._pending_output = None
-            self._switch_pending = False
-            self._switch_done = threading.Event()
-            self._lock = threading.RLock()
-            self._streams = []
-
-        def start(self):
-            super().start()
-            with self._lock:
-                output = self._output
-            if output is not None:
-                output.start()
-
-        def _add_stream(self, encoder_stream, codec_name, **kwargs):
-            stream = (encoder_stream, codec_name, dict(kwargs))
-            with self._lock:
-                self._streams.append(stream)
-                output = self._output
-            if output is not None:
-                output._add_stream(encoder_stream, codec_name, **kwargs)
-
-        def switch_output(self, new_output, timeout=12.0):
-            # Prepare the new muxer and its stream definitions before asking
-            # outputframe() to switch on an H.264 keyframe.
-            with self._lock:
-                if self._switch_pending:
-                    raise RuntimeError("A local recording transition is already in progress")
-                old_output = self._output
-                streams = list(self._streams)
-
-            if new_output is not None:
-                new_output.start()
-                try:
-                    for encoder_stream, codec_name, kwargs in streams:
-                        new_output._add_stream(encoder_stream, codec_name, **kwargs)
-                except Exception:
-                    new_output.stop()
-                    raise
-
-            with self._lock:
-                self._pending_output = new_output
-                self._switch_pending = True
-                self._switch_done.clear()
-
-            completed = self._switch_done.wait(timeout=max(1.0, float(timeout)))
-            if not completed:
-                with self._lock:
-                    # A keyframe can race the timeout boundary. Treat an already
-                    # completed pointer swap as success instead of closing the
-                    # output that the encoder has just begun using.
-                    completed = not self._switch_pending and self._output is new_output
-                    if not completed and self._switch_pending and self._pending_output is new_output:
-                        self._pending_output = None
-                        self._switch_pending = False
-                if not completed:
-                    if new_output is not None:
-                        new_output.stop()
-                    raise TimeoutError("Timed out waiting for an H.264 keyframe to change recording state")
-
-            # outputframe has stopped referencing the previous output, so it is
-            # now safe to finalize its MP4 container on this control thread.
-            if old_output is not None:
-                old_output.stop()
-
-        def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
-            with self._lock:
-                if keyframe and self._switch_pending:
-                    self._output = self._pending_output
-                    self._pending_output = None
-                    self._switch_pending = False
-                    self._switch_done.set()
-                output = self._output
-            if output is not None:
-                output.outputframe(frame, keyframe, timestamp, packet, audio)
-
-        def stop(self):
-            super().stop()
-            with self._lock:
-                outputs = (self._output, self._pending_output if self._switch_pending else None)
-                self._output = None
-                self._pending_output = None
-                self._switch_pending = False
-            seen = set()
-            for output in outputs:
-                if output is not None and id(output) not in seen:
-                    seen.add(id(output))
-                    try:
-                        output.stop()
-                    except Exception:
-                        log.exception("Could not close a local recording output")
-
-    return SwitchableOutput
-
-
-class CameraPipeline:
-    def __init__(self, device_id, settings_store, bridge, uploader):
-        self.device_id = device_id
-        self.settings_store = settings_store
-        self.bridge = bridge
-        self.uploader = uploader
-        self.data_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot"))
-        self.video_dir = self.data_dir / "video"
-        self.alarm_dir = self.data_dir / "alarms"
-        self.video_dir.mkdir(parents=True, exist_ok=True)
-        self.alarm_dir.mkdir(parents=True, exist_ok=True)
-        self.picam2 = None
-        self.encoder = None
-        self.local_output = None
-        self.live_output = None
-        self.inference_pool = None
-        self.latest_jpeg = None
-        self.latest_frame_at = 0.0
-        self._latest_bgr = None
-        self._latest_bgr_at = 0.0
-        self._last_detection_at = 0.0
-        self._last_preview_at = 0.0
-        self._last_encoder_count = 0
-        self.video_fps = 0.0
-        self.inference_fps = 0.0
-        self.inference_latency_ms = 0.0
-        self.inference_dropped_frames = 0
-        self._inference_completed_at = deque(maxlen=100)
-        self._inference_pool_started_at = 0.0
-        self._last_processed_frame_sequence = 0
-        self._inflight_frames = {}
-        self._frame_sequence = 0
-        self._latest_frame_sequence = 0
-        self.model_error = ""
-        self.camera_error = ""
-        self._stop = threading.Event()
-        self._pair_requested_until = 0.0
-        self._pair_status = "paired" if uploader.state_provider().get("api_token") else "not_paired"
-        self._pair_lock = threading.RLock()
-        self._pair_in_progress = False
-        self._threads = []
-        self._alert_active = False
-        self._last_person_at = 0.0
-        self._last_alert_at = 0.0
-        self._last_detections = []
-        self._detection_history = deque(maxlen=3)
-        self._frame_count = 0
-        self._fps_started = time.monotonic()
-        self._frames_lock = threading.RLock()
-        self._current_segment = None
-        self._current_marker = None
-        self._recording_lock = threading.RLock()
-        self.recording_enabled = bool(settings_store.get().get("recording_enabled", True))
-        self._local_recording_attached = False
-
-    def _pending_alarm_count(self):
-        return sum(
-            1 for item in self.alarm_dir.glob("*.json")
-            if not item.with_suffix(".published").exists()
-        )
-
-    def _pending_video_count(self):
-        return sum(
-            1 for item in self.video_dir.glob("*.mp4")
-            if not item.with_suffix(".open").exists()
-            and not item.with_suffix(".uploaded").exists()
-        )
-
-    def _segment_path(self):
-        return self.video_dir / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.mp4"
-
-    def _mark_open(self, path):
-        marker = path.with_suffix(".open")
-        marker.touch()
-        return marker
-
-    def start(self):
-        from picamera2 import Picamera2
-        from picamera2.encoders import H264Encoder
-        from picamera2.outputs import PyavOutput
-
+    def is_running(self):
+        """Whether the selected camera backend currently owns an open device."""
         if self.picam2 is not None:
-            return
+            return True
+        return bool(self._opencv_capture is not None and self._opencv_capture.isOpened())
+
+    def _reset_frame_state(self):
         self._stop.clear()
         with self._frames_lock:
             self.latest_jpeg = None
@@ -314,32 +93,192 @@ class CameraPipeline:
             self.inference_dropped_frames = 0
             self._last_detections = []
             self._last_detection_at = 0.0
+        self._frame_count = 0
+        self._fps_started = time.monotonic()
         self.model_error = ""
         self.camera_error = ""
+
+    def _start_inference_pool(self, values):
+        """Start the same bounded YOLO pool for either camera capture backend."""
+        try:
+            worker_count = int(values.get("inference_workers", 2))
+            cpu_count = os.cpu_count() or 4
+            ncnn_threads = max(1, min(3, (cpu_count - 1) // worker_count))
+            pool = AdaptiveInferencePool(
+                worker_count=worker_count,
+                model_dir=os.getenv("MODEL_DIR", str(Path(__file__).parent / "models")),
+                confidence=float(values["alert_confidence"]),
+                ncnn_threads=ncnn_threads,
+            )
+            try:
+                pool.start(timeout=75)
+            except Exception:
+                pool.stop()
+                raise
+            self.inference_pool = pool
+            self._inference_pool_started_at = time.monotonic()
+            self.bridge.model_loaded = True
+            self.bridge.publish_log("info", "YOLOv5n NCNN adaptive worker pool loaded", {
+                "model": "yolov5n-ncnn",
+                "workers": worker_count,
+                "ncnn_threads_per_worker": ncnn_threads,
+            })
+        except Exception as exc:
+            self.inference_pool = None
+            self.model_error = str(exc)
+            self.bridge.model_loaded = False
+            self.bridge.publish_log(
+                "error", "YOLOv5n NCNN worker pool could not be loaded", {"error": self.model_error}
+            )
+            log.exception("YOLOv5n worker pool unavailable; camera preview remains active")
+
+        inference_thread = threading.Thread(
+            target=self._ai_loop, name="camera-yolov5n-inference", daemon=True
+        )
+        self._threads.append(inference_thread)
+        inference_thread.start()
+
+    def _start_opencv(self, values):
+        """Open a UVC/V4L2 webcam or a network video source through OpenCV.
+
+        This backend supplies full-resolution local preview and YOLO input.
+        Hardware H.264 recording and RTSPS publishing remain Picamera2-only.
+        """
+        self._reset_frame_state()
+        raw_source = str(values.get("camera_source", "0")).strip() or "0"
+        source = int(raw_source) if raw_source.isdigit() else raw_source
+        capture = (
+            cv2.VideoCapture(source, cv2.CAP_V4L2)
+            if isinstance(source, int)
+            else cv2.VideoCapture(source)
+        )
+        if not capture.isOpened():
+            capture.release()
+            raise RuntimeError(f"OpenCV could not open camera source: {raw_source}")
+
+        try:
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(values["video_width"]))
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(values["video_height"]))
+            if not bool(values.get("video_fps_auto", True)):
+                capture.set(cv2.CAP_PROP_FPS, float(values["video_fps"]))
+        except Exception:
+            log.debug("The selected OpenCV camera ignored one or more capture hints", exc_info=True)
+
+        self._opencv_capture = capture
+        self.picam2 = None
+        self.encoder = None
+        self.local_output = None
+        self.live_output = None
+        self._current_segment = None
+        self._current_marker = None
+        self.recording_enabled = False
+        self._local_recording_attached = False
+        self.camera_backend = "opencv"
+        self.camera_source = raw_source
+        self.camera_model = f"OpenCV source {raw_source}"
+        reported_rate = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+        self.camera_max_fps = max(0.0, reported_rate)
+        self.target_video_fps = (
+            reported_rate if bool(values.get("video_fps_auto", True))
+            else float(values["video_fps"])
+        )
+        self._threads = [
+            threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+        self.bridge.publish_log("info", "Camera opened through OpenCV", {
+            "source": raw_source,
+            "reported_fps": reported_rate,
+            "media_output": "not_supported_by_opencv_backend",
+        })
+        self._start_inference_pool(values)
+
+    def start(self):
+        values = self.settings_store.get()
+        if self.is_running():
+            return
+
+        self.camera_backend = str(values.get("camera_backend", "picamera2"))
+        self.camera_source = str(values.get("camera_source", "0"))
+        if self.camera_backend == "opencv":
+            self._start_opencv(values)
+            return
+
+        from picamera2 import Picamera2
+        from picamera2.encoders import H264Encoder
+        from picamera2.outputs import PyavOutput
+
+        self._reset_frame_state()
         # Incomplete MP4s from a power loss have no final container index.
         for stale_marker in self.video_dir.glob("*.open"):
             stale_marker.with_suffix(".mp4").unlink(missing_ok=True)
             stale_marker.unlink(missing_ok=True)
 
-        values = self.settings_store.get()
         self.recording_enabled = bool(values.get("recording_enabled", True))
-        picam2 = Picamera2()
+        try:
+            camera_num = int(self.camera_source)
+        except (TypeError, ValueError):
+            camera_num = 0
+            self.camera_source = "0"
+
+        picam2 = Picamera2(camera_num=camera_num)
         marker = None
         local_output = None
         live_output = None
         encoder = None
         encoder_started = False
+        sensor_configuration = None
+        sensor_modes = []
+        requested_fps = float(values.get("video_fps", 30))
+        auto_fps = bool(values.get("video_fps_auto", True))
         try:
-            config = picam2.create_video_configuration(
-                main={"size": (values["video_width"], values["video_height"]), "format": "YUV420"},
-                lores={"size": (640, 360), "format": "YUV420"},
-                controls={"FrameDurationLimits": (
-                    int(1_000_000 / values["video_fps"]),
-                    int(1_000_000 / values["video_fps"]),
-                )},
-                buffer_count=8,
-            )
+            try:
+                sensor_modes = list(picam2.sensor_modes or [])
+                selected_mode, selected_fps = select_sensor_mode(
+                    sensor_modes,
+                    int(values["video_width"]),
+                    int(values["video_height"]),
+                    requested_fps,
+                    auto=auto_fps,
+                )
+                if selected_mode:
+                    sensor_configuration = {
+                        "output_size": tuple(selected_mode["size"]),
+                        "bit_depth": int(selected_mode["bit_depth"]),
+                    }
+                self.camera_max_fps = max(
+                    (float(mode.get("fps", 0) or 0) for mode in sensor_modes),
+                    default=selected_fps,
+                )
+                self.target_video_fps = selected_fps
+            except Exception:
+                log.exception("Could not inspect Picamera2 sensor modes; using configured FPS")
+                self.target_video_fps = requested_fps
+
+            effective_fps = max(1.0, float(self.target_video_fps or requested_fps))
+            frame_duration = max(1, int(round(1_000_000 / effective_fps)))
+            config_options = {
+                "main": {"size": (values["video_width"], values["video_height"]), "format": "YUV420"},
+                "lores": {"size": (640, 360), "format": "YUV420"},
+                "controls": {"FrameDurationLimits": (frame_duration, frame_duration)},
+                "buffer_count": 8,
+            }
+            if sensor_configuration:
+                config_options["sensor"] = sensor_configuration
+            config = picam2.create_video_configuration(**config_options)
             picam2.configure(config)
+
+            try:
+                camera_info = Picamera2.global_camera_info()
+                if 0 <= camera_num < len(camera_info):
+                    self.camera_model = str(camera_info[camera_num].get("Model") or f"Picamera2 camera {camera_num}")
+                else:
+                    self.camera_model = f"Picamera2 camera {camera_num}"
+            except Exception:
+                self.camera_model = f"Picamera2 camera {camera_num}"
+            self.camera_resolution = f"{values['video_width']}x{values['video_height']}"
 
             segment = None
             first_segment = None
@@ -350,11 +289,12 @@ class CameraPipeline:
                 first_segment.error_callback = lambda error: log.error("Local MP4 segment failed: %s", error)
             local_output = _switchable_output_class()(first_segment)
             live_output = ReconnectingRtspOutput(self.device_id, self.uploader.state_provider)
+            encoder_fps = max(1, int(round(effective_fps)))
             encoder = H264Encoder(
                 bitrate=values["video_bitrate"],
                 repeat=True,
-                iperiod=values["video_fps"],
-                framerate=values["video_fps"],
+                iperiod=encoder_fps,
+                framerate=encoder_fps,
             )
             # Newer Picamera2 releases expose the VC4 hardware selection on
             # their LibavH264Encoder wrapper; older releases select hardware
@@ -396,11 +336,11 @@ class CameraPipeline:
             self.encoder = encoder
             self.local_output = local_output
             self.live_output = live_output
+            self.camera_backend = "picamera2"
+            self._opencv_capture = None
             self._current_segment = segment
             self._current_marker = marker
             self._local_recording_attached = bool(segment)
-            # Reconcile a recording request that arrived while Picamera2 was
-            # being opened and the encoder output was being initialized.
             desired_recording = bool(
                 self.settings_store.get().get("recording_enabled", self.recording_enabled)
             )
@@ -408,62 +348,21 @@ class CameraPipeline:
             try:
                 self.set_recording_enabled(desired_recording)
             except Exception:
-                # A keyframe transition failure must not prevent the camera,
-                # preview or live RTSPS output from starting.
                 log.exception("Could not reconcile local recording state during camera startup")
 
         self.live_output.start()
-
-        # Start the camera-facing work immediately. Model loading can take
-        # several seconds on a Pi, but preview, QR scan, local recording and
-        # RTSPS publishing must not wait for child NCNN processes to initialize.
         self._threads = [
             threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
             threading.Thread(target=self._segment_loop, name="local-video-segmenter", daemon=True),
         ]
         for thread in self._threads:
             thread.start()
-
-        try:
-            worker_count = int(values.get("inference_workers", 2))
-            cpu_count = os.cpu_count() or 4
-            ncnn_threads = max(1, min(3, (cpu_count - 1) // worker_count))
-            pool = AdaptiveInferencePool(
-                worker_count=worker_count,
-                model_dir=os.getenv("MODEL_DIR", str(Path(__file__).parent / "models")),
-                confidence=float(values["alert_confidence"]),
-                ncnn_threads=ncnn_threads,
-            )
-            try:
-                pool.start(timeout=75)
-            except Exception:
-                pool.stop()
-                raise
-            self.inference_pool = pool
-            self._inference_pool_started_at = time.monotonic()
-            self.bridge.model_loaded = True
-            self.bridge.publish_log("info", "YOLOv5n NCNN adaptive worker pool loaded", {
-                "model": "yolov5n-ncnn",
-                "workers": worker_count,
-                "ncnn_threads_per_worker": ncnn_threads,
-            })
-        except Exception as exc:
-            self.inference_pool = None
-            self.model_error = str(exc)
-            self.bridge.model_loaded = False
-            self.bridge.publish_log(
-                "error", "YOLOv5n NCNN worker pool could not be loaded", {"error": self.model_error}
-            )
-            log.exception("YOLOv5n worker pool unavailable; camera and live stream remain active")
-
-        inference_thread = threading.Thread(
-            target=self._ai_loop, name="camera-yolov5n-inference", daemon=True
-        )
-        self._threads.append(inference_thread)
-        inference_thread.start()
+        self._start_inference_pool(values)
 
     def set_recording_enabled(self, enabled: bool) -> dict:
         """Pause/resume only the local MP4 spool; camera, preview and RTSPS stay live."""
+        if self.camera_backend != "picamera2" or self.picam2 is None:
+            raise RuntimeError("ضبط و ارسال RTSPS برای دوربین OpenCV هنوز پشتیبانی نمی‌شود؛ از Picamera2 استفاده کن.")
         from picamera2.outputs import PyavOutput
 
         enabled = bool(enabled)
@@ -625,8 +524,27 @@ class CameraPipeline:
                     log.debug("OpenCV multi-QR decode attempt failed", exc_info=True)
         return ""
 
+    @staticmethod
+    def _i420_to_bgr(frame, width, height, stream_name):
+        if frame is None:
+            raise RuntimeError(f"Camera returned an empty {stream_name} frame")
+        if frame.ndim == 3 and frame.shape[-1] == 1:
+            frame = frame.reshape((height * 3 // 2, width))
+        expected = (height * 3 // 2, width)
+        if frame.shape != expected:
+            if frame.size != width * height * 3 // 2:
+                raise RuntimeError(
+                    f"Unexpected {stream_name} YUV420 shape: {frame.shape}; expected {expected}"
+                )
+            frame = frame.reshape(expected)
+        return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
+
     def _capture_loop(self):
-        """Keep camera capture and the local MJPEG preview independent of AI inference."""
+        """Read synchronized high-resolution preview and low-resolution AI frames."""
+        if self.camera_backend == "opencv":
+            self._capture_opencv_loop()
+            return
+
         last_qr_scan = 0.0
         qr_detector = cv2.QRCodeDetector()
         if _zbar_decode is None:
@@ -634,27 +552,24 @@ class CameraPipeline:
                 "pyzbar/libzbar is unavailable; QR scanning will fall back to OpenCV, "
                 "which may be built without QUIRC support"
             )
-        preview_interval = 1.0 / 15.0
+        preview_interval = 1.0 / 20.0
+        values = self.settings_store.get()
+        main_width = int(values["video_width"])
+        main_height = int(values["video_height"])
         while not self._stop.is_set():
             try:
-                lores_yuv = self.picam2.capture_array("lores")
-                if lores_yuv is None:
-                    continue
+                request = self.picam2.capture_request()
+                try:
+                    main_yuv = request.make_array("main")
+                    lores_yuv = request.make_array("lores")
+                finally:
+                    request.release()
 
-                # Picamera2 requires the lores stream to use YUV420. Its
-                # capture_array representation is a packed I420 frame:
-                # height * 3/2 rows by width columns. Convert once to BGR so
-                # OpenCV preview, QR decoding, snapshots and YOLO share the
-                # same correctly formatted frame.
-                if lores_yuv.ndim == 3 and lores_yuv.shape[2] == 1:
-                    lores_yuv = lores_yuv.reshape((540, 640))
-                if lores_yuv.shape != (540, 640):
-                    raise RuntimeError(
-                        "Unexpected lores YUV420 frame shape: "
-                        f"{lores_yuv.shape}; expected (540, 640)"
-                    )
-                frame = cv2.cvtColor(lores_yuv, cv2.COLOR_YUV2BGR_I420)
-
+                # Both arrays come from the same libcamera request. The main
+                # stream drives the operator preview; lores is reserved for
+                # QR scanning and NCNN to keep its CPU budget low.
+                preview_source = self._i420_to_bgr(main_yuv, main_width, main_height, "main")
+                frame = self._i420_to_bgr(lores_yuv, 640, 360, "lores")
                 now = time.monotonic()
                 self.camera_error = ""
 
@@ -672,8 +587,6 @@ class CameraPipeline:
                         log.info("Pairing QR detected; submitting one-time code")
                         self._complete_pairing(pairing_code)
 
-                # frame is now BGR, as expected by OpenCV drawing,
-                # JPEG encoding, QR decoding and snapshot generation.
                 with self._frames_lock:
                     self._latest_bgr = frame.copy()
                     self._frame_sequence += 1
@@ -682,20 +595,31 @@ class CameraPipeline:
                     detections = list(self._last_detections)
                     detection_age = now - self._last_detection_at if self._last_detection_at else 999.0
 
-                preview = frame.copy()
+                preview = preview_source.copy()
                 if detections and detection_age < 1.0:
-                    self._draw_boxes(preview, detections)
+                    sx = preview.shape[1] / max(1, frame.shape[1])
+                    sy = preview.shape[0] / max(1, frame.shape[0])
+                    scaled = []
+                    for item in detections:
+                        mapped = dict(item)
+                        x1, y1, x2, y2 = item["bbox"]
+                        mapped["bbox"] = [
+                            int(round(x1 * sx)), int(round(y1 * sy)),
+                            int(round(x2 * sx)), int(round(y2 * sy)),
+                        ]
+                        scaled.append(mapped)
+                    self._draw_boxes(preview, scaled)
+
                 if now - self._last_preview_at >= preview_interval:
                     ok, encoded = cv2.imencode(
-                        ".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 78]
+                        ".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92]
                     )
                     with self._frames_lock:
                         self.latest_jpeg = encoded.tobytes() if ok else None
                         self.latest_frame_at = time.time()
                     self._last_preview_at = now
 
-                # Measure the camera's capture cadence, not the slower 15 FPS
-                # browser preview or independent NCNN inference cadence.
+                self.camera_resolution = f"{preview.shape[1]}x{preview.shape[0]}"
                 self._frame_count += 1
                 if now - self._fps_started >= 2.0:
                     elapsed = now - self._fps_started
@@ -723,6 +647,98 @@ class CameraPipeline:
                     "error", "Camera capture or preview failed", {"error": str(exc)}
                 )
                 self._stop.wait(0.5)
+
+    def _capture_opencv_loop(self):
+        """Capture a USB/UVC/V4L2 webcam or network video source with OpenCV."""
+        last_qr_scan = 0.0
+        qr_detector = cv2.QRCodeDetector()
+        preview_interval = 1.0 / 20.0
+        while not self._stop.is_set():
+            try:
+                capture = self._opencv_capture
+                if capture is None or not capture.isOpened():
+                    raise RuntimeError("OpenCV camera source is no longer open")
+                ok, preview_source = capture.read()
+                if not ok or preview_source is None:
+                    self.camera_error = "OpenCV did not return a frame from the selected source"
+                    self._stop.wait(0.1)
+                    continue
+
+                height, width = preview_source.shape[:2]
+                if width <= 0 or height <= 0:
+                    continue
+                frame = (
+                    preview_source if (width, height) == (640, 360)
+                    else cv2.resize(preview_source, (640, 360), interpolation=cv2.INTER_AREA)
+                )
+                now = time.monotonic()
+                self.camera_error = ""
+
+                if self._pair_requested_until and now >= self._pair_requested_until:
+                    self._pair_requested_until = 0.0
+                    self._pair_status = "expired"
+                if self._pair_requested_until > now and now - last_qr_scan >= 0.35:
+                    last_qr_scan = now
+                    pairing_code = self._decode_pairing_qr(qr_detector, frame)
+                    if pairing_code:
+                        self._complete_pairing(pairing_code)
+
+                with self._frames_lock:
+                    self._latest_bgr = frame.copy()
+                    self._frame_sequence += 1
+                    self._latest_frame_sequence = self._frame_sequence
+                    self._latest_bgr_at = now
+                    detections = list(self._last_detections)
+                    detection_age = now - self._last_detection_at if self._last_detection_at else 999.0
+
+                preview = preview_source.copy()
+                if detections and detection_age < 1.0:
+                    sx = width / 640.0
+                    sy = height / 360.0
+                    scaled = []
+                    for item in detections:
+                        mapped = dict(item)
+                        x1, y1, x2, y2 = item["bbox"]
+                        mapped["bbox"] = [
+                            int(round(x1 * sx)), int(round(y1 * sy)),
+                            int(round(x2 * sx)), int(round(y2 * sy)),
+                        ]
+                        scaled.append(mapped)
+                    self._draw_boxes(preview, scaled)
+
+                if now - self._last_preview_at >= preview_interval:
+                    ok, encoded = cv2.imencode(
+                        ".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92]
+                    )
+                    with self._frames_lock:
+                        self.latest_jpeg = encoded.tobytes() if ok else None
+                        self.latest_frame_at = time.time()
+                    self._last_preview_at = now
+
+                self.camera_resolution = f"{width}x{height}"
+                self._frame_count += 1
+                if now - self._fps_started >= 2.0:
+                    elapsed = now - self._fps_started
+                    self.video_fps = self._frame_count / elapsed
+                    self._frame_count = 0
+                    self._fps_started = now
+
+                self.bridge.set_metrics(
+                    self.video_fps,
+                    self.inference_fps,
+                    bool(
+                        self.inference_pool
+                        and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count
+                    ),
+                    self._pending_alarm_count(),
+                    pending_videos=0,
+                    rtsp_connected=False,
+                    camera_ready=self._is_camera_ready(),
+                )
+            except Exception as exc:
+                self.camera_error = str(exc)
+                log.warning("OpenCV camera capture error: %s", exc)
+                self._stop.wait(0.25)
 
     def _ai_loop(self):
         """Dispatch fresh frames to idle workers and drop work rather than queue latency."""
@@ -987,7 +1003,7 @@ class CameraPipeline:
     def _is_camera_ready(self):
         with self._frames_lock:
             return bool(
-                self.picam2 is not None
+                self.is_running()
                 and self.latest_jpeg is not None
                 and self.latest_frame_at
                 and time.time() - self.latest_frame_at < 2.5
@@ -1000,8 +1016,16 @@ class CameraPipeline:
             "device_id": self.device_id,
             "camera_ready": preview_ready,
             "preview_ready": preview_ready,
+            "camera_backend": self.camera_backend,
+            "camera_source": self.camera_source,
+            "camera_model": self.camera_model,
+            "camera_resolution": self.camera_resolution,
+            "camera_max_fps": round(self.camera_max_fps, 2),
+            "video_fps_auto": bool(values.get("video_fps_auto", True)),
+            "recording_supported": self.camera_backend == "picamera2",
+            "live_publish_supported": self.camera_backend == "picamera2",
             "video_fps": round(self.video_fps, 2),
-            "target_video_fps": values["video_fps"],
+            "target_video_fps": round(self.target_video_fps or values["video_fps"], 2),
             "inference_fps": round(self.inference_fps, 2),
             "inference_latency_ms": round(self.inference_latency_ms, 1),
             "inference_dropped_frames": self.inference_dropped_frames,
@@ -1054,6 +1078,12 @@ class CameraPipeline:
         self._inflight_frames.clear()
         if self.live_output:
             self.live_output.stop()
+        if self._opencv_capture is not None:
+            try:
+                self._opencv_capture.release()
+            except Exception:
+                log.exception("Could not release OpenCV camera capture")
+            self._opencv_capture = None
         stopped_cleanly = True
         try:
             if self.picam2:
@@ -1072,6 +1102,8 @@ class CameraPipeline:
         self.encoder = None
         self.local_output = None
         self.live_output = None
+        if self.camera_backend == "opencv":
+            self.recording_enabled = False
         self.bridge.model_loaded = False
         self.inference_fps = 0.0
         self.inference_latency_ms = 0.0

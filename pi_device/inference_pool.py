@@ -179,6 +179,7 @@ class AdaptiveInferencePool:
         self._restart_at = [0.0 for _ in range(self.worker_count)]
         self._restart_delay = [1.0 for _ in range(self.worker_count)]
         self._inflight_by_worker: dict[int, int] = {}
+        self._submitted_at_by_worker: dict[int, float] = {}
         self._pending_failures: list[dict] = []
 
     def _spawn_worker(self, worker_id: int) -> None:
@@ -212,6 +213,7 @@ class AdaptiveInferencePool:
             self.ready_workers.discard(worker_id)
             self.scheduler.mark_failed(worker_id)
             failed_sequence = self._inflight_by_worker.pop(worker_id, None)
+            self._submitted_at_by_worker.pop(worker_id, None)
             if failed_sequence is not None:
                 self._pending_failures.append({
                     "kind": "result",
@@ -319,6 +321,7 @@ class AdaptiveInferencePool:
             self.scheduler.mark_failed(worker_id)
             return None
         self._inflight_by_worker[worker_id] = int(frame_sequence)
+        self._submitted_at_by_worker[worker_id] = time.monotonic()
         return worker_id
 
     def collect(self, timeout: float = 0.0) -> list[dict]:
@@ -368,11 +371,19 @@ class AdaptiveInferencePool:
             if current_sequence is None and not message.get("worker_failed"):
                 continue
             self._inflight_by_worker.pop(worker_id, None)
+            submitted_at = self._submitted_at_by_worker.pop(worker_id, None)
             if message.get("worker_failed"):
                 results.append(message)
                 continue
-            elapsed = float(message.get("elapsed_seconds", 0.0))
-            self.scheduler.mark_completed(worker_id, elapsed)
+            # Schedule by end-to-end turnaround (IPC + worker execution), not
+            # just the detector's inner compute time. The worker's own elapsed
+            # field is still retained for the pure model-latency metric.
+            turnaround = (
+                max(0.001, time.monotonic() - submitted_at)
+                if submitted_at is not None
+                else max(0.001, float(message.get("elapsed_seconds", 0.0)))
+            )
+            self.scheduler.mark_completed(worker_id, turnaround)
             error = str(message.get("error", ""))
             if error:
                 self.last_error = error
@@ -438,6 +449,7 @@ class AdaptiveInferencePool:
         self.processes.clear()
         self.ready_workers.clear()
         self._inflight_by_worker.clear()
+        self._submitted_at_by_worker.clear()
         self._pending_failures.clear()
         self.result_queue = None
         self.started = False

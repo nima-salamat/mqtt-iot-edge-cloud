@@ -181,6 +181,7 @@ def dashboard_alerts(request):
             "confidence": round(alarm.confidence, 3),
             "detected_at": alarm.detected_at.isoformat(),
             "acknowledged": alarm.acknowledged,
+            "bbox": alarm.bbox if isinstance(alarm.bbox, list) else [],
             "has_snapshot": bool(alarm.snapshot),
             "image_url": reverse("dashboard:alarm-image", args=[alarm.pk]) if alarm.snapshot else None,
             "device_url": reverse("dashboard:device-detail", args=[alarm.device_id]),

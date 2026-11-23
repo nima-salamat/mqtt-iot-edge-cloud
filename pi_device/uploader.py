@@ -35,6 +35,8 @@ class DurableUploader:
             folder.mkdir(parents=True, exist_ok=True)
         self._stop = threading.Event()
         self._thread = None
+        # Serialize queue item uploads, retention and user-requested queue clearing.
+        self._queue_lock = threading.RLock()
         self._session = requests.Session()
         self.last_upload_at = ""
         self.last_upload_error = ""
@@ -127,102 +129,237 @@ class DurableUploader:
         for meta_path in sorted(self.alarm_dir.glob("*.json"), key=lambda p: p.stat().st_mtime):
             if self._stop.is_set():
                 return
-            try:
-                payload = json.loads(meta_path.read_text(encoding="utf-8"))
-                image_path = self.alarm_dir / payload["image"]
-                uploaded_marker = meta_path.with_suffix(".uploaded")
-                published_marker = meta_path.with_suffix(".published")
-                if not uploaded_marker.exists():
-                    if not image_path.is_file():
-                        raise FileNotFoundError(f"Alarm snapshot missing: {image_path}")
-                    with image_path.open("rb") as image_file:
-                        response = self._session.post(
-                            f"{self.api_base}/api/device/alarms/",
-                            headers=self._headers(),
-                            data={"payload": json.dumps(payload, ensure_ascii=False)},
-                            files={"snapshot": (image_path.name, image_file, "image/jpeg")},
-                            timeout=(10, 60),
-                        )
-                    response.raise_for_status()
-                    uploaded_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
-                if not published_marker.exists():
-                    event = {
-                        "device_id": self.device_id,
-                        "event": "person_detected",
-                        "alert_id": payload["alert_id"],
-                        "confidence": payload["confidence"],
-                        "bbox": payload["bbox"],
-                        "detected_at": payload["detected_at"],
-                        "snapshot_id": payload["alert_id"],
-                        "source": "pi-yolov5n-ncnn",
-                    }
-                    if not self.bridge.publish_alarm(event):
-                        self._stop.wait(1)
-                        continue
-                    published_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
-                self.last_upload_at = datetime.now(timezone.utc).isoformat()
-            except requests.RequestException as exc:
-                self.last_upload_error = str(exc)
-                log.info("Alarm %s remains in local outbox: %s", meta_path.name, exc)
-                raise
-            except Exception:
-                log.exception("Could not sync alarm %s", meta_path)
+            # Lock one item at a time so the local panel can clear the remaining
+            # queue without racing a file that is currently being uploaded.
+            with self._queue_lock:
+                if not meta_path.is_file():
+                    continue
+                try:
+                    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+                    image_name = str(payload.get("image", ""))
+                    if Path(image_name).name != image_name or not image_name.lower().endswith(".jpg"):
+                        raise ValueError("Unsafe alarm image filename")
+                    image_path = self.alarm_dir / image_name
+                    uploaded_marker = meta_path.with_suffix(".uploaded")
+                    published_marker = meta_path.with_suffix(".published")
+                    if not uploaded_marker.exists():
+                        if not image_path.is_file() or image_path.is_symlink():
+                            raise FileNotFoundError(f"Alarm snapshot missing or unsafe: {image_path.name}")
+                        with image_path.open("rb") as image_file:
+                            response = self._session.post(
+                                f"{self.api_base}/api/device/alarms/",
+                                headers=self._headers(),
+                                data={"payload": json.dumps(payload, ensure_ascii=False)},
+                                files={"snapshot": (image_path.name, image_file, "image/jpeg")},
+                                timeout=(10, 60),
+                            )
+                        response.raise_for_status()
+                        uploaded_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+                    if not published_marker.exists():
+                        event = {
+                            "device_id": self.device_id,
+                            "event": "person_detected",
+                            "alert_id": payload["alert_id"],
+                            "confidence": payload["confidence"],
+                            "bbox": payload["bbox"],
+                            "detected_at": payload["detected_at"],
+                            "snapshot_id": payload["alert_id"],
+                            "source": "pi-yolov5n-ncnn",
+                        }
+                        if not self.bridge.publish_alarm(event):
+                            self._stop.wait(1)
+                            continue
+                        published_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+                    self.last_upload_at = datetime.now(timezone.utc).isoformat()
+                except requests.RequestException as exc:
+                    self.last_upload_error = str(exc)
+                    log.info("Alarm %s remains in local outbox: %s", meta_path.name, exc)
+                    raise
+                except Exception:
+                    log.exception("Could not sync alarm %s", meta_path)
 
     def _upload_logs(self):
         for path in sorted(self.log_dir.glob("*.json"), key=lambda p: p.stat().st_mtime):
             if self._stop.is_set():
                 return
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                response = self._session.post(
-                    f"{self.api_base}/api/device/logs/",
-                    headers=self._headers(),
-                    json=payload,
-                    timeout=(5, 20),
-                )
-                response.raise_for_status()
-                archive_target = self.log_archive_dir / path.name
-                path.replace(archive_target)
-            except requests.RequestException as exc:
-                self.last_upload_error = str(exc)
-                log.info("Device log %s remains queued: %s", path.name, exc)
-                raise
-            except Exception:
-                log.exception("Could not upload log %s", path)
+            with self._queue_lock:
+                if not path.is_file() or path.is_symlink():
+                    continue
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    response = self._session.post(
+                        f"{self.api_base}/api/device/logs/",
+                        headers=self._headers(),
+                        json=payload,
+                        timeout=(5, 20),
+                    )
+                    response.raise_for_status()
+                    archive_target = self.log_archive_dir / path.name
+                    path.replace(archive_target)
+                except requests.RequestException as exc:
+                    self.last_upload_error = str(exc)
+                    log.info("Device log %s remains queued: %s", path.name, exc)
+                    raise
+                except Exception:
+                    log.exception("Could not upload log %s", path)
 
     def _upload_segments(self):
         for path in sorted(self.video_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime):
             if self._stop.is_set():
                 return
-            if path.with_suffix(".open").exists() or path.with_suffix(".uploaded").exists():
-                continue
-            if time.time() - path.stat().st_mtime < 1:
-                continue
-            checksum = sha256_file(path)
-            try:
-                started_ms = int(path.stem.split("-", 1)[0])
-                started = datetime.fromtimestamp(started_ms / 1000.0, tz=timezone.utc).isoformat()
-            except (ValueError, IndexError):
-                started = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
-            with path.open("rb") as handle:
-                response = self._session.post(
-                    f"{self.api_base}/api/device/segments/",
-                    headers=self._headers(),
-                    data={
-                        "segment_id": path.stem,
-                        "sha256": checksum,
-                        "started_at": started,
-                        "duration_seconds": str(self.settings_store.get()["segment_seconds"]),
-                    },
-                    files={"file": (path.name, handle, "video/mp4")},
-                    timeout=(15, 180),
-                )
-            response.raise_for_status()
-            path.with_suffix(".uploaded").write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
-            self.uploaded_segments += 1
-            self.last_upload_at = datetime.now(timezone.utc).isoformat()
+            with self._queue_lock:
+                if not path.is_file() or path.is_symlink():
+                    continue
+                if path.with_suffix(".open").exists() or path.with_suffix(".uploaded").exists():
+                    continue
+                if time.time() - path.stat().st_mtime < 1:
+                    continue
+                checksum = sha256_file(path)
+                try:
+                    started_ms = int(path.stem.split("-", 1)[0])
+                    started = datetime.fromtimestamp(started_ms / 1000.0, tz=timezone.utc).isoformat()
+                except (ValueError, IndexError):
+                    started = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+                with path.open("rb") as handle:
+                    response = self._session.post(
+                        f"{self.api_base}/api/device/segments/",
+                        headers=self._headers(),
+                        data={
+                            "segment_id": path.stem,
+                            "sha256": checksum,
+                            "started_at": started,
+                            "duration_seconds": str(self.settings_store.get()["segment_seconds"]),
+                        },
+                        files={"file": (path.name, handle, "video/mp4")},
+                        timeout=(15, 180),
+                    )
+                response.raise_for_status()
+                path.with_suffix(".uploaded").write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+                self.uploaded_segments += 1
+                self.last_upload_at = datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _file_size(path):
+        try:
+            return path.stat().st_size if path.is_file() and not path.is_symlink() else 0
+        except OSError:
+            return 0
+
+    def queue_snapshot(self):
+        """Return counts and byte sizes for data that is still waiting to send."""
+        with self._queue_lock:
+            videos = [
+                path for path in self.video_dir.glob("*.mp4")
+                if path.is_file() and not path.is_symlink()
+                and not path.with_suffix(".open").exists()
+                and not path.with_suffix(".uploaded").exists()
+            ]
+            alarms = [
+                path for path in self.alarm_dir.glob("*.json")
+                if path.is_file() and not path.is_symlink()
+                and not path.with_suffix(".published").exists()
+            ]
+            logs = [
+                path for path in self.log_dir.glob("*.json")
+                if path.is_file() and not path.is_symlink()
+            ]
+
+            alarm_bytes = 0
+            for meta_path in alarms:
+                alarm_bytes += self._file_size(meta_path)
+                try:
+                    item = json.loads(meta_path.read_text(encoding="utf-8"))
+                    image_name = str(item.get("image", ""))
+                    if Path(image_name).name == image_name and image_name.lower().endswith(".jpg"):
+                        alarm_bytes += self._file_size(self.alarm_dir / image_name)
+                except (OSError, ValueError, TypeError):
+                    continue
+
+            def summary(items, size):
+                return {"count": len(items), "bytes": size}
+
+            return {
+                "videos": summary(videos, sum(self._file_size(path) for path in videos)),
+                "alarms": summary(alarms, alarm_bytes),
+                "logs": summary(logs, sum(self._file_size(path) for path in logs)),
+            }
+
+    def clear_pending_queue(self, queue_name):
+        """Delete only unsent files in one queue; retain uploaded and archived data."""
+        if queue_name not in {"videos", "alarms", "logs"}:
+            raise ValueError("Unknown queue. Choose videos, alarms or logs.")
+
+        removed_count = 0
+        removed_bytes = 0
+        with self._queue_lock:
+            if queue_name == "videos":
+                for path in self.video_dir.glob("*.mp4"):
+                    if (
+                        not path.is_file() or path.is_symlink()
+                        or path.with_suffix(".open").exists()
+                        or path.with_suffix(".uploaded").exists()
+                    ):
+                        continue
+                    size = self._file_size(path)
+                    try:
+                        path.unlink()
+                    except OSError:
+                        log.exception("Could not clear pending video %s", path.name)
+                        continue
+                    removed_count += 1
+                    removed_bytes += size
+
+            elif queue_name == "alarms":
+                for meta_path in self.alarm_dir.glob("*.json"):
+                    if (
+                        not meta_path.is_file() or meta_path.is_symlink()
+                        or meta_path.with_suffix(".published").exists()
+                    ):
+                        continue
+                    # Alarm IDs are UUID hex strings. Derive the snapshot filename
+                    # from the ID instead of trusting a path stored inside JSON.
+                    import re
+                    if not re.fullmatch(r"[a-fA-F0-9]{32}", meta_path.stem):
+                        continue
+                    image_path = self.alarm_dir / f"{meta_path.stem}.jpg"
+                    size = self._file_size(meta_path) + self._file_size(image_path)
+                    try:
+                        meta_path.unlink()
+                        if image_path.is_file() and not image_path.is_symlink():
+                            image_path.unlink()
+                        meta_path.with_suffix(".uploaded").unlink(missing_ok=True)
+                        meta_path.with_suffix(".published").unlink(missing_ok=True)
+                    except OSError:
+                        log.exception("Could not clear pending alarm %s", meta_path.name)
+                        continue
+                    removed_count += 1
+                    removed_bytes += size
+
+            else:
+                for path in self.log_dir.glob("*.json"):
+                    if not path.is_file() or path.is_symlink():
+                        continue
+                    size = self._file_size(path)
+                    try:
+                        path.unlink()
+                    except OSError:
+                        log.exception("Could not clear pending log %s", path.name)
+                        continue
+                    removed_count += 1
+                    removed_bytes += size
+
+        return {
+            "queue": queue_name,
+            "removed_count": removed_count,
+            "removed_bytes": removed_bytes,
+            "remaining": self.queue_snapshot(),
+        }
 
     def _cleanup(self):
+        with self._queue_lock:
+            self._cleanup_locked()
+
+    def _cleanup_locked(self):
         values = self.settings_store.get()
         now = time.time()
         local_video_seconds = int(values["local_video_retention_minutes"]) * 60

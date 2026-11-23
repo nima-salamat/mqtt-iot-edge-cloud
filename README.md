@@ -199,6 +199,10 @@ Install Certbot on Ubuntu/Debian:
     sudo apt update
     sudo apt install -y certbot
 
+Check that automatic renewal is scheduled (the package normally installs a systemd timer):
+
+    systemctl list-timers --all | grep -i certbot || true
+
 Create the webroot and install the temporary HTTP-only Nginx site. This lets Certbot perform HTTP-01 validation without stopping or automatically rewriting the existing Nginx configuration:
 
     sudo mkdir -p /var/www/certbot/.well-known/acme-challenge
@@ -210,6 +214,12 @@ Create the webroot and install the temporary HTTP-only Nginx site. This lets Cer
 Issue the certificate (replace the email address with an address you control):
 
     sudo certbot certonly --webroot -w /var/www/certbot -d server.echonode.website --cert-name server.echonode.website --email YOUR_EMAIL_ADDRESS --agree-tos --no-eff-email
+
+Verify the issued certificate and its hostname:
+
+    sudo certbot certificates
+    sudo openssl x509 -in /etc/letsencrypt/live/server.echonode.website/fullchain.pem -noout -dates -ext subjectAltName -checkhost server.echonode.website
+    sudo openssl pkey -in /etc/letsencrypt/live/server.echonode.website/privkey.pem -noout
 
 Certbot stores the certificate and key at:
 
@@ -239,9 +249,10 @@ Install the renewal deploy hook so Nginx reloads and MediaMTX restarts only afte
 
     sudo install -D -m 0750 deploy/certbot/restart-media-services.sh /etc/letsencrypt/renewal-hooks/deploy/mqtt-iot-edge-cloud
 
-Test renewal:
+Test ACME renewal first, then test the deploy hook. The second command briefly reloads Nginx and restarts MediaMTX if the installed Certbot version supports `--run-deploy-hooks`:
 
     sudo certbot renew --dry-run
+    sudo certbot renew --dry-run --run-deploy-hooks
 
 The hook skips unrelated certificates. It reloads host Nginx and restarts the MediaMTX Compose service so the RTSPS listener loads the renewed certificate.
 

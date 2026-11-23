@@ -94,8 +94,8 @@ def _inference_worker(
     """Child entry point. Never imports or opens Picamera2/libcamera."""
     try:
         # Keep nested native thread pools from oversubscribing the Pi's CPUs.
-        os.environ.setdefault("OMP_NUM_THREADS", str(ncnn_threads))
-        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+        os.environ["OMP_NUM_THREADS"] = str(ncnn_threads)
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
         import cv2
         from .detector import YoloV5nDetector
 

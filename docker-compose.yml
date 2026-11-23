@@ -24,7 +24,7 @@ services:
     networks: [iot-internal]
 
   broker:
-    image: ${DOCKER_REGISTRY:-docker.io}/eclipse-mosquitto:2.1.2
+    image: ${MOSQUITTO_IMAGE:-${DOCKER_REGISTRY:-docker.io}/eclipse-mosquitto:2.1.2-alpine}
     restart: unless-stopped
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
     volumes:

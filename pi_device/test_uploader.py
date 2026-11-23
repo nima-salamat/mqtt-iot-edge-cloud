@@ -114,6 +114,15 @@ class QueueManagementTests(unittest.TestCase):
         self.assertFalse(pending_log.exists())
         self.assertTrue(archived_log.exists())
 
+    def test_alarm_snapshot_path_rejects_path_traversal(self):
+        alert_id = "e" * 32
+        metadata = self.uploader.alarm_dir / f"{alert_id}.json"
+        with self.assertRaises(ValueError):
+            self.uploader._alarm_snapshot_path(
+                metadata,
+                {"alert_id": alert_id, "image": "../../outside.jpg"},
+            )
+
     def test_clear_rejects_unknown_queue(self):
         with self.assertRaises(ValueError):
             self.uploader.clear_pending_queue("everything")

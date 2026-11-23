@@ -178,6 +178,8 @@ class AdaptiveInferencePool:
         self.started = False
         self._restart_at = [0.0 for _ in range(self.worker_count)]
         self._restart_delay = [1.0 for _ in range(self.worker_count)]
+        self._inflight_by_worker: dict[int, int] = {}
+        self._pending_failures: list[dict] = []
 
     def _spawn_worker(self, worker_id: int) -> None:
         process = self.context.Process(
@@ -209,6 +211,17 @@ class AdaptiveInferencePool:
 
             self.ready_workers.discard(worker_id)
             self.scheduler.mark_failed(worker_id)
+            failed_sequence = self._inflight_by_worker.pop(worker_id, None)
+            if failed_sequence is not None:
+                self._pending_failures.append({
+                    "kind": "result",
+                    "worker_id": worker_id,
+                    "frame_sequence": failed_sequence,
+                    "frame_timestamp": 0.0,
+                    "elapsed_seconds": 0.0,
+                    "detections": [],
+                    "error": "YOLO worker process exited unexpectedly; frame was discarded",
+                })
             try:
                 process.join(timeout=0)
             except Exception:
@@ -284,7 +297,6 @@ class AdaptiveInferencePool:
     def submit(self, frame, frame_sequence: int, frame_timestamp: float, confidence: float) -> int | None:
         if not self.started:
             return None
-        self._restart_dead_workers()
         available = [
             index for index, process in enumerate(self.processes)
             if index in self.ready_workers
@@ -312,11 +324,13 @@ class AdaptiveInferencePool:
             return []
         self._restart_dead_workers()
         results = []
+        messages = list(self._pending_failures)
+        self._pending_failures.clear()
         try:
             first = self.result_queue.get(timeout=max(0.0, timeout)) if timeout else self.result_queue.get_nowait()
-            messages = [first]
+            messages.append(first)
         except queue.Empty:
-            messages = []
+            pass
 
         while True:
             try:
@@ -340,6 +354,7 @@ class AdaptiveInferencePool:
                 continue
 
             elapsed = float(message.get("elapsed_seconds", 0.0))
+            self._inflight_by_worker.pop(worker_id, None)
             self.scheduler.mark_completed(worker_id, elapsed)
             error = str(message.get("error", ""))
             if error:
@@ -394,5 +409,7 @@ class AdaptiveInferencePool:
         self.task_queues.clear()
         self.processes.clear()
         self.ready_workers.clear()
+        self._inflight_by_worker.clear()
+        self._pending_failures.clear()
         self.result_queue = None
         self.started = False

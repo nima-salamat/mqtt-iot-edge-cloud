@@ -464,16 +464,21 @@ class CameraPipeline:
                 log.info("Local video recording resumed; RTSPS live output was not restarted")
             else:
                 old_marker = self._current_marker
-                # The current MP4 is finalized at the next keyframe. The live
-                # H.264 output and camera capture are left untouched.
+                old_segment = self._current_segment
+                # Detach only the local MP4 writer at the next keyframe. The
+                # partial segment is discarded so pressing Stop creates no
+                # final video item in the upload queue. Camera, YOLO and RTSPS
+                # remain active and receive every subsequent frame.
                 self.local_output.switch_output(None)
                 if old_marker:
                     old_marker.unlink(missing_ok=True)
+                if old_segment:
+                    old_segment.unlink(missing_ok=True)
                 self._current_segment = None
                 self._current_marker = None
                 self.recording_enabled = False
                 self.settings_store.update({"recording_enabled": False})
-                log.info("Local video recording paused; camera and RTSPS remain live")
+                log.info("Local recording paused; partial segment discarded; video uploader paused")
 
         return {"recording_enabled": self.recording_enabled}
 

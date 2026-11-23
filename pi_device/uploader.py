@@ -234,7 +234,7 @@ class DurableUploader:
             json=payload,
             timeout=(5, 15),
         )
-        response.raise_for_status()
+        self._check_response(response)
         self._last_heartbeat_monotonic = time.monotonic()
         self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
 
@@ -263,7 +263,7 @@ class DurableUploader:
                                 files={"snapshot": (image_path.name, image_file, "image/jpeg")},
                                 timeout=(10, 60),
                             )
-                        response.raise_for_status()
+                        self._check_response(response)
                         uploaded_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
                     if not published_marker.exists():
                         event = {
@@ -303,7 +303,7 @@ class DurableUploader:
                         json=payload,
                         timeout=(5, 20),
                     )
-                    response.raise_for_status()
+                    self._check_response(response)
                     archive_target = self.log_archive_dir / path.name
                     path.replace(archive_target)
                 except requests.RequestException as exc:
@@ -354,7 +354,7 @@ class DurableUploader:
                         files={"file": (path.name, handle, "video/mp4")},
                         timeout=(15, 180),
                     )
-                response.raise_for_status()
+                self._check_response(response)
                 path.with_suffix(".uploaded").write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
                 self.uploaded_segments += 1
                 self.last_upload_at = datetime.now(timezone.utc).isoformat()

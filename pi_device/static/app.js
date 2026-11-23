@@ -3,6 +3,40 @@
   const $ = (id) => document.getElementById(id);
   const text = (id, value) => { const node = $(id); if (node) node.textContent = value ?? '—'; };
   const boolLabel = (value) => value ? 'متصل' : 'قطع';
+
+  function badgeText(id, value) {
+    const node = $(id);
+    if (!node) return;
+    const indicator = node.querySelector('i');
+    if (indicator) node.replaceChildren(indicator, document.createTextNode(' ' + value));
+    else node.textContent = value;
+  }
+
+  function askConfirmation(title, message, acceptLabel = 'ادامه') {
+    const dialog = $('confirm-dialog');
+    if (!dialog || typeof dialog.showModal !== 'function') {
+      return Promise.resolve(window.confirm(title + '\n\n' + message));
+    }
+    return new Promise((resolve) => {
+      const accept = $('confirm-accept');
+      const cancel = $('confirm-cancel');
+      $('confirm-title').textContent = title;
+      $('confirm-message').textContent = message;
+      accept.textContent = acceptLabel;
+      let settled = false;
+      const finish = (approved) => {
+        if (settled) return;
+        settled = true;
+        resolve(approved);
+      };
+      dialog.addEventListener('close', () => {
+        finish(dialog.returnValue === 'confirm');
+      }, {once: true});
+      accept.onclick = () => dialog.close('confirm');
+      cancel.onclick = () => dialog.close('cancel');
+      dialog.showModal();
+    });
+  }
   const timeLabel = (value) => {
     if (!value) return '—';
     const date = new Date(value);
@@ -150,6 +184,50 @@
       if (!response.ok) throw new Error('دریافت وضعیت دستگاه ناموفق بود.');
       const state = await response.json();
       const mqtt = state.mqtt || {};
+      const system = state.system || {};
+      const temperature = system.temperature_c === null || system.temperature_c === undefined
+        ? null : Number(system.temperature_c);
+      const memory = system.memory || {};
+      const storage = system.storage || {};
+
+      if (temperature !== null && Number.isFinite(temperature)) {
+        text('system-temperature', temperature.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + '°C');
+        text('system-temperature-note', temperature >= 80
+          ? 'دمای بالا؛ خنک‌کاری و محل نصب را بررسی کن'
+          : (temperature >= 70 ? 'دمای دستگاه نسبتاً بالا است' : 'دمای فعلی پردازنده'));
+      } else {
+        text('system-temperature', 'ناموجود');
+        text('system-temperature-note', 'حسگر دما در دسترس نیست');
+      }
+      const temperatureCard = $('system-temperature')?.closest('.metric-card');
+      if (temperatureCard) temperatureCard.classList.toggle('is-warning', temperature !== null && temperature >= 75);
+
+      if (Number.isFinite(Number(memory.total_bytes)) && Number(memory.total_bytes) > 0) {
+        text('memory-usage', formatBytes(memory.used_bytes) + ' / ' + formatBytes(memory.total_bytes));
+        text('memory-usage-note', formatBytes(memory.available_bytes) + ' RAM آزاد · ' +
+          Number(memory.used_percent || 0).toLocaleString('fa-IR', {maximumFractionDigits: 0}) + '٪ مصرف');
+      } else {
+        text('memory-usage', 'ناموجود');
+        text('memory-usage-note', 'اطلاعات حافظه در دسترس نیست');
+      }
+      const memoryCard = $('memory-usage')?.closest('.metric-card');
+      if (memoryCard) memoryCard.classList.toggle('is-warning', Number(memory.used_percent) >= 90);
+
+      if (Number.isFinite(Number(storage.total_bytes)) && Number(storage.total_bytes) > 0) {
+        const usedPercent = Math.max(0, Math.min(100, Number(storage.used_percent) || 0));
+        text('storage-usage', formatBytes(storage.free_bytes) + ' آزاد');
+        text('storage-usage-note', formatBytes(storage.used_bytes) + ' از ' + formatBytes(storage.total_bytes) +
+          ' استفاده شده · ' + usedPercent.toLocaleString('fa-IR', {maximumFractionDigits: 0}) + '٪');
+        const progress = $('storage-progress');
+        if (progress) progress.style.width = usedPercent + '%';
+      } else {
+        text('storage-usage', 'ناموجود');
+        text('storage-usage-note', 'اطلاعات فضای ذخیره‌سازی در دسترس نیست');
+        if ($('storage-progress')) $('storage-progress').style.width = '0%';
+      }
+      const storageCard = $('storage-usage')?.closest('.metric-card');
+      if (storageCard) storageCard.classList.toggle('is-warning', Number(storage.used_percent) >= 90);
+
       const cameraOnline = !!state.camera_ready && !!state.preview_ready;
       const status = $('camera-status');
       status.classList.toggle('online', cameraOnline);
@@ -201,6 +279,7 @@
       text('pending-videos', state.pending_video_segments ?? 0);
       text('last-upload', timeLabel(state.last_upload_at));
       const pairingStatus = state.pairing_status || 'نامشخص';
+      document.querySelector('.pair-card')?.classList.toggle('is-paired', pairingStatus === 'paired');
       const pairingLabels = {
         not_paired: 'دستگاه هنوز به حسابی متصل نشده است.',
         scanning: 'در حال اسکن QR؛ اگر تا پایان مهلت تشخیص داده نشد، کد را دستی وارد کن.',
@@ -216,24 +295,61 @@
       refreshQueueCards(state.queues || {});
       text('model-error', state.model_error || state.camera_error || '—');
       text('upload-error', state.last_upload_error || '—');
-      text('preview-status', state.preview_ready ? 'تصویر زنده در دسترس است' : 'در انتظار فریم دوربین');
+      badgeText('preview-status', state.preview_ready ? 'تصویر زنده در دسترس است' : 'در انتظار فریم دوربین');
       const errors = $('camera-errors');
       const messages = [state.camera_error, state.model_error, state.rtsp_error].filter(Boolean);
       errors.hidden = messages.length === 0;
       errors.textContent = messages.join(' · ');
     } catch (error) {
-      text('camera-status', 'عدم دسترسی به عامل محلی');
+      badgeText('camera-status', 'عدم دسترسی به عامل محلی');
       text('preview-status', error.message);
     }
   }
+
+  const previewImage = $('camera-preview');
+  const previewFrame = document.querySelector('.preview-frame');
+  const reconnectButton = $('preview-reconnect');
+  const fullscreenButton = $('preview-fullscreen');
+
+  reconnectButton?.addEventListener('click', () => {
+    if (!previewImage) return;
+    const source = previewImage.dataset.previewUrl || previewImage.src.split('?')[0];
+    previewImage.src = source + '?refresh=' + Date.now();
+    badgeText('preview-status', 'در حال بازیابی تصویر زنده…');
+  });
+
+  if (fullscreenButton && (!previewFrame || !previewFrame.requestFullscreen)) {
+    fullscreenButton.disabled = true;
+    fullscreenButton.title = 'تمام‌صفحه در این مرورگر پشتیبانی نمی‌شود';
+  }
+  fullscreenButton?.addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await previewFrame.requestFullscreen();
+    } catch (error) {
+      badgeText('preview-status', 'نمایش تمام‌صفحه در دسترس نیست');
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    if (fullscreenButton) fullscreenButton.textContent =
+      document.fullscreenElement === previewFrame ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه';
+  });
+
+  function updatePreviewClock() {
+    text('preview-clock', new Date().toLocaleTimeString('fa-IR'));
+  }
+  updatePreviewClock();
+  window.setInterval(updatePreviewClock, 1000);
 
   $('toggle-recording').addEventListener('click', async () => {
     const button = $('toggle-recording');
     const current = button.getAttribute('aria-pressed') === 'true';
     const enabled = !current;
-    if (current && !window.confirm(
-      'ضبط ویدئو متوقف می‌شود و قطعه نیمه‌تمام حذف خواهد شد. دوربین زنده و YOLO روشن می‌مانند. ادامه می‌دهی؟'
-    )) return;
+    if (current && !(await askConfirmation(
+      'توقف ضبط ویدئو',
+      'ضبط ویدئو متوقف می‌شود و قطعه نیمه‌تمام حذف خواهد شد. تصویر زنده، تشخیص YOLO و ارسال هشدارها فعال می‌مانند.',
+      'توقف ضبط'
+    ))) return;
     button.dataset.busy = '1';
     button.disabled = true;
     text('recording-status', enabled ? 'در حال شروع ضبط…' : 'در حال توقف ضبط در مرز فریم کلیدی…');
@@ -310,17 +426,66 @@
     }
   });
 
-  $('settings-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = Object.fromEntries(new FormData(form).entries());
-    for (const key of Object.keys(data)) {
-      const input = form.elements.namedItem(key);
-      data[key] = input.step === '0.01' ? Number(data[key]) : Number.parseInt(data[key], 10);
+  const settingsForm = $('settings-form');
+  const settingsSaveButton = settingsForm.querySelector('button[type=submit]');
+  const settingsDiscardButton = $('settings-discard');
+  const confidenceInput = $('alert-confidence');
+  const confidenceOutput = $('confidence-output');
+  let savedSettings = captureSettings();
+  let savingSettings = false;
+
+  function captureSettings() {
+    return Object.fromEntries(
+      Array.from(settingsForm.querySelectorAll('[name]')).map(input => [input.name, input.value])
+    );
+  }
+
+  function updateConfidenceOutput() {
+    if (confidenceInput && confidenceOutput) {
+      confidenceOutput.textContent = Math.round(Number(confidenceInput.value) * 100).toLocaleString('fa-IR') + '٪';
     }
-    const button = form.querySelector('button[type=submit]');
-    button.disabled = true;
-    text('settings-result', 'در حال ذخیره…');
+  }
+
+  function updateSettingsDirty() {
+    const current = captureSettings();
+    const dirty = Object.keys(savedSettings).some(key => current[key] !== savedSettings[key]);
+    text('settings-dirty', dirty ? 'تغییرات ذخیره‌نشده داری' : 'همه تنظیمات ذخیره‌اند');
+    settingsSaveButton.disabled = !dirty || savingSettings;
+    settingsDiscardButton.disabled = !dirty || savingSettings;
+    settingsForm.classList.toggle('has-unsaved-changes', dirty);
+  }
+
+  settingsForm.addEventListener('input', () => {
+    updateConfidenceOutput();
+    updateSettingsDirty();
+  });
+  settingsDiscardButton.addEventListener('click', () => {
+    for (const [key, value] of Object.entries(savedSettings)) {
+      const input = settingsForm.elements.namedItem(key);
+      if (input) input.value = value;
+    }
+    updateConfidenceOutput();
+    text('settings-result', 'تغییرات فرم لغو شد.');
+    text('settings-restart-hint', 'مقادیر ذخیره‌شده دوباره بارگذاری شدند.');
+    updateSettingsDirty();
+  });
+  updateConfidenceOutput();
+  updateSettingsDirty();
+
+  settingsForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!settingsForm.reportValidity()) return;
+    const data = Object.fromEntries(new FormData(settingsForm).entries());
+    for (const key of Object.keys(data)) {
+      const input = settingsForm.elements.namedItem(key);
+      data[key] = input.type === 'range' || input.step === '0.01'
+        ? Number(data[key])
+        : Number.parseInt(data[key], 10);
+    }
+
+    savingSettings = true;
+    updateSettingsDirty();
+    text('settings-result', 'در حال ذخیره تنظیمات…');
     try {
       const response = await fetch('/api/settings/', {
         method: 'POST',
@@ -329,17 +494,34 @@
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'ذخیره تنظیمات ناموفق بود.');
-      text('settings-result', result.restart_required?.length
-        ? 'ذخیره شد؛ برای اعمال نرخ فریم، بیت‌ریت، تعداد پردازه‌های YOLO یا قطعه‌بندی، سرویس را راه‌اندازی مجدد کن.'
-        : 'تنظیمات ذخیره شد.');
+
       for (const [key, value] of Object.entries(result.settings || {})) {
-        const input = form.elements.namedItem(key);
-        if (input && document.activeElement !== input) input.value = value;
+        const input = settingsForm.elements.namedItem(key);
+        if (input) input.value = value;
+      }
+      savedSettings = captureSettings();
+      updateConfidenceOutput();
+
+      const restartLabels = {
+        video_fps: 'نرخ فریم ویدئو',
+        video_bitrate: 'بیت‌ریت ویدئو',
+        segment_seconds: 'مدت قطعه ویدئو',
+        inference_workers: 'تعداد پردازه‌های YOLO'
+      };
+      const restartItems = (result.restart_required || []).map(key => restartLabels[key] || key);
+      if (restartItems.length) {
+        text('settings-result', 'تنظیمات ذخیره شد.');
+        text('settings-restart-hint', 'برای اعمال ' + restartItems.join('، ') +
+          ' سرویس را با دستور sudo systemctl restart mqtt-iot-pi راه‌اندازی مجدد کن.');
+      } else {
+        text('settings-result', 'تنظیمات با موفقیت ذخیره شدند.');
+        text('settings-restart-hint', 'همه تغییرات قابل اعمال بدون راه‌اندازی مجدد هستند.');
       }
     } catch (error) {
       text('settings-result', error.message);
     } finally {
-      button.disabled = false;
+      savingSettings = false;
+      updateSettingsDirty();
       refreshState();
     }
   });
@@ -353,9 +535,11 @@
         logs: 'لاگ‌هایی که هنوز به سرور ارسال نشده‌اند'
       };
       if (!labels[queue]) return;
-      const approved = window.confirm(
-        'پاک‌سازی غیرقابل‌بازگشت است.\n' + labels[queue] +
-        ' از حافظه Raspberry Pi حذف می‌شوند.\nادامه می‌دهی؟'
+      const approved = await askConfirmation(
+        'پاک‌سازی صف ارسال',
+        'این عملیات غیرقابل‌بازگشت است. ' + labels[queue] +
+          ' از حافظه Raspberry Pi حذف می‌شوند. فایل‌های ارسال‌شده و در حال ضبط حذف نمی‌شوند.',
+        'حذف موارد'
       );
       if (!approved) return;
 

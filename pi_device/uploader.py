@@ -233,7 +233,11 @@ class DurableUploader:
         for path in self._sorted_queue_files(self.video_dir, "*.mp4"):
             if self._stop.is_set():
                 return
+            if self.settings_store is not None and not self.settings_store.get().get("recording_enabled", True):
+                return
             with self._queue_lock:
+                if self.settings_store is not None and not self.settings_store.get().get("recording_enabled", True):
+                    return
                 if not path.is_file() or path.is_symlink():
                     continue
                 if path.with_suffix(".open").exists() or path.with_suffix(".uploaded").exists():

@@ -71,7 +71,7 @@
           aria-pressed="{{ 'true' if settings.recording_enabled else 'false' }}"
         >{% if settings.recording_enabled %}توقف ضبط{% else %}شروع ضبط{% endif %}</button>
       </div>
-      <p class="hint">این پیش‌نمایش از همان فریم‌های دوربین ساخته می‌شود؛ کدگذاری ویدئوی اصلی با H.264 و شتاب‌دهنده سخت‌افزاری Pi انجام می‌شود.</p>
+      <p class="hint" id="camera-capability-note">پیش‌نمایش از جریان اصلی دوربین و با وضوح کامل ساخته می‌شود؛ تشخیص YOLO از جریان سبک‌تر جداگانه استفاده می‌کند.</p>
       <div class="camera-errors" id="camera-errors" hidden></div>
     </article>
 
@@ -80,6 +80,9 @@
       <div class="status-list">
         <div><span>اتصال MQTT</span><b id="mqtt-status">در حال بررسی</b></div>
         <div><span>اتصال زنده RTSPS</span><b id="rtsp-health">در حال بررسی</b></div>
+        <div><span>مدل و منبع دوربین</span><b id="camera-source-status">در حال بررسی</b></div>
+        <div><span>وضوح پیش‌نمایش</span><b id="camera-resolution-status">در حال بررسی</b></div>
+        <div><span>حداکثر FPS سنسور</span><b id="camera-max-fps">در حال بررسی</b></div>
         <div><span>Heartbeat سرور</span><b id="heartbeat-status">در انتظار</b></div>
         <div><span>تصاویر هشدار در صف</span><b id="pending-alarms">0</b></div>
         <div><span>قطعه‌های ویدئو در صف</span><b id="pending-videos">0</b></div>
@@ -158,12 +161,32 @@
         <details class="settings-group" open>
           <summary>
             <span><b>تصویر و ضبط ویدئو</b><small>کیفیت استریم، نرخ فریم و مدیریت فایل‌های ویدئویی</small></span>
-            <span class="group-count">۴ تنظیم</span>
+            <span class="group-count">۷ تنظیم</span>
           </summary>
           <div class="settings-grid">
-            <label>نرخ فریم ویدئو
-              <input name="video_fps" type="number" min="5" max="30" step="1" inputmode="numeric" required value="{{ settings.video_fps }}">
-              <small>۵ تا ۳۰ FPS؛ تغییر این گزینه به راه‌اندازی مجدد سرویس نیاز دارد.</small>
+            <label>نوع دوربین
+              <select name="camera_backend">
+                <option value="picamera2" {% if settings.camera_backend == 'picamera2' %}selected{% endif %}>Raspberry Pi CSI / Picamera2</option>
+                <option value="opencv" {% if settings.camera_backend == 'opencv' %}selected{% endif %}>USB / UVC / V4L2 / OpenCV</option>
+              </select>
+              <small>Picamera2 برای دوربین CSI و ضبط H.264 سخت‌افزاری؛ OpenCV برای وب‌کم USB و منابع ویدئویی شبکه.</small>
+            </label>
+            <label>شماره یا آدرس دوربین
+              <input name="camera_source" type="text" list="camera-sources" dir="ltr" autocomplete="off" maxlength="2048" value="{{ settings.camera_source }}">
+              <datalist id="camera-sources"></datalist>
+              <button class="utility-btn" id="camera-discover" type="button">جست‌وجوی دوربین‌ها</button>
+              <small>Picamera2: شماره دوربین مثل ۰؛ OpenCV: مثل /dev/video0، شماره ۰ یا نشانی RTSP/HTTP.</small>
+            </label>
+            <label>انتخاب نرخ فریم
+              <select name="video_fps_auto">
+                <option value="true" {% if settings.video_fps_auto %}selected{% endif %}>خودکار؛ سریع‌ترین mode سازگار سنسور</option>
+                <option value="false" {% if not settings.video_fps_auto %}selected{% endif %}>دستی؛ نرخ درخواستی</option>
+              </select>
+              <small>در حالت خودکار، Picamera2 فهرست modeهای سنسور را می‌خواند و سریع‌ترین حالت سازگار با وضوح انتخابی را فعال می‌کند.</small>
+            </label>
+            <label>نرخ فریم در حالت دستی
+              <input name="video_fps" type="number" min="1" max="120" step="1" inputmode="numeric" required value="{{ settings.video_fps }}">
+              <small>۱ تا ۱۲۰ FPS؛ مقدار واقعی با توجه به قابلیت سنسور و اندازه‌گیری فریم‌های دریافتی نمایش داده می‌شود.</small>
             </label>
             <label>بیت‌ریت H.264 (بیت بر ثانیه)
               <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" inputmode="numeric" required value="{{ settings.video_bitrate }}">
@@ -187,12 +210,12 @@
           </summary>
           <div class="settings-grid">
             <label>حداکثر نرخ نمونه‌برداری YOLO
-              <input name="inference_fps" type="number" min="1" max="10" step="1" inputmode="numeric" required value="{{ settings.inference_fps }}">
-              <small>حداکثر فریم ورودی مدل در هر ثانیه؛ FPS واقعی بر اساس نتایج تکمیل‌شده اندازه‌گیری می‌شود.</small>
+              <input name="inference_fps" type="number" min="1" max="60" step="1" inputmode="numeric" required value="{{ settings.inference_fps }}">
+              <small>۱ تا ۶۰ FPS درخواستی؛ نرخ واقعی با ظرفیت اندازه‌گیری‌شده Workerها، دما و بار CPU محدود می‌شود.</small>
             </label>
             <label>تعداد پردازه‌های YOLO
-              <input name="inference_workers" type="number" min="1" max="3" step="1" inputmode="numeric" required value="{{ settings.inference_workers }}">
-              <small>۱ تا ۳ مدل مستقل. هر Worker حافظه و CPU جداگانه مصرف می‌کند؛ روی Pi 4 تعداد بیشتر الزاماً سریع‌تر نیست. نیازمند راه‌اندازی مجدد.</small>
+              <input name="inference_workers" type="number" min="1" max="8" step="1" inputmode="numeric" required value="{{ settings.inference_workers }}">
+              <small>۱ تا ۸ پردازه مستقل. هر پردازه یک مدل جدا و RAM بیشتری مصرف می‌کند؛ روی Pi 4 افزایش Worker ممکن است سرعت را کم یا باعث کمبود حافظه شود. نیازمند راه‌اندازی مجدد.</small>
             </label>
             <label class="setting-range">آستانه اطمینان تشخیص انسان
               <span class="range-value"><output id="confidence-output" for="alert-confidence">{{ (settings.alert_confidence * 100)|round|int }}٪</output></span>

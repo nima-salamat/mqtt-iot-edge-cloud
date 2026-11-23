@@ -405,7 +405,12 @@ class CameraPipeline:
                 self.settings_store.get().get("recording_enabled", self.recording_enabled)
             )
             self.recording_enabled = desired_recording
-            self.set_recording_enabled(desired_recording)
+            try:
+                self.set_recording_enabled(desired_recording)
+            except Exception:
+                # A keyframe transition failure must not prevent the camera,
+                # preview or live RTSPS output from starting.
+                log.exception("Could not reconcile local recording state during camera startup")
 
         self.live_output.start()
 

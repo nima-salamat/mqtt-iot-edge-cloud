@@ -5,6 +5,18 @@ if [ ! -f .env ]; then
   echo "Copy .env.example to .env and set the secrets first." >&2
   exit 1
 fi
+
+set -a
+. ./.env
+set +a
+PROXY_MODE="${PROXY_MODE:-traefik-swarm}"
+
+# The host-Nginx Compose path uses host certificate paths, so it does not
+# require the legacy ./certs/fullchain.pem and ./certs/privkey.pem files.
+if [ "$PROXY_MODE" = "compose-nginx" ]; then
+  exec ./scripts/deploy_compose_nginx.sh
+fi
+
 if grep -Eq 'REPLACE_|YOUR_|CHANGE_ME' .env; then
   echo "One or more placeholder values remain in .env." >&2
   exit 1
@@ -14,11 +26,6 @@ if [ ! -s certs/fullchain.pem ] || [ ! -s certs/privkey.pem ]; then
   echo "See certs/README.md. Do not commit the private key." >&2
   exit 1
 fi
-
-set -a
-. ./.env
-set +a
-PROXY_MODE="${PROXY_MODE:-traefik-swarm}"
 
 case "$PROXY_MODE" in
   traefik-swarm)
@@ -38,7 +45,7 @@ case "$PROXY_MODE" in
     docker compose --profile standalone up -d --build
     ;;
   *)
-    echo "Unsupported PROXY_MODE='$PROXY_MODE'. Use traefik-swarm, traefik-compose or standalone." >&2
+    echo "Unsupported PROXY_MODE='$PROXY_MODE'. Use compose-nginx, traefik-swarm, traefik-compose or standalone." >&2
     exit 1
     ;;
 esac

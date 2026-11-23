@@ -18,6 +18,7 @@ from waitress import serve
 from .bridge import RaspberryPiMqttBridge
 from .camera import CameraPipeline
 from .settings_store import SettingsStore
+from .system_stats import collect_system_stats
 from .uploader import DurableUploader
 
 logging.basicConfig(
@@ -129,6 +130,7 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
     @authenticated
     def api_state():
         state = camera.snapshot()
+        state["system"] = collect_system_stats(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot"))
         state["mqtt"] = bridge.snapshot()
         state["last_upload_at"] = uploader.last_upload_at
         state["last_heartbeat_at"] = uploader.last_heartbeat_at

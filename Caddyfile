@@ -1,0 +1,14 @@
+{$DOMAIN} {
+    encode zstd gzip
+
+    # MQTT over secure WebSockets. Preserve /mqtt for the Mosquitto listener.
+    @mqtt path /mqtt*
+    handle @mqtt {
+        reverse_proxy broker:9001
+    }
+
+    # Django dashboard and API are the default route.
+    handle {
+        reverse_proxy web:8000
+    }
+}

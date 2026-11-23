@@ -1,0 +1,42 @@
+# Optional integration for an already-running Traefik Docker provider.
+# Set TRAEFIK_NETWORK, TRAEFIK_ENTRYPOINT and TRAEFIK_CERT_RESOLVER in .env.
+services:
+  broker:
+    networks:
+      - mqtt-internal
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
+      - "traefik.http.routers.mqtt-iot-ws.rule=Host(`${DOMAIN:-server.echonode.website}`) && PathPrefix(`/mqtt`)"
+      - "traefik.http.routers.mqtt-iot-ws.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.mqtt-iot-ws.priority=100"
+      - "traefik.http.routers.mqtt-iot-ws.tls=true"
+      - "traefik.http.routers.mqtt-iot-ws.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.mqtt-iot-ws.service=mqtt-iot-ws"
+      - "traefik.http.services.mqtt-iot-ws.loadbalancer.server.port=9001"
+
+  web:
+    networks:
+      - mqtt-internal
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
+      - "traefik.http.routers.mqtt-iot-dashboard.rule=Host(`${DOMAIN:-server.echonode.website}`) && !PathPrefix(`/mqtt`)"
+      - "traefik.http.routers.mqtt-iot-dashboard.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.mqtt-iot-dashboard.priority=10"
+      - "traefik.http.routers.mqtt-iot-dashboard.tls=true"
+      - "traefik.http.routers.mqtt-iot-dashboard.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.mqtt-iot-dashboard.service=mqtt-iot-dashboard"
+      - "traefik.http.services.mqtt-iot-dashboard.loadbalancer.server.port=8000"
+      - "traefik.http.routers.mqtt-iot-http.rule=Host(`${DOMAIN:-server.echonode.website}`)"
+      - "traefik.http.routers.mqtt-iot-http.entrypoints=web"
+      - "traefik.http.routers.mqtt-iot-http.middlewares=mqtt-iot-https-redirect"
+      - "traefik.http.routers.mqtt-iot-http.service=mqtt-iot-dashboard"
+      - "traefik.http.middlewares.mqtt-iot-https-redirect.redirectscheme.scheme=https"
+
+networks:
+  traefik-public:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik-public}

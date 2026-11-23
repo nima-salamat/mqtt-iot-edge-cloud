@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csrf-token" content="{{ csrf_token }}"><title>Raspberry Pi 4 | MQTT Device</title><link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"></head>
+<body>
+  <div class="page-shell">
+    <header class="topbar"><div class="brand"><div class="brand-mark">Pi</div><div><b>Raspberry Pi 4</b><small>LOCAL MQTT DEVICE · {{ device_id }}</small></div></div><form action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="logout" type="submit">خروج</button></form></header>
+    <main>
+      <section class="intro"><span class="eyebrow">IOT DEVICE CONTROL PANEL</span><h1>پنل محلی <em>رزبری‌پای</em></h1><p>این وب‌سایت روی خود Raspberry Pi اجرا می‌شود. هر پیامی که ارسال کنی از طریق MQTT امن به Broker روی VPS می‌رود و در داشبورد مرکزی ثبت می‌شود.</p></section>
+      <section class="status-grid">
+        <article class="status-card"><span>اتصال به VPS</span><strong id="connection-status">در حال اتصال…</strong><small id="connection-detail">{{ 'server.echonode.website' }}</small></article>
+        <article class="status-card"><span>وضعیت خروجی</span><strong id="output-status">خاموش</strong><small id="gpio-detail">خروجی نرم‌افزاری</small></article>
+        <article class="status-card"><span>آخرین ارسال</span><strong id="last-publish">—</strong><small>MQTT QoS 1</small></article>
+      </section>
+      <section class="main-grid">
+        <article class="panel send-panel"><span class="eyebrow">PUBLISH MESSAGE</span><h2>ارسال پیام به سرور مرکزی</h2><p>یک متن دلخواه بنویس و دکمه ارسال را بزن. پیام در Topic اختصاصی این دستگاه منتشر می‌شود.</p><label for="message-input">متن پیام</label><textarea id="message-input" maxlength="500" rows="4" placeholder="مثلاً: سلام سرور، این پیام از Raspberry Pi 4 ارسال شده است."></textarea><div class="input-foot"><small>حداکثر ۵۰۰ نویسه</small><button id="send-message" class="primary">ارسال پیام به VPS <span>←</span></button></div><div class="topic"><span>MQTT TOPIC</span><code>iotlab/devices/raspberry-pi-01/events</code></div></article>
+        <article class="panel sample-panel"><span class="eyebrow">SENSOR TELEMETRY</span><h2>ارسال داده سنسور آزمایشی</h2><p>برای نمایش داده‌های IoT یک نمونه دما و رطوبت تولید و به سرور ارسال کن. در این نسخه سنسور فیزیکی لازم نیست.</p><div class="sample-visual"><div><span>دما</span><strong id="sample-temperature">—<small>°C</small></strong></div><div><span>رطوبت</span><strong id="sample-humidity">—<small>%</small></strong></div></div><button id="send-sample" class="secondary">تولید و ارسال نمونه</button><div class="topic"><span>MQTT TOPIC</span><code>iotlab/devices/raspberry-pi-01/telemetry</code></div></article>
+      </section>
+      <section class="panel output-panel"><div><span class="eyebrow">GPIO OUTPUT · OPTIONAL HARDWARE</span><h2>خروجی رزبری‌پای</h2><p>می‌توانی خروجی را از سایت محلی تغییر بدهی یا از داشبورد VPS فرمان بفرستی. با فعال‌سازی GPIO، LED متصل به پایه GPIO17 نیز روشن و خاموش می‌شود.</p></div><div class="output-actions"><button id="local-on" class="on">روشن کردن LED</button><button id="local-off" class="off">خاموش کردن LED</button></div></section>
+      <section class="panel log-panel"><div class="log-heading"><div><span class="eyebrow">DEVICE ACTIVITY</span><h2>رویدادهای دستگاه</h2></div><span class="live-mark"><i></i> LIVE</span></div><div id="activity-list" class="activity-list"><div class="empty">هنوز رویدادی ثبت نشده است.</div></div></section>
+      <footer>Raspberry Pi Local Site · MQTT over WSS · Connected to server.echonode.website</footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body></html>

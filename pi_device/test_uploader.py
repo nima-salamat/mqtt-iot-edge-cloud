@@ -114,6 +114,43 @@ class QueueManagementTests(unittest.TestCase):
         self.assertFalse(pending_log.exists())
         self.assertTrue(archived_log.exists())
 
+    def test_pending_video_upload_is_paused_when_recording_is_disabled(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        path = self.uploader.video_dir / "1234567890000-pending.mp4"
+        path.write_bytes(b"recorded-video")
+        self.uploader.settings_store = SimpleNamespace(
+            get=lambda: {"recording_enabled": False, "segment_seconds": 5}
+        )
+        self.uploader._session.post = Mock()
+
+        self.uploader._upload_segments()
+
+        self.uploader._session.post.assert_not_called()
+        self.assertTrue(path.exists())
+        self.assertFalse(path.with_suffix(".uploaded").exists())
+
+    def test_pending_video_upload_resumes_when_recording_is_enabled(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import time
+
+        path = self.uploader.video_dir / "1234567890000-pending.mp4"
+        path.write_bytes(b"recorded-video")
+        os.utime(path, (time.time() - 3, time.time() - 3))
+        self.uploader.settings_store = SimpleNamespace(
+            get=lambda: {"recording_enabled": True, "segment_seconds": 5}
+        )
+        response = Mock()
+        response.raise_for_status.return_value = None
+        self.uploader._session.post = Mock(return_value=response)
+
+        self.uploader._upload_segments()
+
+        self.uploader._session.post.assert_called_once()
+        self.assertTrue(path.with_suffix(".uploaded").exists())
+
     def test_alarm_snapshot_path_rejects_path_traversal(self):
         alert_id = "e" * 32
         metadata = self.uploader.alarm_dir / f"{alert_id}.json"

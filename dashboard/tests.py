@@ -281,6 +281,25 @@ class DeviceApiTests(TestCase):
         self.assertEqual(payload["video_fps"], 0)
         self.assertEqual(payload["inference_fps"], 0)
 
+    def test_dashboard_pages_render_with_malformed_cached_device_state(self):
+        self.device.current_state = {
+            "system": "not-an-object",
+            "memory": ["invalid"],
+            "mqtt_connected": "yes",
+            "tracking_seconds": "unknown",
+            "pending_alerts": [],
+        }
+        self.device.save(update_fields=["current_state"])
+        self.client.force_login(self.owner)
+
+        home_response = self.client.get(reverse("dashboard:home"))
+        detail_response = self.client.get(
+            reverse("dashboard:device-detail", args=[self.device.device_id])
+        )
+
+        self.assertEqual(home_response.status_code, 200)
+        self.assertEqual(detail_response.status_code, 200)
+
     def test_alarm_upload_rejects_non_finite_confidence_and_box_values(self):
         invalid_payloads = [
             ({

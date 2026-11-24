@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_state_number(value, default=0.0, minimum=0.0, maximum=1_000_000.0):
+    if isinstance(value, bool):
+        return default
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):

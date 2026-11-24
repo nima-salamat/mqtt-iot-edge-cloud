@@ -119,6 +119,9 @@ def _apply_telemetry(device, payload, now):
 
     state.update({
         "mqtt_connected": True,
+        "mqtt_command_subscription_ready": (
+            payload.get("mqtt_command_subscription_ready") is True
+        ),
         "telemetry_transport": "mqtt",
         "last_mqtt_telemetry_at": now.isoformat(),
         "last_device_reported_at": reported_at.isoformat(),

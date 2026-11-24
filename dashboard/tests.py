@@ -12,7 +12,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.urls import reverse
-from .models import Alarm, Device, DeviceLog, PairingRequest, RetentionPolicy, StreamGrant, VideoSegment
+from .models import Alarm, Device, DeviceCommand, DeviceLog, PairingRequest, RetentionPolicy, StreamGrant, VideoSegment
 
 User = get_user_model()
 

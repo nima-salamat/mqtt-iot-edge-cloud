@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import requests
 
+from .atomic_files import atomic_write_json, atomic_write_text
 from .system_stats import collect_system_stats
 
 log = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ class DurableUploader:
         self.alarm_dir = self.data_dir / "alarms"
         self.log_dir = self.data_dir / "logs"
         self.log_archive_dir = self.log_dir / "archive"
-        for folder in (self.video_dir, self.alarm_dir, self.log_dir, self.log_archive_dir):
+        self.quarantine_dir = self.data_dir / "quarantine"
+        for folder in (self.video_dir, self.alarm_dir, self.log_dir, self.log_archive_dir, self.quarantine_dir):
             folder.mkdir(parents=True, exist_ok=True)
         self._stop = threading.Event()
         self._thread = None
@@ -177,6 +179,74 @@ class DurableUploader:
             raise ValueError(f"Invalid or unsafe local alarm metadata: {meta_path.name}")
         return self.alarm_dir / f"{alert_id}.jpg"
 
+    def _quarantine_queue_file(self, path: Path, queue_name: str, reason: Exception) -> bool:
+        """Move an unreadable queue item (and alarm companions) out of the retry loop."""
+        if path.is_symlink() or not path.is_file():
+            return False
+
+        target_dir = self.quarantine_dir / queue_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        sources = [path]
+        if queue_name == "alarms":
+            sources.extend(
+                path.with_suffix(suffix)
+                for suffix in (".jpg", ".uploaded", ".published")
+            )
+
+        moved = []
+        for source in sources:
+            if source.is_symlink() or not source.is_file():
+                continue
+            destination = target_dir / source.name
+            if destination.exists():
+                destination = target_dir / f"{source.stem}.{time.time_ns()}{source.suffix}"
+            try:
+                source.replace(destination)
+                moved.append(destination.name)
+            except OSError:
+                log.exception("Could not quarantine queue file %s", source)
+
+        if path.name in moved:
+            reason_path = target_dir / f"{path.name}.reason.txt"
+            if reason_path.exists():
+                reason_path = target_dir / f"{path.stem}.{time.time_ns()}.reason.txt"
+            try:
+                atomic_write_text(
+                    reason_path,
+                    f"Quarantined at {datetime.now(timezone.utc).isoformat()}\\n"
+                    f"Reason: {type(reason).__name__}\\n",
+                )
+            except OSError:
+                log.exception("Could not write quarantine reason for %s", path.name)
+            log.warning(
+                "Quarantined malformed %s queue item %s; moved %d related file(s)",
+                queue_name, path.name, len(moved),
+            )
+            return True
+        return False
+
+    def _read_queue_json(self, path: Path, queue_name: str):
+        """Read one queue JSON object; quarantine permanently malformed files."""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            self._quarantine_queue_file(path, queue_name, exc)
+            return None
+
+        if not isinstance(payload, dict):
+            self._quarantine_queue_file(
+                path, queue_name, ValueError("Queue JSON root must be an object")
+            )
+            return None
+
+        if queue_name == "alarms":
+            try:
+                self._alarm_snapshot_path(path, payload)
+            except ValueError as exc:
+                self._quarantine_queue_file(path, queue_name, exc)
+                return None
+        return payload
+
     def _run(self):
         backoff = 2
         while not self._stop.is_set():
@@ -284,13 +354,7 @@ class DurableUploader:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.is_symlink():
             raise OSError("Refusing to replace a symlinked device credential file.")
-        temporary = target.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(credentials, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        os.chmod(temporary, 0o600)
-        temporary.replace(target)
+        atomic_write_json(target, credentials, indent=2)
         self.state_provider = lambda: credentials
         if self.bridge is not None and hasattr(self.bridge, "set_signing_key"):
             self.bridge.set_signing_key(signing_key)
@@ -305,7 +369,9 @@ class DurableUploader:
                 if not meta_path.is_file() or meta_path.is_symlink():
                     continue
                 try:
-                    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+                    payload = self._read_queue_json(meta_path, "alarms")
+                    if payload is None:
+                        continue
                     image_path = self._alarm_snapshot_path(meta_path, payload)
                     uploaded_marker = meta_path.with_suffix(".uploaded")
                     published_marker = meta_path.with_suffix(".published")
@@ -321,7 +387,7 @@ class DurableUploader:
                                 timeout=(10, 60),
                             )
                         self._check_response(response)
-                        uploaded_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+                        atomic_write_text(uploaded_marker, datetime.now(timezone.utc).isoformat())
                     if not published_marker.exists():
                         event = {
                             "device_id": self.device_id,
@@ -336,7 +402,7 @@ class DurableUploader:
                         if not self.bridge.publish_alarm(event):
                             self._stop.wait(1)
                             continue
-                        published_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+                        atomic_write_text(published_marker, datetime.now(timezone.utc).isoformat())
                     self.last_upload_at = datetime.now(timezone.utc).isoformat()
                 except requests.RequestException as exc:
                     self.last_upload_error = str(exc)
@@ -353,7 +419,9 @@ class DurableUploader:
                 if not path.is_file() or path.is_symlink():
                     continue
                 try:
-                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    payload = self._read_queue_json(path, "logs")
+                    if payload is None:
+                        continue
                     response = self._session.post(
                         f"{self.api_base}/api/device/logs/",
                         headers=self._headers(),
@@ -417,7 +485,7 @@ class DurableUploader:
                     self.last_video_upload_error = str(exc)[:500]
                     raise
                 uploaded_at = datetime.now(timezone.utc).isoformat()
-                path.with_suffix(".uploaded").write_text(uploaded_at, encoding="utf-8")
+                atomic_write_text(path.with_suffix(".uploaded"), uploaded_at)
                 self.uploaded_segments += 1
                 self.last_upload_at = uploaded_at
                 self.last_video_upload_at = uploaded_at
@@ -576,16 +644,22 @@ class DurableUploader:
             if meta_path.with_suffix(".published").exists():
                 continue
             try:
-                item = json.loads(meta_path.read_text(encoding="utf-8"))
+                item = self._read_queue_json(meta_path, "alarms")
+                if item is None:
+                    continue
                 image_path = self._alarm_snapshot_path(meta_path, item)
                 if image_path.is_file() and not image_path.is_symlink():
                     alarm_bytes += image_path.stat().st_size
-            except Exception:
+            except OSError:
                 log.exception("Could not inspect queued alarm %s", meta_path)
         alarm_queue_cap = max(128 * 1024 * 1024, max_bytes // 3)
         for meta_path in alarm_files:
+            if not meta_path.is_file() or meta_path.is_symlink():
+                continue
             try:
-                item = json.loads(meta_path.read_text(encoding="utf-8"))
+                item = self._read_queue_json(meta_path, "alarms")
+                if item is None:
+                    continue
                 image_path = self._alarm_snapshot_path(meta_path, item)
                 uploaded = meta_path.with_suffix(".uploaded").exists()
                 published = meta_path.with_suffix(".published").exists()
@@ -611,6 +685,8 @@ class DurableUploader:
 
         log_days = int(values["local_log_retention_days"])
         for path in self.log_dir.glob("*.json"):
+            if path.is_symlink() or not path.is_file():
+                continue
             if now - path.stat().st_mtime > queue_seconds:
                 path.unlink(missing_ok=True)
         for path in self.log_archive_dir.glob("*.json"):

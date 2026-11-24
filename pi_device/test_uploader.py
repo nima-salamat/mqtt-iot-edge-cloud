@@ -340,5 +340,66 @@ class QueueManagementTests(unittest.TestCase):
         bridge.set_signing_key.assert_called_once_with(signing_key)
 
 
+
+    def test_empty_alarm_metadata_is_quarantined_with_snapshot_and_markers(self):
+        from unittest.mock import Mock
+        from types import SimpleNamespace
+
+        alert_id = "a" * 32
+        meta = self.uploader.alarm_dir / f"{alert_id}.json"
+        image = self.uploader.alarm_dir / f"{alert_id}.jpg"
+        meta.write_bytes(b"")
+        image.write_bytes(b"partial-orphan-image")
+        meta.with_suffix(".uploaded").write_text("uploaded", encoding="utf-8")
+
+        self.uploader.bridge = SimpleNamespace(publish_alarm=Mock(return_value=True))
+        self.uploader._session.post = Mock()
+
+        self.uploader._upload_alarms()
+
+        quarantine = self.uploader.quarantine_dir / "alarms"
+        self.assertFalse(meta.exists())
+        self.assertFalse(image.exists())
+        self.assertFalse(meta.with_suffix(".uploaded").exists())
+        self.assertTrue((quarantine / meta.name).exists())
+        self.assertTrue((quarantine / image.name).exists())
+        self.assertTrue((quarantine / f"{meta.name}.reason.txt").exists())
+        self.uploader._session.post.assert_not_called()
+
+    def test_empty_log_is_quarantined_and_does_not_block_valid_logs(self):
+        from unittest.mock import Mock
+
+        broken = self.uploader.log_dir / "broken.json"
+        broken.write_bytes(b"")
+        good = self.uploader.log_dir / "valid.json"
+        good.write_text(json.dumps({"event_id": "valid", "message": "ok"}), encoding="utf-8")
+
+        response = Mock(status_code=200)
+        response.raise_for_status.return_value = None
+        self.uploader._session.post = Mock(return_value=response)
+
+        self.uploader._upload_logs()
+
+        quarantine = self.uploader.quarantine_dir / "logs"
+        self.assertFalse(broken.exists())
+        self.assertTrue((quarantine / broken.name).exists())
+        self.assertTrue((quarantine / f"{broken.name}.reason.txt").exists())
+        self.assertFalse(good.exists())
+        self.assertTrue((self.uploader.log_archive_dir / good.name).exists())
+        self.uploader._session.post.assert_called_once()
+
+    def test_atomic_json_write_leaves_complete_json_with_private_mode(self):
+        from pi_device.atomic_files import atomic_write_json
+
+        target = Path(self.temp_dir.name) / "atomic.json"
+        atomic_write_json(target, {"nested": {"ok": True}, "text": "سلام"})
+
+        self.assertEqual(
+            json.loads(target.read_text(encoding="utf-8")),
+            {"nested": {"ok": True}, "text": "سلام"},
+        )
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(list(Path(self.temp_dir.name).glob(".atomic.json.*.tmp")), [])
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ from pathlib import Path
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
+from .atomic_files import atomic_write_json
 from .mqtt_protocol import sign_payload, verify_payload
 
 log = logging.getLogger(__name__)
@@ -316,11 +317,8 @@ class RaspberryPiMqttBridge:
             "created_at": utc_now(),
         }
         target = self.log_dir / f"{record['event_id']}.json"
-        temporary = target.with_suffix(".tmp")
         try:
-            temporary.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
-            os.chmod(temporary, 0o600)
-            temporary.replace(target)
+            atomic_write_json(target, record)
         except OSError:
             log.exception("Could not queue local device log")
         getattr(log, record["level"], log.info)("%s %s", message, details or "")

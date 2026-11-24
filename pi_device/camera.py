@@ -22,6 +22,7 @@ try:
 except (ImportError, OSError):
     _zbar_decode = None
 
+from .atomic_files import atomic_write_bytes, atomic_write_json
 from .inference_pool import AdaptiveInferencePool
 from .camera_modes import parse_v4l2_modes, select_sensor_mode
 
@@ -1263,7 +1264,7 @@ class CameraPipeline:
         ok, encoded = cv2.imencode(".jpg", alarm_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         if not ok:
             return
-        image_path.write_bytes(encoded.tobytes())
+        atomic_write_bytes(image_path, encoded.tobytes())
         height, width = frame.shape[:2]
         boxes = []
         for item in detections:
@@ -1280,10 +1281,7 @@ class CameraPipeline:
             "bbox": boxes, "image": image_name, "model": "yolov5n-ncnn",
         }
         meta = self.alarm_dir / f"{alert_id}.json"
-        temporary = meta.with_suffix(".tmp")
-        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.chmod(temporary, 0o600)
-        temporary.replace(meta)
+        atomic_write_json(meta, payload)
         self.bridge.publish_log("warning", "Person detected by YOLOv5n", {
             "alert_id": alert_id, "confidence": payload["confidence"], "bbox": boxes,
         })

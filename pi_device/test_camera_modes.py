@@ -13,8 +13,13 @@ class SensorModeSelectionTests(unittest.TestCase):
         {"size": (1920, 1080), "bit_depth": 10, "fps": 30.0},
     ]
 
-    def test_auto_picks_fastest_mode_that_meets_output_size(self):
+    def test_auto_picks_fastest_sensor_mode_but_keeps_requested_stream_fps(self):
         mode, fps = select_sensor_mode(self.MODES, 1280, 720, 30, auto=True)
+        self.assertEqual(mode["size"], (1296, 972))
+        self.assertEqual(fps, 30)
+
+    def test_auto_clamps_requested_stream_fps_to_sensor_maximum(self):
+        mode, fps = select_sensor_mode(self.MODES, 1280, 720, 90, auto=True)
         self.assertEqual(mode["size"], (1296, 972))
         self.assertEqual(fps, 58.92)
 

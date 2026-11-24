@@ -32,7 +32,8 @@ def _visible_devices(user):
 def home(request):
     devices = _visible_devices(request.user).order_by("name", "device_id")
     online_count = devices.filter(
-        is_online=True, last_heartbeat__gte=timezone.now() - timedelta(seconds=50)
+        api_token_hash__gt="",
+        last_heartbeat__gte=timezone.now() - timedelta(seconds=50)
     ).count()
     alarm_queryset = Alarm.objects.filter(device__in=devices)
     recent_alarms = alarm_queryset.select_related("device")[:12]
@@ -70,8 +71,8 @@ def device_detail(request, device_id):
     alarm_cursor = alarm_queryset.aggregate(max_id=Max("pk"))["max_id"] or 0
     logs = device.logs.all()[:50]
     return render(request, "dashboard/device_detail.html", {
-        "device": device, "alarms": alarms, "alarm_cursor": alarm_cursor,
-        "logs": logs,
+        "device": device, "device_online": device.is_online_now,
+        "alarms": alarms, "alarm_cursor": alarm_cursor, "logs": logs,
     })
 
 
@@ -429,10 +430,7 @@ def dashboard_overview(request):
             {
                 "device_id": device.device_id,
                 "name": device.name,
-                "is_online": bool(
-                    device.api_token_hash and device.is_online and device.last_heartbeat
-                    and device.last_heartbeat >= timezone.now() - timedelta(seconds=50)
-                ),
+                "is_online": device.is_online_now,
                 "is_paired": bool(device.api_token_hash),
                 "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
                 "video_fps": round(device.reported_video_fps, 1),
@@ -531,11 +529,7 @@ def send_device_command(request, device_id):
     now = timezone.now()
     if not device.api_token_hash:
         return JsonResponse({"error": "دوربین Pair نشده است."}, status=409)
-    if (
-        not device.is_online
-        or not device.last_heartbeat
-        or device.last_heartbeat < now - timedelta(seconds=50)
-    ):
+    if not device.is_online_now:
         return JsonResponse({"error": "دوربین آنلاین نیست؛ آخرین Heartbeat قدیمی است."}, status=409)
     state = device.current_state if isinstance(device.current_state, dict) else {}
     if not state.get("mqtt_connected"):

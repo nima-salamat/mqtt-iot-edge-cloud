@@ -71,3 +71,63 @@
 .log-table-wrap table{min-width:680px}
 .log-table-wrap thead th{position:sticky;top:0;z-index:2}
 .log-table-wrap td:last-child{white-space:normal;overflow-wrap:anywhere;max-width:620px}
+
+
+/* Raspberry Pi system telemetry cards mirrored in the Django device console. */
+.edge-health-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0 17px}
+.edge-health-card{display:grid;gap:8px;min-width:0;padding:13px 14px;border:1px solid rgba(135,165,190,.15);border-radius:13px;background:linear-gradient(145deg,rgba(22,42,62,.9),rgba(10,23,36,.92))}
+.edge-health-card>div:first-child{display:flex;align-items:center;gap:9px}
+.edge-health-card>div:first-child small{color:#a2b7c5;font-size:10px}
+.edge-health-card>strong{font-size:22px;color:#edf8fb;direction:ltr;text-align:left;font-variant-numeric:tabular-nums}
+.health-icon{display:grid;place-items:center;min-width:34px;height:30px;padding:0 6px;border-radius:9px;background:#193c4a;color:#8ce1d1;font:800 10px Arial,sans-serif}
+.edge-health-track{height:5px;border-radius:99px;background:#27394a;overflow:hidden}
+.edge-health-track span{display:block;width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,#60d7bb,#e7bd70);transition:width .35s ease}
+.edge-health-card.is-warning{border-color:rgba(242,195,111,.62);background:linear-gradient(145deg,#392f27,#1d2630)}
+.edge-health-card.is-hot{border-color:rgba(241,138,152,.7);background:linear-gradient(145deg,#442932,#202331)}
+.edge-health-card.is-warning .health-icon{background:#4c3b2b;color:#f2c36f}
+.edge-health-card.is-hot .health-icon{background:#4a2b35;color:#f18a98}
+.edge-health-card small{color:#839bad;font-size:9px;line-height:1.7;overflow-wrap:anywhere}
+.device-health-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:12px}
+.device-health-item{display:grid;gap:3px;min-width:0;padding:9px 10px;border:1px solid rgba(135,165,190,.13);border-radius:10px;background:#0b1928}
+.device-health-item span{font-size:9px;color:#8fa7b8}
+.device-health-item b{font-size:13px;color:#e3f0f5;direction:ltr;text-align:left;font-variant-numeric:tabular-nums}
+.device-health-item.is-warning{border-color:#8b7047;background:#302c25}
+.device-health-item.is-hot{border-color:#8a4e5a;background:#35252e}
+
+/* One continuous MSE archive player with a seekable recording timeline. */
+.continuous-video-panel{gap:13px}
+.continuous-video-panel>video{width:100%;height:clamp(230px,46vw,560px);min-height:210px;max-height:560px;object-fit:contain;background:#02070d;border:1px solid #2b4155;border-radius:13px}
+.archive-player-toolbar,.archive-player-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.archive-player-toolbar .muted,.archive-player-footer .muted{font-size:10px}
+.archive-timeline{display:grid;gap:8px;padding:13px 14px;border:1px solid rgba(135,165,190,.15);border-radius:13px;background:rgba(5,16,27,.72)}
+.archive-timeline-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.archive-timeline-heading b{font-size:11px;color:#dcebf1}
+.archive-timeline-heading strong{font-size:12px;color:#8fe4d2;direction:ltr;font-variant-numeric:tabular-nums}
+.archive-timeline-heading small{font-size:9px;color:#9bb1c0}
+.archive-timeline-track{position:relative;height:28px;display:flex;align-items:center;direction:ltr}
+.archive-timeline-segments{position:absolute;inset:9px 0;height:9px;display:flex;overflow:hidden;border:1px solid #30475b;border-radius:99px;background:#1b2a3a;pointer-events:none}
+.archive-timeline-segments span{display:block;min-width:1px;height:100%;background:#3caa98;border-right:1px solid #0b1a29}
+.archive-timeline-segments span:nth-child(3n){background:#568caa}
+.archive-timeline-segments span.is-gap{background:#775d42}
+#archive-timeline{position:relative;z-index:2;width:100%;height:28px;margin:0;background:transparent;cursor:pointer;accent-color:#78dfcd}
+#archive-timeline:disabled{cursor:not-allowed;opacity:.4}
+#archive-timeline::-webkit-slider-runnable-track{height:4px;background:transparent}
+#archive-timeline::-moz-range-track{height:4px;background:transparent}
+#archive-timeline::-webkit-slider-thumb{width:15px;height:15px;border:2px solid #071622;border-radius:50%;background:#8be9d6;box-shadow:0 0 0 3px #8be9d644;appearance:none;margin-top:-5px}
+#archive-timeline::-moz-range-thumb{width:15px;height:15px;border:2px solid #071622;border-radius:50%;background:#8be9d6;box-shadow:0 0 0 3px #8be9d644}
+.archive-timeline-labels{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#859cad;font-size:9px;direction:ltr;font-variant-numeric:tabular-nums}
+.archive-timeline-labels span:nth-child(2){direction:rtl}
+.archive-player-footer{border-top:1px solid #ffffff12;padding-top:10px}
+#archive-empty[hidden]{display:none}
+@media(max-width:700px){
+  .edge-health-grid{gap:8px}
+  .edge-health-card{padding:11px}
+  .edge-health-card>strong{font-size:19px}
+  .device-health-grid{gap:6px}
+  .device-health-item{padding:8px}
+  .archive-player-toolbar,.archive-player-footer{align-items:stretch;flex-direction:column}
+  .archive-player-toolbar .btn{width:100%}
+  .archive-timeline{padding:11px}
+  .archive-timeline-heading{display:grid;grid-template-columns:1fr auto}
+  .archive-timeline-heading small{grid-column:1/-1}
+}

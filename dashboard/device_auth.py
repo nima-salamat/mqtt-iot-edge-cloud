@@ -3,7 +3,7 @@ from functools import wraps
 from django.contrib.auth.hashers import check_password
 from django.http import JsonResponse
 from django.utils import timezone
-from .models import Device, StreamGrant
+from .models import Device, DeviceCommand, StreamGrant
 
 
 def revoke_device_access(device):
@@ -16,6 +16,9 @@ def revoke_device_access(device):
     state = device.current_state if isinstance(device.current_state, dict) else {}
     state.update({
         "mqtt_connected": False,
+        "mqtt_command_subscription_ready": False,
+        "recording_supported": False,
+        "recording_enabled": False,
         "rtsp_connected": False,
         "camera_ready": False,
         "tracking_active": False,
@@ -28,6 +31,12 @@ def revoke_device_access(device):
         "current_state", "updated_at",
     ])
     StreamGrant.objects.filter(device=device, revoked_at__isnull=True).update(revoked_at=now)
+    # Commands queued for the old signing key cannot be executed by a future
+    # pairing session. Mark them terminal so polling clients do not wait until
+    # expiry and prevent delayed ACKs from changing the new device state.
+    DeviceCommand.objects.filter(
+        device=device, status__in=["pending", "published"]
+    ).update(status="failed", result={"error": "device_pairing_revoked"})
 
 
 def authenticate_device(request):

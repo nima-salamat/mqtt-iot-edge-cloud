@@ -67,6 +67,16 @@ class DurableUploader:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=6)
+            if self._thread.is_alive():
+                # requests cannot safely cancel an in-flight multipart upload.
+                # Closing the shared Session here races that request; keep the
+                # session alive until process exit so an interrupted upload can
+                # leave its queue file unmarked and retry after the next boot.
+                log.warning(
+                    "Uploader is still finishing an HTTP request during shutdown; "
+                    "leaving the session open and keeping queue items retryable"
+                )
+                return
         self._session.close()
 
     def _token(self):

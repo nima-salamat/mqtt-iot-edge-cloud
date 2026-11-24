@@ -298,6 +298,17 @@ class CameraPipeline:
         self.recording_enabled = bool(settings_store.get().get("recording_enabled", True))
         self._local_recording_attached = False
 
+    def _publish_recording_state(self):
+        """Report whether an MP4 writer is actually attached to the active encoder."""
+        active = bool(
+            self.picam2 is not None
+            and self._local_recording_attached
+            and self.recording_enabled
+        )
+        setter = getattr(self.bridge, "set_recording_enabled", None)
+        if callable(setter):
+            setter(active)
+
     def _pending_alarm_count(self):
         return sum(
             1 for item in self.alarm_dir.glob("*.json")
@@ -515,6 +526,7 @@ class CameraPipeline:
         self._current_marker = None
         self.recording_enabled = False
         self._local_recording_attached = False
+        self.bridge.set_recording_enabled(False)
         self.camera_backend = "opencv"
         self.camera_source = raw_source
         self.camera_model = (
@@ -737,6 +749,7 @@ class CameraPipeline:
             self._current_segment = segment
             self._current_marker = marker
             self._local_recording_attached = bool(segment)
+            self._publish_recording_state()
             desired_recording = bool(
                 self.settings_store.get().get("recording_enabled", self.recording_enabled)
             )
@@ -766,10 +779,12 @@ class CameraPipeline:
             if self.picam2 is None or self.local_output is None:
                 self.recording_enabled = enabled
                 self.settings_store.update({"recording_enabled": enabled})
+                self._publish_recording_state()
                 return {"recording_enabled": enabled}
             if enabled == self._local_recording_attached:
                 self.recording_enabled = enabled
                 self.settings_store.update({"recording_enabled": enabled})
+                self._publish_recording_state()
                 return {"recording_enabled": enabled}
 
             if enabled:
@@ -791,6 +806,7 @@ class CameraPipeline:
                 self._local_recording_attached = True
                 self.recording_enabled = True
                 self.settings_store.update({"recording_enabled": True})
+                self._publish_recording_state()
                 log.info("Local video recording resumed; RTSPS live output was not restarted")
             else:
                 old_marker = self._current_marker
@@ -829,6 +845,7 @@ class CameraPipeline:
                         "Could not remove the partial recording; its open marker is retained if present"
                     )
 
+                self._publish_recording_state()
                 log.info("Local recording paused; partial segment discarded; video queue delivery paused")
 
         return {"recording_enabled": self.recording_enabled}
@@ -1504,6 +1521,8 @@ class CameraPipeline:
         self.inference_latency_ms = 0.0
         self._current_segment = None
         self._current_marker = None
+        self._local_recording_attached = False
+        self._publish_recording_state()
         with self._frames_lock:
             self.latest_jpeg = None
             self.latest_frame_at = 0.0

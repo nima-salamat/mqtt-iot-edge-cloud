@@ -89,7 +89,9 @@ class DurableUploader:
         if self.bridge is not None and hasattr(self.bridge, "set_signing_key"):
             self.bridge.set_signing_key("")
         self.last_heartbeat_at = ""
+        self.last_mqtt_telemetry_at = ""
         self._last_heartbeat_monotonic = 0.0
+        self._last_https_heartbeat_monotonic = 0.0
 
     def _check_response(self, response):
         if response.status_code in {401, 403}:
@@ -333,7 +335,8 @@ class DurableUploader:
                 self._last_heartbeat_monotonic = time.monotonic()
                 self.last_mqtt_telemetry_at = datetime.now(timezone.utc).isoformat()
                 if (
-                    time.monotonic() - self._last_https_heartbeat_monotonic
+                    self._last_https_heartbeat_monotonic > 0
+                    and time.monotonic() - self._last_https_heartbeat_monotonic
                     < self.HTTPS_HEARTBEAT_INTERVAL_SECONDS
                 ):
                     return

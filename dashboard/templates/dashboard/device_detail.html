@@ -34,6 +34,7 @@
       <div><span>ویدئوهای ارسال‌نشده</span><b>{{ device.current_state.pending_video_segments|default:0 }}</b></div>
       <div><span>ضبط MP4 روی Pi</span><b id="recording-state">{% if device.current_state.recording_enabled == True %}فعال{% elif device.current_state.recording_enabled == False %}متوقف{% else %}در انتظار گزارش{% endif %}</b></div>
       <div><span>آخرین قطعه ذخیره‌شده</span><b id="last-video-upload">{{ device.current_state.last_video_upload_at|default:"—" }}</b></div>
+      <div><span>خطای آخرین آپلود ویدئو</span><b id="video-upload-error">{{ device.current_state.last_video_upload_error|default:"—" }}</b></div>
       <div><span>اتصال MQTT</span><b>{% if device.current_state.mqtt_connected %}متصل{% else %}قطع{% endif %}</b></div>
       <div><span>آخرین ارتباط</span><b>{{ device.last_seen|date:"Y-m-d H:i:s"|default:"—" }}</b></div>
     </div>

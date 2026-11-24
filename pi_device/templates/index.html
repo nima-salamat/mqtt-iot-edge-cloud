@@ -103,7 +103,7 @@
           aria-pressed="{{ 'true' if settings.recording_enabled else 'false' }}"
         >{% if settings.recording_enabled %}توقف ضبط{% else %}شروع ضبط{% endif %}</button>
       </div>
-      <p class="hint" id="camera-capability-note">پیش‌نمایش از جریان اصلی دوربین و با وضوح کامل ساخته می‌شود؛ تشخیص YOLO از جریان سبک‌تر جداگانه استفاده می‌کند.</p>
+      <p class="hint" id="camera-capability-note">پیش‌نمایش محلی با وضوح اصلی حداکثر ۱۵ FPS تازه‌سازی می‌شود تا بار پردازنده پایین بماند؛ ضبط و پخش زنده H.264 از انکودر مستقل و نرخ هدف دوربین استفاده می‌کنند. YOLO نیز جریان سبک‌تر خودش را دارد.</p>
       <div class="camera-errors" id="camera-errors" hidden></div>
     </article>
 

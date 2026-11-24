@@ -38,7 +38,9 @@ def _safe_state_number(value, default=0.0, minimum=0.0, maximum=1_000_000.0):
 
 
 def _safe_state_count(value, default=0, maximum=1_000_000):
-    number = _safe_state_number(value, default=float(default), minimum=0, maximum=maximum)
+    number = _safe_state_number(value, default=None, minimum=0, maximum=maximum)
+    if number is None or not number.is_integer():
+        return default
     return int(number)
 
 
@@ -514,8 +516,8 @@ def dashboard_overview(request):
     devices = list(_visible_devices(request.user).order_by("name", "device_id"))
     payload_devices = []
     for device in devices:
-        state = device.current_state if isinstance(device.current_state, dict) else {}
-        system = state.get("system")
+        state = _safe_device_state(device)
+        system = state.get("system", {})
         payload_devices.append({
             "device_id": device.device_id,
             "name": device.name,

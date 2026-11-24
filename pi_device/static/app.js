@@ -338,8 +338,9 @@
       const dot = document.createElement('i');
       status.replaceChildren(dot, document.createTextNode(cameraOnline ? ' دوربین آماده' : ' دوربین آماده نیست'));
       text('video-fps', Number(state.video_fps || 0).toFixed(1) + ' FPS');
-      text('video-fps-target', (state.video_fps_auto ? 'انتخاب خودکار سنسور · ' : 'هدف دستی · ') +
-        Number(state.target_video_fps || state.settings?.video_fps || 30).toLocaleString('fa-IR') + ' FPS');
+      text('video-fps-target', (state.video_fps_auto ? 'انتخاب خودکار · ' : 'هدف دستی · ') +
+        Number(state.target_video_fps || state.settings?.video_fps || 30).toLocaleString('fa-IR') +
+        ' FPS · ' + (state.camera_resolution || 'وضوح نامشخص'));
       const cameraFpsCap = Number(state.camera_max_fps || 0);
       const inputFpsCap = cameraFpsCap > 0 ? Math.max(1, Math.floor(cameraFpsCap)) : 1000;
       const videoFpsInput = settingsForm.elements.namedItem('video_fps');
@@ -349,24 +350,45 @@
       const fpsList = $('camera-fps-options');
       if (fpsList) {
         fpsList.replaceChildren();
-        for (const rate of (Array.isArray(state.video_fps_options) ? state.video_fps_options : [])) {
-          const option = document.createElement('option');
-          option.value = String(Math.max(1, Math.floor(Number(rate))));
-          option.label = Number(rate).toLocaleString('fa-IR') + ' FPS';
-          fpsList.append(option);
+        const modes = Array.isArray(state.video_modes) ? state.video_modes : [];
+        if (modes.length) {
+          const groupedRates = new Map();
+          for (const mode of modes) {
+            const rate = Number(mode.fps || 0);
+            if (!Number.isFinite(rate) || rate <= 0) continue;
+            const key = String(Math.floor(rate));
+            const resolutions = groupedRates.get(key) || new Set();
+            resolutions.add(String(mode.resolution || 'وضوح نامشخص'));
+            groupedRates.set(key, resolutions);
+          }
+          for (const [rate, resolutions] of [...groupedRates.entries()]
+            .sort((a, b) => Number(a[0]) - Number(b[0]))) {
+            const option = document.createElement('option');
+            option.value = rate;
+            option.label = Number(rate).toLocaleString('fa-IR') + ' FPS · ' +
+              [...resolutions].join(' / ');
+            fpsList.append(option);
+          }
+        } else {
+          for (const rate of (Array.isArray(state.video_fps_options) ? state.video_fps_options : [])) {
+            const option = document.createElement('option');
+            option.value = String(Math.max(1, Math.floor(Number(rate))));
+            option.label = Number(rate).toLocaleString('fa-IR') + ' FPS';
+            fpsList.append(option);
+          }
         }
       }
       const fpsHint = settingsForm.elements.namedItem('video_fps')?.closest('label')?.querySelector('small');
       if (fpsHint && cameraFpsCap > 0) {
-        fpsHint.textContent = 'حد بالای فعلی این دوربین: ' +
+        fpsHint.textContent = 'حداکثر کل حالت‌های سنسور: ' +
           cameraFpsCap.toLocaleString('fa-IR', {maximumFractionDigits: 1}) +
-          ' FPS؛ فقط نرخ واقعی قابل پشتیبانی انتخاب می‌شود.';
+          ' FPS. اگر این نرخ در وضوح فعلی ممکن نباشد، برای رسیدن به آن وضوح استریم به mode سریع‌تر دوربین کاهش می‌یابد.';
       }
       const inferenceHint = settingsForm.elements.namedItem('inference_fps')?.closest('label')?.querySelector('small');
       if (inferenceHint && cameraFpsCap > 0) {
-        inferenceHint.textContent = 'سقف این مقدار روی ' +
+        inferenceHint.textContent = 'سقف سنسور ' +
           cameraFpsCap.toLocaleString('fa-IR', {maximumFractionDigits: 1}) +
-          ' FPS دوربین قرار دارد؛ ظرفیت Workerها نیز نرخ واقعی را محدود می‌کند.';
+          ' FPS است؛ ظرفیت Workerها و بار پردازنده سقف واقعی YOLO را پایین‌تر می‌آورد.';
       }
       text('inference-fps', Number(state.inference_fps || 0).toFixed(1) + ' FPS');
       const pool = state.inference_pool || {};
@@ -426,8 +448,8 @@
       text('rtsp-health', state.live_publish_supported ? boolLabel(state.rtsp_connected) : 'نیازمند Picamera2');
       const capabilityNote = $('camera-capability-note');
       if (capabilityNote) capabilityNote.textContent = picameraBackend
-        ? 'پیش‌نمایش با وضوح اصلی سنسور و کیفیت JPEG بالا ساخته می‌شود؛ YOLO از جریان کم‌وضوح مجزا استفاده می‌کند. ضبط محلی و RTSPS سخت‌افزاری فعال‌اند.'
-        : 'OpenCV: پیش‌نمایش با وضوح واقعی منبع و تشخیص YOLO فعال است؛ ضبط MP4 و ارسال RTSPS سخت‌افزاری در این backend هنوز در دسترس نیست و برای آن Picamera2 را انتخاب کن.';
+        ? 'پیش‌نمایش محلی حداکثر ۱۵ FPS تازه‌سازی می‌شود تا پردازش تصویر اصلی به نرخ ضبط فشار نیاورد. ضبط و RTSPS از انکودر H.264 و نرخ هدف مستقل استفاده می‌کنند؛ در حالت دستی ممکن است با افزایش FPS، وضوح استریم خودکار به mode سریع‌تر سنسور کاهش یابد.'
+        : 'OpenCV: پیش‌نمایش محلی محدود به ۱۵ FPS است و YOLO از جریان دریافتی استفاده می‌کند؛ برای FPS بالاتر فقط modeهای اعلام‌شده توسط درایور قابل استفاده‌اند. ضبط MP4 و RTSPS سخت‌افزاری در این backend پشتیبانی نمی‌شود.';
       text('mqtt-status', boolLabel(mqtt.mqtt_connected));
       text('heartbeat-status', state.last_heartbeat_at ? 'فعال' : 'در انتظار');
       text('last-heartbeat', 'آخرین Heartbeat: ' + timeLabel(state.last_heartbeat_at));

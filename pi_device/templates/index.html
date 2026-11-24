@@ -203,7 +203,7 @@
         <details class="settings-group" open>
           <summary>
             <span><b>تصویر و ضبط ویدئو</b><small>کیفیت استریم، نرخ فریم و مدیریت فایل‌های ویدئویی</small></span>
-            <span class="group-count">۷ تنظیم</span>
+            <span class="group-count">۸ تنظیم</span>
           </summary>
           <div class="settings-grid">
             <label>نوع دوربین
@@ -221,17 +221,25 @@
               </label>
               <button class="utility-btn" id="camera-discover" type="button">جست‌وجوی دوربین‌ها</button>
             </div>
+            <label>وضوح خروجی دوربین
+              <select name="video_resolution" id="video-resolution">
+                <option value="{{ settings.video_width }}x{{ settings.video_height }}" selected>{{ settings.video_width }}×{{ settings.video_height }} · ذخیره‌شده</option>
+              </select>
+              <input name="video_width" id="video-width" type="hidden" value="{{ settings.video_width }}">
+              <input name="video_height" id="video-height" type="hidden" value="{{ settings.video_height }}">
+              <small>این فهرست از modeهای واقعی حسگر یا درایور دوربین ساخته می‌شود. وضوح انتخابی مستقیماً برای استریم و ضبط استفاده می‌شود و برای اعمال آن سرویس باید راه‌اندازی مجدد شود.</small>
+            </label>
             <label>انتخاب نرخ فریم
               <select name="video_fps_auto">
                 <option value="true" {% if settings.video_fps_auto %}selected{% endif %}>خودکار؛ بهترین mode سازگار با نرخ هدف</option>
                 <option value="false" {% if not settings.video_fps_auto %}selected{% endif %}>دستی؛ نرخ درخواستی</option>
               </select>
-              <small>در حالت خودکار، دوربین از بهترین mode سازگار استفاده می‌کند اما از نرخ هدف بالاتر نمی‌رود؛ برای درخواست نرخ بالاتر، حالت دستی را انتخاب کن.</small>
+              <small>حالت خودکار نرخ هدف را تا سقف حسگر در وضوح انتخابی محدود می‌کند؛ حالت دستی نیز فقط FPS قابل‌پشتیبانی همان وضوح را می‌پذیرد.</small>
             </label>
             <datalist id="camera-fps-options"></datalist>
             <label>نرخ فریم در حالت دستی
               <input name="video_fps" type="number" min="1" max="1000" step="1" list="camera-fps-options" inputmode="numeric" required value="{{ settings.video_fps }}">
-              <small>حالت‌های سنسور در وضوح‌های مختلف در پیشنهادها نمایش داده می‌شوند. اگر FPS بالاتر فقط در وضوح کوچک‌تر ممکن باشد، وضوح استریم پس از راه‌اندازی مجدد به همان mode تغییر می‌کند.</small>
+              <small>حداکثر FPS و پیشنهادها با وضوح انتخاب‌شده هماهنگ هستند. برای نرخ بالاتر، ابتدا وضوح کوچک‌تری را که دوربین واقعاً پشتیبانی می‌کند انتخاب کن.</small>
             </label>
             <label>بیت‌ریت H.264 (بیت بر ثانیه)
               <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" inputmode="numeric" required value="{{ settings.video_bitrate }}">

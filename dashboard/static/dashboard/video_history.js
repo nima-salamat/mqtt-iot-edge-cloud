@@ -28,6 +28,8 @@
   let objectUrl = null;
   let sourceCodec = '';
   let baseArchiveOffset = 0;
+  let baseSegmentId = '';
+  let activeChunkController = null;
   let nextSegmentIndex = 0;
   let lastAppendedSegmentId = '';
   let chunkLoading = false;
@@ -284,10 +286,16 @@
       throw new Error('افزودن چانک به پلیر ناموفق بود: ' + error.message);
     }
     await update;
-    if (mediaSource.duration < archiveDuration && Number.isFinite(archiveDuration)) {
-      try { mediaSource.duration = Math.max(archiveDuration, sourceBuffer.buffered.length
-        ? sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) : archiveDuration); } catch (_) {}
-    }
+    updateSourceDuration();
+  }
+
+  function updateSourceDuration() {
+    if (!mediaSource || mediaSource.readyState !== 'open' || !sourceBuffer ||
+        !Number.isFinite(archiveDuration)) return;
+    const bufferedEnd = sourceBuffer.buffered.length
+      ? sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) : 0;
+    const remaining = Math.max(0.1, archiveDuration - baseArchiveOffset);
+    try { mediaSource.duration = Math.max(remaining, bufferedEnd); } catch (_) {}
   }
 
   function bufferAhead() {
@@ -307,6 +315,8 @@
     if (startIndex < 0 || startIndex >= segments.length) return;
     chunkLoading = true;
     const generation = seekGeneration;
+    const controller = new AbortController();
+    activeChunkController = controller;
     try {
       const url = new URL(chunkUrl, window.location.origin);
       url.searchParams.set('start_id', String(segments[startIndex].id));
@@ -317,7 +327,8 @@
         method: 'GET',
         credentials: 'same-origin',
         cache: 'no-store',
-        headers: {'Accept': 'video/mp4'}
+        headers: {'Accept': 'video/mp4'},
+        signal: controller.signal
       });
       if (!response.ok) {
         let message = 'HTTP ' + response.status;
@@ -362,13 +373,17 @@
       }
       updateTimelinePosition();
       setPlayButtonState();
+      if (selectedLabel && reset) {
+        selectedLabel.textContent = dateLabel(segments[startIndex].started_at) + ' · پخش آرشیو از این زمان';
+      }
       setStatus('پخش پیوسته آماده است · ' + numberFa(count, 0) + ' قطعه در یک چانک به هم متصل شد.');
     } catch (error) {
-      if (generation === seekGeneration) {
+      if (generation === seekGeneration && error.name !== 'AbortError') {
         setStatus('خطا در دریافت یا پخش آرشیو: ' + error.message);
         if (selectedLabel) selectedLabel.textContent = error.message;
       }
     } finally {
+      if (activeChunkController === controller) activeChunkController = null;
       if (generation === seekGeneration) chunkLoading = false;
     }
   }
@@ -377,11 +392,18 @@
     if (!segments.length || !chunkUrl) return;
     seekGeneration += 1;
     const generation = seekGeneration;
+    activeChunkController?.abort();
+    activeChunkController = null;
+    const oldBuffer = sourceBuffer;
+    if (oldBuffer?.updating) {
+      try { await waitForEvent(oldBuffer, 'updateend'); } catch (_) {}
+    }
     const located = segmentAtOffset(offset);
     if (!located.segment) return;
     seekInProgress = true;
     chunkLoading = false;
     baseArchiveOffset = located.segment.archiveStart;
+    baseSegmentId = String(located.segment.id);
     nextSegmentIndex = located.index;
     lastAppendedSegmentId = '';
     player.pause();
@@ -526,6 +548,11 @@
       setStatus(lastVideoUploadError || 'در انتظار اولین قطعه MP4 از دوربین…');
     }
 
+    if (baseSegmentId) {
+      const baseIndex = segments.findIndex(item => String(item.id) === baseSegmentId);
+      if (baseIndex >= 0) baseArchiveOffset = segments[baseIndex].archiveStart;
+    }
+    updateSourceDuration();
     if (previousLastId && segments.length && !player.paused) keepBufferAhead();
   }
 

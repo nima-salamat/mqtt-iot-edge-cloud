@@ -361,6 +361,9 @@ class DurableUploader:
             "inference_fps": state["inference_fps"],
             "model_loaded": state["model_loaded"],
             "mqtt_connected": state["mqtt_connected"],
+            "mqtt_command_subscription_ready": bool(
+                state.get("mqtt_command_subscription_ready", False)
+            ),
             "rtsp_connected": state["rtsp_connected"],
             "camera_ready": state["camera_ready"],
             "pending_alerts": state["pending_alerts"],

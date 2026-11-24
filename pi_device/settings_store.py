@@ -95,10 +95,8 @@ def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
             continue
         if key == "alert_confidence" and not math.isfinite(number):
             continue
-        if key == "video_fps":
-            number = max(1, min(120, number))
-        elif key == "inference_fps":
-            number = max(1, min(60, number))
+        if key in {"video_fps", "inference_fps"}:
+            number = max(1, number)
         elif low is not None:
             number = max(low, min(high, number))
         result[key] = round(number, 3) if key == "alert_confidence" else int(number)

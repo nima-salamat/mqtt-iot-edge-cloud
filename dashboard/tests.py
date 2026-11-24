@@ -178,7 +178,7 @@ class DeviceApiTests(TestCase):
         self.assertEqual(self.device.current_state["system"], {})
 
     def test_device_can_upload_an_mp4_segment_and_retry_it_idempotently(self):
-        video_bytes = b"\\x00\\x00\\x00\\x18ftypisom\\x00\\x00\\x02\\x00isomiso2"
+        video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
         segment_id = "1795533000000-abcd1234"
         data = {
             "segment_id": segment_id,

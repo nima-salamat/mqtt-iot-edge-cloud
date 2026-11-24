@@ -1,6 +1,6 @@
-# Edge devices publish signed events. The shared broker username currently grants
-# wildcard topic-level access; per-device HMAC authenticates each event but does
-# not hide command contents from another connected camera.
+# Edge devices share a broker username with wildcard topic-level access.
+# Every remote command is AES-GCM encrypted with a per-device derived key and
+# HMAC-signed; other cameras can see routing metadata but cannot read contents.
 user camera-edge
 topic write iotlab/devices/+/alarms
 topic write iotlab/devices/+/telemetry

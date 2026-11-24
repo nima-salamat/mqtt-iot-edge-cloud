@@ -51,6 +51,8 @@ DEFAULTS: dict[str, Any] = {
 }
 
 RANGES = {
+    "video_width": (160, 4608),
+    "video_height": (120, 3456),
     "video_bitrate": (500_000, 8_000_000),
     "segment_seconds": (2, 15),
     "inference_workers": (1, 8),
@@ -68,7 +70,7 @@ RANGES = {
 def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
     result = dict(DEFAULTS)
     for key, raw in value.items():
-        if key not in DEFAULTS or key in {"video_width", "video_height"}:
+        if key not in DEFAULTS:
             continue
         if key in {"recording_enabled", "video_fps_auto"}:
             if isinstance(raw, bool):
@@ -141,7 +143,7 @@ class SettingsStore:
             old = dict(self._value)
             self._value = normalize_settings({**old, **changes})
             self._save_locked()
-            restart_keys = {"video_fps", "video_fps_auto", "video_bitrate", "segment_seconds", "inference_workers", "camera_backend", "camera_source"}
+            restart_keys = {"video_width", "video_height", "video_fps", "video_fps_auto", "video_bitrate", "segment_seconds", "inference_workers", "camera_backend", "camera_source"}
             restart_required = [
                 key for key in changes
                 if key in restart_keys and self._value[key] != old[key]

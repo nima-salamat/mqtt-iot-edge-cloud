@@ -200,6 +200,8 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         state["system"] = collect_system_stats(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot"))
         state["mqtt"] = bridge.snapshot()
         state["last_upload_at"] = uploader.last_upload_at
+        state["last_video_upload_at"] = uploader.last_video_upload_at
+        state["last_video_upload_error"] = uploader.last_video_upload_error
         state["last_heartbeat_at"] = uploader.last_heartbeat_at
         state["last_upload_error"] = uploader.last_upload_error
         state["uploaded_segments"] = uploader.uploaded_segments

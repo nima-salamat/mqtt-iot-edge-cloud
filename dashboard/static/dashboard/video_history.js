@@ -317,6 +317,10 @@
     try {
       buffer.appendBuffer(bytes);
     } catch (error) {
+      // appendBuffer can throw synchronously (for example on quota errors).
+      // Observe the waiter rejection so it cannot become an unhandled promise
+      // when the updateend event will never arrive.
+      update.catch(() => {});
       throw new Error('افزودن چانک به پلیر ناموفق بود: ' + error.message);
     }
     await update;

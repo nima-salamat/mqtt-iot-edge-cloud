@@ -36,6 +36,10 @@ class CameraPipelineStructureTests(unittest.TestCase):
         self.assertTrue(callable(module.CameraPipeline.start))
         self.assertTrue(callable(module.CameraPipeline.is_running))
         self.assertTrue(callable(module.CameraPipeline._capture_opencv_loop))
+        self.assertIn(
+            "tracking_seconds",
+            module.CameraPipeline._draw_boxes.__code__.co_varnames,
+        )
 
     def test_bridge_queue_and_worker_metrics_are_throttled_to_once_per_second(self):
         module = self._load_camera_module()

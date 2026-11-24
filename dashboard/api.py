@@ -308,9 +308,8 @@ def upload_alarm(request):
             snapshot.seek(0)
         except Exception:
             return JsonResponse({"error": "snapshot_is_not_a_valid_jpeg"}, status=400)
-    try:
-        confidence = max(0.0, min(1.0, float(payload.get("confidence") or 0)))
-    except (TypeError, ValueError):
+    confidence = _finite_number(payload.get("confidence", 0) or 0, 0, 1)
+    if confidence is None:
         return JsonResponse({"error": "invalid_confidence"}, status=400)
     raw_boxes = payload.get("bbox", [])
     if not isinstance(raw_boxes, list) or len(raw_boxes) > 100:
@@ -320,9 +319,17 @@ def upload_alarm(request):
         for item in raw_boxes:
             if not isinstance(item, dict):
                 raise ValueError
-            box = {key: float(item[key]) for key in ("x1", "y1", "x2", "y2")}
-            box_confidence = max(0.0, min(1.0, float(item.get("confidence", confidence))))
-            if not all(0.0 <= box[key] <= 1.0 for key in box) or box["x2"] <= box["x1"] or box["y2"] <= box["y1"]:
+            box = {
+                key: _finite_number(item.get(key), 0, 1)
+                for key in ("x1", "y1", "x2", "y2")
+            }
+            box_confidence = _finite_number(item.get("confidence", confidence), 0, 1)
+            if (
+                any(value is None for value in box.values())
+                or box_confidence is None
+                or box["x2"] <= box["x1"]
+                or box["y2"] <= box["y1"]
+            ):
                 raise ValueError
             box["confidence"] = round(box_confidence, 4)
             boxes.append(box)

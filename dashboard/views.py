@@ -1,9 +1,14 @@
 from __future__ import annotations
 import json
+import logging
 import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from datetime import timedelta
 from django.contrib.auth.decorators import login_required
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.http import FileResponse, Http404, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
@@ -12,6 +17,8 @@ from django.views.decorators.http import require_POST
 from .models import Alarm, Device, DeviceLog, RetentionPolicy, VideoSegment
 from .device_auth import revoke_device_access
 from .services import cleanup_iot_data
+
+logger = logging.getLogger(__name__)
 
 
 def _visible_devices(user):
@@ -91,6 +98,7 @@ def device_videos(request, device_id):
     )
     response = JsonResponse({
         "device_id": device.device_id,
+        "system": state.get("system", {}) if isinstance(state.get("system"), dict) else {},
         "segments": [
             {
                 "id": segment.pk,
@@ -113,6 +121,165 @@ def device_videos(request, device_id):
     })
     response["Cache-Control"] = "private, no-store"
     return response
+
+
+def _ffprobe_h264_codec(path):
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,profile,level",
+            "-of", "json", str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("ویدئوی ذخیره‌شده قابل شناسایی نیست.")
+    try:
+        stream = (json.loads(result.stdout).get("streams") or [])[0]
+    except (ValueError, IndexError, AttributeError, TypeError):
+        raise ValueError("اطلاعات کدک ویدئو قابل خواندن نیست.")
+    if stream.get("codec_name") != "h264":
+        raise ValueError("آرشیو فعلی فقط برای ویدئوی H.264 پشتیبانی می‌شود.")
+    profile = str(stream.get("profile") or "").lower()
+    profile_prefix = {
+        "constrained baseline": "42e0",
+        "baseline": "4200",
+        "main": "4d00",
+        "high": "6400",
+        "high 10": "6e00",
+        "high 4:2:2": "7a00",
+        "high 4:4:4 predictive": "f400",
+    }.get(profile)
+    if not profile_prefix:
+        raise ValueError("پروفایل H.264 این آرشیو پشتیبانی نمی‌شود.")
+    try:
+        level = max(10, min(62, int(stream.get("level") or 31)))
+    except (TypeError, ValueError):
+        level = 31
+    return f"avc1.{profile_prefix}{level:02x}"
+
+
+@login_required
+def device_video_chunk(request, device_id):
+    """Remux adjacent stored MP4 files into one short fragmented-MP4 MSE chunk."""
+    device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
+    try:
+        start_id = int(request.GET.get("start_id", ""))
+        requested_seconds = int(request.GET.get("seconds", "12"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "شناسه شروع یا مدت قطعه معتبر نیست."}, status=400)
+    if start_id <= 0 or not 10 <= requested_seconds <= 30:
+        return JsonResponse({"error": "مدت دریافت هر قطعه باید بین ۱۰ تا ۳۰ ثانیه باشد."}, status=400)
+
+    anchor = get_object_or_404(
+        VideoSegment.objects.filter(device=device).exclude(file=""),
+        pk=start_id,
+    )
+    candidates = list(
+        VideoSegment.objects.filter(device=device)
+        .exclude(file="")
+        .filter(
+            Q(started_at__gt=anchor.started_at)
+            | Q(started_at=anchor.started_at, pk__gte=anchor.pk)
+        )
+        .order_by("started_at", "pk")[:24]
+    )
+    selected = []
+    source_bytes = 0
+    selected_seconds = 0
+    maximum_chunk_bytes = 48 * 1024 * 1024
+    paths = []
+    for segment in candidates:
+        try:
+            file_size = int(segment.size_bytes or segment.file.size or 0)
+            file_path = Path(segment.file.path)
+        except (AttributeError, NotImplementedError, ValueError, OSError):
+            return JsonResponse({
+                "error": "فضای ذخیره‌سازی ویدئو امکان خواندن مستقیم برای ساخت قطعه پیوسته را نمی‌دهد."
+            }, status=503)
+        if not file_path.is_file():
+            continue
+        if selected and source_bytes + file_size > maximum_chunk_bytes:
+            break
+        if not selected and file_size > maximum_chunk_bytes:
+            return JsonResponse({
+                "error": "حجم این قطعه از سقف پردازش سرور بیشتر است."
+            }, status=413)
+        selected.append(segment)
+        paths.append(file_path)
+        source_bytes += file_size
+        selected_seconds += max(1, min(60, int(segment.duration_seconds or 5)))
+        if selected_seconds >= requested_seconds:
+            break
+
+    if not selected:
+        return JsonResponse({"error": "برای این بازه فایل ویدئویی ذخیره‌شده‌ای پیدا نشد."}, status=404)
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        return JsonResponse({
+            "error": "پردازشگر FFmpeg روی سرور نصب نیست؛ ایمیج api را با نسخه جدید بازسازی کن."
+        }, status=503)
+
+    try:
+        codec = _ffprobe_h264_codec(paths[0])
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return JsonResponse({"error": str(exc)}, status=415)
+
+    temporary_directory = tempfile.TemporaryDirectory(prefix="iot-video-chunk-")
+    temp_root = Path(temporary_directory.name)
+    concat_path = temp_root / "inputs.ffconcat"
+    output_path = temp_root / "chunk.mp4"
+
+    def ffconcat_quote(value):
+        return "'" + str(value).replace("\\", "\\\\").replace("'", "'\\''").replace("\n", "") + "'"
+
+    try:
+        with concat_path.open("w", encoding="utf-8") as manifest:
+            manifest.write("ffconcat version 1.0\n")
+            for path in paths:
+                manifest.write("file " + ffconcat_quote(path) + "\n")
+
+        command = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-fflags", "+genpts", "-f", "concat", "-safe", "0",
+            "-i", str(concat_path), "-map", "0:v:0", "-an", "-sn", "-dn",
+            "-c:v", "copy", "-avoid_negative_ts", "make_zero",
+            "-movflags", "+empty_moov+default_base_moof+frag_keyframe",
+            "-frag_duration", "2000000", "-f", "mp4", str(output_path),
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size < 512:
+            detail = (result.stderr or "FFmpeg نتوانست قطعه پیوسته بسازد.").strip()[-700:]
+            logger.warning("Video chunk remux failed for %s: %s", device_id, detail)
+            temporary_directory.cleanup()
+            return JsonResponse({"error": "ساخت قطعه ویدئویی ناموفق بود: " + detail}, status=422)
+
+        first = selected[0]
+        total_duration = sum(max(1, min(60, int(item.duration_seconds or 5))) for item in selected)
+        handle = output_path.open("rb")
+        response = FileResponse(handle, content_type="video/mp4")
+        response["Content-Length"] = str(output_path.stat().st_size)
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        response["X-Video-Codec"] = codec
+        response["X-Video-Start-Ms"] = str(int(first.started_at.timestamp() * 1000))
+        response["X-Video-Duration"] = str(total_duration)
+        response["X-Video-Segment-Count"] = str(len(selected))
+        response["X-Video-Segment-Ids"] = ",".join(str(item.pk) for item in selected)
+        response._resource_closers.append(temporary_directory.cleanup)
+        return response
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        temporary_directory.cleanup()
+        logger.exception("Could not build a video archive chunk for %s", device_id)
+        return JsonResponse({"error": "پردازش قطعه ویدئو با خطا روبه‌رو شد: " + str(exc)[:300]}, status=500)
 
 
 @login_required

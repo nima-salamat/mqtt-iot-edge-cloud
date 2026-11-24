@@ -10,6 +10,7 @@ import requests
 import secrets
 import threading
 import time
+from collections import deque
 from functools import wraps
 from pathlib import Path
 
@@ -106,6 +107,23 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         MAX_CONTENT_LENGTH=1024 * 1024,
     )
     local_password = os.getenv("LOCAL_WEB_PASSWORD", "")
+    login_failures: dict[str, deque[float]] = {}
+    login_window_seconds = 300
+    login_max_attempts = 5
+
+    def _login_attempts_for(client_ip: str):
+        now = time.monotonic()
+        attempts = login_failures.setdefault(client_ip, deque())
+        while attempts and now - attempts[0] > login_window_seconds:
+            attempts.popleft()
+        # Bound memory if untrusted clients rotate source addresses.
+        if len(login_failures) > 1024:
+            for address, values in list(login_failures.items()):
+                while values and now - values[0] > login_window_seconds:
+                    values.popleft()
+                if not values:
+                    login_failures.pop(address, None)
+        return attempts
 
     def authenticated(view):
         @wraps(view)
@@ -119,8 +137,9 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
 
     @flask_app.before_request
     def ensure_csrf():
-        if session.get("authenticated"):
-            session.setdefault("csrf_token", secrets.token_urlsafe(24))
+        # An anonymous token protects the login form against login-CSRF;
+        # after authentication it remains available for state-changing APIs.
+        session.setdefault("csrf_token", secrets.token_urlsafe(24))
 
     def csrf_valid() -> bool:
         expected = session.get("csrf_token", "")
@@ -129,22 +148,50 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
 
     @flask_app.get("/login/")
     def login():
-        return render_template("login.html", error=None)
+        return render_template(
+            "login.html", error=None, csrf_token=session["csrf_token"]
+        )
 
     @flask_app.post("/login/")
     def login_post():
+        if not csrf_valid():
+            return "درخواست ورود معتبر نیست؛ صفحه را دوباره بارگذاری کن.", 403
+
         password = request.form.get("password", "")
         if not local_password or local_password.startswith("REPLACE_"):
             return render_template(
                 "login.html",
                 error="ابتدا LOCAL_WEB_PASSWORD را در /etc/mqtt-iot-pi.env تنظیم کن.",
+                csrf_token=session["csrf_token"],
             ), 503
+
+        client_ip = request.remote_addr or "unknown"
+        attempts = _login_attempts_for(client_ip)
+        if len(attempts) >= login_max_attempts:
+            response = make_response(
+                render_template(
+                    "login.html",
+                    error="تلاش‌های ورود بیش از حد مجاز است؛ پنج دقیقه دیگر دوباره تلاش کن.",
+                    csrf_token=session["csrf_token"],
+                ),
+                429,
+            )
+            response.headers["Retry-After"] = str(login_window_seconds)
+            return response
+
         if hmac.compare_digest(password, local_password):
+            login_failures.pop(client_ip, None)
             session.clear()
             session["authenticated"] = True
             session["csrf_token"] = secrets.token_urlsafe(24)
             return redirect(url_for("index"))
-        return render_template("login.html", error="گذرواژه صحیح نیست."), 401
+
+        attempts.append(time.monotonic())
+        return render_template(
+            "login.html",
+            error="گذرواژه صحیح نیست.",
+            csrf_token=session["csrf_token"],
+        ), 401
 
     @flask_app.post("/logout/")
     @authenticated

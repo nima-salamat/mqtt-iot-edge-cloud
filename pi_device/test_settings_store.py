@@ -60,6 +60,15 @@ class VideoBitrateMigrationTests(unittest.TestCase):
             self.assertIn("camera_backend", restart_required)
             self.assertIn("camera_source", restart_required)
 
+    def test_non_finite_alert_confidence_keeps_the_previous_safe_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = SettingsStore(str(Path(directory) / "settings.json"))
+            original = settings.get()["alert_confidence"]
+
+            for invalid in (float("nan"), float("inf"), -float("inf")):
+                updated, _ = settings.update({"alert_confidence": invalid})
+                self.assertEqual(updated["alert_confidence"], original)
+
     def test_camera_resolution_is_persisted_and_requires_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"

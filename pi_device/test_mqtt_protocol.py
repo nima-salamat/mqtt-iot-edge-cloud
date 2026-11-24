@@ -132,6 +132,32 @@ class MqttBridgePublishTests(unittest.TestCase):
 
         handler.assert_called_once_with("recording.set", {"enabled": False})
 
+    def test_telemetry_timestamp_uses_calibrated_server_clock(self):
+        import json
+        from datetime import datetime, timezone
+        import paho.mqtt.client as mqtt
+        from unittest.mock import Mock
+        from pi_device.mqtt_protocol import verify_payload
+
+        info = Mock()
+        info.rc = mqtt.MQTT_ERR_SUCCESS
+        info.is_published.return_value = True
+        self.bridge.client.publish.return_value = info
+        self.bridge.set_server_time_offset(300)
+        before = datetime.now(timezone.utc)
+
+        self.assertTrue(self.bridge.publish_telemetry({
+            "reported_at": "2000-01-01T00:00:00+00:00",
+            "video_fps": 10,
+        }))
+
+        after = datetime.now(timezone.utc)
+        signed = json.loads(self.bridge.client.publish.call_args.args[1])
+        self.assertTrue(verify_payload(signed, "a" * 64))
+        reported_at = datetime.fromisoformat(signed["reported_at"])
+        self.assertGreaterEqual(reported_at, before + __import__("datetime").timedelta(seconds=299))
+        self.assertLessEqual(reported_at, after + __import__("datetime").timedelta(seconds=301))
+
     def test_publish_requires_connected_broker(self):
         self.bridge.client.is_connected.return_value = False
 

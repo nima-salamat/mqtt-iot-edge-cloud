@@ -11,4 +11,5 @@ urlpatterns = [
     path("alarms/<int:alarm_id>/acknowledge/", views.acknowledge_alarm, name="acknowledge-alarm"),
     path("videos/<int:segment_id>/", views.segment_file, name="segment-file"),
     path("settings/retention/", views.update_retention, name="update-retention"),
+    path("cleanup/", views.cleanup_data, name="cleanup-data"),
 ]

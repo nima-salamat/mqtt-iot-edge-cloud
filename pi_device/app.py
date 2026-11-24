@@ -398,8 +398,11 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         if not source_changed and camera.available_video_modes and (
             "video_width" in clean or "video_height" in clean
         ):
-            width = int(clean.get("video_width", current["video_width"]))
-            height = int(clean.get("video_height", current["video_height"]))
+            try:
+                width = int(clean.get("video_width", current["video_width"]))
+                height = int(clean.get("video_height", current["video_height"]))
+            except (TypeError, ValueError, OverflowError):
+                return jsonify({"error": "وضوح تصویر باید با دو عدد صحیح معتبر مشخص شود."}), 400
             compatible_modes = [
                 mode for mode in camera.available_video_modes
                 if int(mode.get("size", (0, 0))[0]) >= width

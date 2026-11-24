@@ -51,22 +51,45 @@ class Command(BaseCommand):
             log_days = policy.device_log_days if policy else 30
 
             video_before = now - timedelta(minutes=video_minutes)
-            expired_segments = VideoSegment.objects.filter(device=device, started_at__lt=video_before)
+            expired_segments = VideoSegment.objects.filter(
+                device=device, started_at__lt=video_before
+            )
             for segment in expired_segments.iterator():
-                if segment.file:
-                    segment.file.delete(save=False)
-                segment.delete()
-                removed_segments += 1
+                try:
+                    if segment.file and segment.file.name:
+                        try:
+                            segment.file.storage.delete(segment.file.name)
+                        except FileNotFoundError:
+                            pass
+                    segment.delete()
+                    removed_segments += 1
+                except Exception:
+                    # One corrupt/missing storage object must not block retention
+                    # for the rest of the user's devices or evidence types.
+                    logger.exception(
+                        "Could not prune video segment %s for device %s",
+                        segment.segment_id, device.device_id,
+                    )
 
             image_before = now - timedelta(days=image_days)
             expired_alarms = Alarm.objects.filter(
                 device=device, detected_at__lt=image_before
             ).exclude(snapshot="")
             for alarm in expired_alarms.iterator():
-                if alarm.snapshot:
-                    alarm.snapshot.delete(save=False)
+                try:
+                    if alarm.snapshot and alarm.snapshot.name:
+                        try:
+                            alarm.snapshot.storage.delete(alarm.snapshot.name)
+                        except FileNotFoundError:
+                            pass
+                    alarm.snapshot = ""
                     alarm.save(update_fields=["snapshot"])
-                removed_images += 1
+                    removed_images += 1
+                except Exception:
+                    logger.exception(
+                        "Could not prune alarm snapshot %s for device %s",
+                        alarm.alert_id, device.device_id,
+                    )
 
             log_before = now - timedelta(days=log_days)
             removed_logs += DeviceLog.objects.filter(device=device, created_at__lt=log_before).delete()[0]

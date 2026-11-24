@@ -543,13 +543,14 @@ class CameraPipelineStructureTests(unittest.TestCase):
         camera._last_detection_at = 1.0
         picam2 = camera.picam2
         encoder = camera.encoder
+        local_output = camera.local_output
 
         module.CameraPipeline.stop(camera)
 
         picam2.stop.assert_called_once()
         picam2.stop_encoder.assert_called_once_with(encoder)
         picam2.close.assert_called_once()
-        camera.local_output.stop.assert_called_once()
+        local_output.stop.assert_called_once()
         camera.bridge.set_recording_supported.assert_called_once_with(False)
         self.assertIsNone(camera.picam2)
         self.assertIsNone(camera.live_output)

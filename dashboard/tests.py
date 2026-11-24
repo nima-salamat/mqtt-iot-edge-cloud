@@ -24,6 +24,7 @@ class PairingFlowTests(TestCase):
         self.client.force_login(self.owner)
         response = self.client.post(reverse("create-pairing"))
         self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
         payload = response.json()
         self.assertTrue(payload["qr_payload"].startswith("iot-alarm-pair:"))
         self.assertIn("data:image/svg+xml;base64,", payload["qr_data_url"])
@@ -45,6 +46,7 @@ class PairingFlowTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(first.status_code, 201)
+        self.assertIn("no-store", first.headers.get("Cache-Control", ""))
         old_token = first.json()["api_token"]
         device = Device.objects.get(device_id="cam-recover-token-01")
         device.is_online = True
@@ -162,6 +164,7 @@ class DeviceApiTests(TestCase):
             HTTP_X_DEVICE_ID=self.device.device_id,
         )
         self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
         self.device.refresh_from_db()
         self.assertTrue(self.device.is_online)
         self.assertTrue(self.device.model_loaded)
@@ -201,6 +204,15 @@ class DeviceApiTests(TestCase):
         self.device.refresh_from_db()
         self.assertIsNone(self.device.last_heartbeat)
         self.assertFalse(self.device.is_online)
+
+    def test_stream_grant_token_response_is_not_cacheable(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("stream-grant", args=[self.device.device_id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+        self.assertTrue(response.json()["token"])
 
     def test_device_heartbeat_rejects_non_finite_runtime_metrics(self):
         for invalid_value in (float("nan"), float("inf"), -float("inf")):

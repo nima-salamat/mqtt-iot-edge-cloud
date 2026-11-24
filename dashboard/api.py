@@ -287,6 +287,9 @@ def heartbeat(request):
     state = device.current_state if isinstance(device.current_state, dict) else {}
     state.update({
         "mqtt_connected": bool(payload.get("mqtt_connected", False)),
+        "mqtt_command_subscription_ready": (
+            payload.get("mqtt_command_subscription_ready") is True
+        ),
         "telemetry_transport": "https",
         "last_https_heartbeat_at": now.isoformat(),
         "rtsp_connected": bool(payload.get("rtsp_connected", False)),

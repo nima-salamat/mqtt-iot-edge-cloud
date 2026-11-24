@@ -364,6 +364,7 @@ class DurableUploader:
             "mqtt_command_subscription_ready": bool(
                 state.get("mqtt_command_subscription_ready", False)
             ),
+            "recording_supported": bool(state.get("recording_supported", False)),
             "rtsp_connected": state["rtsp_connected"],
             "camera_ready": state["camera_ready"],
             "pending_alerts": state["pending_alerts"],

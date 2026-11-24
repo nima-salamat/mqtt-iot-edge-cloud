@@ -228,9 +228,9 @@ def get_video_preview(segment_id: int) -> dict[str, Any] | None:
             return None
         try:
             size = int(row.file.size or 0)
-            if size <= 48 * 1024 * 1024:
+            if size <= 160 * 1024 * 1024:
                 with row.file.open("rb") as video_file:
-                    video_bytes = video_file.read(48 * 1024 * 1024 + 1)
+                    video_bytes = video_file.read(160 * 1024 * 1024 + 1)
             else:
                 video_bytes = b""
         except (OSError, ValueError):
@@ -242,7 +242,7 @@ def get_video_preview(segment_id: int) -> dict[str, Any] | None:
             "started_at": row.started_at,
             "duration_seconds": row.duration_seconds,
             "size_bytes": size,
-            "video": video_bytes if video_bytes and len(video_bytes) <= 48 * 1024 * 1024 else None,
+            "video": video_bytes if video_bytes and len(video_bytes) <= 160 * 1024 * 1024 else None,
         }
     return _db_call(query)
 

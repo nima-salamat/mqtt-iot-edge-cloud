@@ -34,6 +34,12 @@ def _json_body(request):
         return {}
 
 
+def _no_store(response):
+    response["Cache-Control"] = "private, no-store, no-cache, must-revalidate"
+    response["Pragma"] = "no-cache"
+    return response
+
+
 def _strict_json_object(request):
     """Parse a non-empty JSON object without silently turning malformed bodies into {}."""
     if not request.body:
@@ -136,13 +142,13 @@ def create_pairing(request):
     buffer = io.BytesIO()
     image.save(buffer)
     qr_data_url = "data:image/svg+xml;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-    return JsonResponse({
+    return _no_store(JsonResponse({
         "pairing_id": pairing.pk,
         "qr_payload": qr_payload,
         "qr_data_url": qr_data_url,
         "expires_at": pairing.expires_at.isoformat(),
         "expires_in": 120,
-    })
+    }))
 
 
 @csrf_exempt
@@ -198,12 +204,12 @@ def pair_device(request):
     pairing.device_id = device_id
     pairing.consumed_at = now
     pairing.save(update_fields=["device_id", "consumed_at"])
-    return JsonResponse({
+    return _no_store(JsonResponse({
         "device_id": device_id, "api_token": api_token,
         "api_base_url": request.build_absolute_uri("/").rstrip("/"),
         "paired_at": now.isoformat(), "stream_path": device.stream_path,
         "mqtt_signing_key": device_mqtt_signing_key(device),
-    }, status=201)
+    }, status=201))
 
 
 @csrf_exempt
@@ -294,11 +300,11 @@ def heartbeat(request):
         "is_online", "last_seen", "last_heartbeat", "reported_video_fps",
         "reported_inference_fps", "model_loaded", "current_state", "updated_at",
     ])
-    return JsonResponse({
+    return _no_store(JsonResponse({
         "status": "ok",
         "server_time": now.isoformat(),
         "mqtt_signing_key": device_mqtt_signing_key(device),
-    })
+    }))
 
 
 @csrf_exempt
@@ -460,7 +466,7 @@ def create_stream_grant(request, device_id):
         user=request.user, device=device,
         expires_at=timezone.now() + timedelta(minutes=10),
     )
-    return JsonResponse({"username": "stream", "token": raw_token, "expires_in": 600})
+    return _no_store(JsonResponse({"username": "stream", "token": raw_token, "expires_in": 600}))
 
 
 @csrf_exempt

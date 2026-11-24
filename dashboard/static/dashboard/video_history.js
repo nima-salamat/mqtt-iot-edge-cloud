@@ -27,6 +27,7 @@
   let sourceBuffer = null;
   let objectUrl = null;
   let sourceCodec = '';
+  let sourceFormat = '';
   let baseArchiveOffset = 0;
   let baseSegmentId = '';
   let activeChunkController = null;
@@ -294,6 +295,7 @@
     if (generation !== seekGeneration || mediaSource !== nextMediaSource) return false;
     sourceBuffer = nextSourceBuffer;
     sourceCodec = codec;
+    sourceFormat = '';
     return true;
   }
 
@@ -385,6 +387,12 @@
       }
 
       const codec = response.headers.get('X-Video-Codec') || '';
+      const width = Number(response.headers.get('X-Video-Width')) || 0;
+      const height = Number(response.headers.get('X-Video-Height')) || 0;
+      if (!codec || width < 16 || height < 16) {
+        throw new Error('سرور مشخصات کدک یا ابعاد ویدئوی آرشیو را برنگرداند.');
+      }
+      const formatSignature = codec + '|' + width + 'x' + height;
       const count = Math.max(1, Number(response.headers.get('X-Video-Segment-Count')) || 1);
       const ids = (response.headers.get('X-Video-Segment-Ids') || '')
         .split(',').map(value => value.trim()).filter(Boolean);
@@ -392,10 +400,26 @@
       if (generation !== seekGeneration) return;
       if (!bytes.byteLength) throw new Error('سرور چانک خالی برگرداند.');
 
+      if (
+        !reset
+        && sourceBuffer
+        && sourceFormat
+        && sourceFormat !== formatSignature
+      ) {
+        // Keep the timeline continuous but open a fresh MediaSource when the
+        // encoder configuration changes between stored segments. Re-fetch from
+        // the boundary so the new init segment starts at a clean timestamp base.
+        const resume = !player.paused;
+        const boundaryOffset = Number(segments[startIndex].archiveStart) || 0;
+        await resetAndSeek(boundaryOffset, resume);
+        return;
+      }
+
       if (reset || !sourceBuffer || sourceCodec !== codec) {
         const opened = await openMediaSource(codec, generation);
         if (!opened) return;
       }
+      sourceFormat = formatSignature;
       const appended = await appendToSourceBuffer(bytes, generation);
       if (!appended || generation !== seekGeneration) return;
 
@@ -472,6 +496,7 @@
     sourceBuffer = null;
     mediaSource = null;
     sourceCodec = '';
+    sourceFormat = '';
     await fetchAndAppendChunk(located.index, true, located.localOffset, autoplay);
     if (generation === seekGeneration) {
       seekInProgress = false;

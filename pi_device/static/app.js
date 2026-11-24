@@ -859,6 +859,7 @@
     updateSettingsDirty();
     text('settings-result', 'در حال ذخیره تنظیمات…');
     try {
+      delete data.video_resolution;
       const response = await fetch('/api/settings/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
@@ -866,8 +867,6 @@
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'ذخیره تنظیمات ناموفق بود.');
-
-      delete data.video_resolution;
       for (const [key, value] of Object.entries(result.settings || {})) {
         const input = settingsForm.elements.namedItem(key);
         if (input) input.value = value;

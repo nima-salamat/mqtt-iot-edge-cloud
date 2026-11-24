@@ -480,7 +480,6 @@ class RemoteDeviceCommandApiTests(TestCase):
 
 
 
-    @patch("dashboard.views.publish_mqtt_command", return_value=True)
     def test_server_and_pi_mqtt_command_crypto_formats_are_interoperable(self):
         from pi_device.mqtt_protocol import (
             decrypt_mqtt_command as decrypt_on_pi,
@@ -506,6 +505,7 @@ class RemoteDeviceCommandApiTests(TestCase):
         self.assertEqual(decrypt_on_pi(server_envelope, key), expected)
         self.assertEqual(decrypt_mqtt_command(pi_envelope, key), expected)
 
+    @patch("dashboard.views.publish_mqtt_command", return_value=True)
     def test_encrypted_command_ciphertext_is_unique_for_each_publication(self, publish):
         self.client.force_login(self.owner)
         url = reverse("dashboard:device-command", args=[self.device.device_id])

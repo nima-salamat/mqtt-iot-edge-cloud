@@ -27,6 +27,8 @@
         && device.is_online
         && device.mqtt_connected
         && device.mqtt_command_subscription_ready
+        && device.camera_ready
+        && device.recording_supported
       );
       if (!busy) button.disabled = !canControl;
       if (mqttBadge) {
@@ -43,8 +45,12 @@
           : 'اتصال دوربین لغو شده است؛ ابتدا آن را دوباره Pair کن.';
       } else if (canControl && !busy) {
         status.textContent = 'اتصال MQTT و اشتراک فرمان آماده است.';
-      } else if (device.is_online && device.mqtt_connected && !busy) {
+      } else if (device.is_online && device.mqtt_connected && !device.mqtt_command_subscription_ready && !busy) {
         status.textContent = 'MQTT متصل است، اما اشتراک فرمان هنوز تأیید نشده است.';
+      } else if (device.is_online && device.mqtt_command_subscription_ready && !device.camera_ready && !busy) {
+        status.textContent = 'دوربین هنوز فریم تازه تولید نمی‌کند یا آماده ضبط نیست.';
+      } else if (device.is_online && device.camera_ready && !device.recording_supported && !busy) {
+        status.textContent = 'backend فعلی دوربین از ضبط MP4 پشتیبانی نمی‌کند؛ Picamera2 لازم است.';
       }
     } catch (_) {
       // The local command state remains visible if the status endpoint is temporarily unavailable.

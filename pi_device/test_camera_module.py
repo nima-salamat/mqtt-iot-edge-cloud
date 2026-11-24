@@ -509,9 +509,11 @@ class CameraPipelineStructureTests(unittest.TestCase):
         camera.inference_pool = None
         camera._inflight_frames = {}
         camera._recording_lock = threading.RLock()
-        camera.live_output = SimpleNamespace(
-            stop=MagicMock(side_effect=OSError("simulated RTSPS stop failure"))
+        live_output = SimpleNamespace(
+            stop=MagicMock(side_effect=OSError("simulated RTSPS stop failure")),
+            _thread=SimpleNamespace(is_alive=lambda: True),
         )
+        camera.live_output = live_output
         camera._opencv_capture = None
         camera.picam2 = MagicMock()
         camera.encoder = object()
@@ -553,8 +555,28 @@ class CameraPipelineStructureTests(unittest.TestCase):
         local_output.stop.assert_called_once()
         camera.bridge.set_recording_supported.assert_called_once_with(False)
         self.assertIsNone(camera.picam2)
-        self.assertIsNone(camera.live_output)
+        self.assertIs(camera.live_output, live_output)
+        self.assertTrue(camera.is_running())
         self.assertIsNone(camera.latest_jpeg)
+
+    def test_rtsps_stop_timeout_is_reported_so_supervisor_can_retry(self):
+        module = self._load_camera_module()
+        output = object.__new__(module.ReconnectingRtspOutput)
+        output._stop = threading.Event()
+        output._wake = threading.Event()
+        output._thread = SimpleNamespace(
+            join=MagicMock(),
+            is_alive=lambda: True,
+        )
+        output.error = ""
+
+        with self.assertRaisesRegex(TimeoutError, "did not stop"):
+            module.ReconnectingRtspOutput.stop(output)
+
+        self.assertTrue(output._stop.is_set())
+        self.assertTrue(output._wake.is_set())
+        output._thread.join.assert_called_once_with(timeout=4)
+        self.assertIn("did not stop", output.error)
 
     def test_tracking_duration_is_finalized_after_detection_grace_period(self):
         module = self._load_camera_module()

@@ -8,6 +8,25 @@
     logs: 'همه لاگ‌های دستگاه'
   };
 
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    try {
+      return await fetch(url, {...options, signal: controller.signal});
+    } catch (error) {
+      if (timedOut) {
+        throw new Error('پاک‌سازی بیش از زمان مجاز طول کشید؛ وضعیت باقی‌مانده فایل‌ها را پس از refresh بررسی کن.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
   document.querySelectorAll('[data-cleanup-kind]').forEach((button) => {
     button.addEventListener('click', async () => {
       const kind = button.dataset.cleanupKind;
@@ -23,15 +42,19 @@
       button.textContent = 'در حال پاک‌سازی…';
       if (status) status.textContent = 'در حال حذف اطلاعات انتخاب‌شده از سرور…';
       try {
-        const response = await fetch(button.dataset.cleanupUrl || '/cleanup/', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrf,
-            'Accept': 'application/json'
+        const response = await fetchWithTimeout(
+          button.dataset.cleanupUrl || '/cleanup/',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrf,
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({kind, device_id: deviceId})
           },
-          body: JSON.stringify({kind, device_id: deviceId})
-        });
+          60000
+        );
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'پاک‌سازی اطلاعات ناموفق بود.');
         const count = Number(result.removed_count || 0).toLocaleString('fa-IR');

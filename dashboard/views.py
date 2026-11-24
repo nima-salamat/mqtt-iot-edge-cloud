@@ -51,7 +51,7 @@ def _safe_device_state(device):
 
     for key in ("mqtt_connected", "mqtt_command_subscription_ready",
                 "rtsp_connected", "camera_ready", "tracking_active",
-                "recording_enabled"):
+                "recording_enabled", "recording_supported"):
         if isinstance(raw.get(key), bool):
             state[key] = raw[key]
 
@@ -532,6 +532,7 @@ def dashboard_overview(request):
             "mqtt_command_subscription_ready": bool(
                 state.get("mqtt_command_subscription_ready", False)
             ),
+            "recording_supported": bool(state.get("recording_supported", False)),
             "camera_ready": bool(state.get("camera_ready", False)),
             "rtsp_connected": bool(state.get("rtsp_connected", False)),
             "tracking_active": bool(state.get("tracking_active", False)),
@@ -629,6 +630,10 @@ def send_device_command(request, device_id):
         return JsonResponse({
             "error": "دوربین هنوز اشتراک موضوع فرمان MQTT را تأیید نکرده است."
         }, status=503)
+    if state.get("camera_ready") is not True:
+        return JsonResponse({"error": "دوربین در حال حاضر فریم تازه و آماده ضبط ندارد."}, status=503)
+    if state.get("recording_supported") is not True:
+        return JsonResponse({"error": "backend فعلی دوربین از ضبط MP4 پشتیبانی نمی‌کند."}, status=409)
 
     command_id = uuid.uuid4().hex
     expires_at = now + timedelta(seconds=60)

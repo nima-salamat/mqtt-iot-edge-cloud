@@ -62,6 +62,58 @@ class CameraPipelineStructureTests(unittest.TestCase):
             module.CameraPipeline._draw_boxes.__code__.co_varnames,
         )
 
+    def test_flask_session_secret_is_generated_private_and_persistent(self):
+        module = self._load_local_app_module()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "PI_DATA_DIR": directory,
+            "FLASK_SECRET_KEY": "",
+            "LOCAL_WEB_SECRET_PATH": "",
+        }):
+            first = module._load_local_flask_secret()
+            secret_path = Path(directory) / "local-web-secret"
+            second = module._load_local_flask_secret()
+
+            self.assertEqual(len(first), len(second))
+            self.assertEqual(first, second)
+            self.assertGreaterEqual(len(first), 32)
+            self.assertEqual(secret_path.stat().st_mode & 0o777, 0o600)
+
+            app = module.create_local_app(
+                SimpleNamespace(device_id="cam-secret-test"),
+                SimpleNamespace(get=lambda: {}),
+                MagicMock(),
+                SimpleNamespace(),
+            )
+            self.assertEqual(app.secret_key, first)
+
+    def test_flask_session_secret_refuses_symlink_path(self):
+        module = self._load_local_app_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            external = root / "external-secret"
+            external.write_text("external-secret-value-that-must-not-be-used", encoding="utf-8")
+            secret_path = root / "local-web-secret"
+            secret_path.symlink_to(external)
+            with patch.dict(os.environ, {
+                "PI_DATA_DIR": directory,
+                "FLASK_SECRET_KEY": "",
+                "LOCAL_WEB_SECRET_PATH": str(secret_path),
+            }):
+                with self.assertRaisesRegex(RuntimeError, "symlink"):
+                    module._load_local_flask_secret()
+            self.assertEqual(
+                external.read_text(encoding="utf-8"),
+                "external-secret-value-that-must-not-be-used",
+            )
+
+    def test_short_configured_flask_session_secret_is_rejected(self):
+        module = self._load_local_app_module()
+        with patch.dict(os.environ, {
+            "FLASK_SECRET_KEY": "too-short",
+        }):
+            with self.assertRaisesRegex(RuntimeError, "at least 32"):
+                module._load_local_flask_secret()
+
     def test_local_alarm_list_skips_corrupt_non_object_metadata(self):
         module = self._load_local_app_module()
 

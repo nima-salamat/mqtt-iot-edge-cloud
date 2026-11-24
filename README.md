@@ -155,7 +155,8 @@ The installer installs the Picamera2/libcamera, PyAV, OpenCV and NumPy system pa
 
 Edit /etc/mqtt-iot-pi.env before starting the service:
 - Set MQTT_PASSWORD to the MQTT_CAMERA_EDGE_PASSWORD configured on the VPS.
-- Set a strong LOCAL_WEB_PASSWORD and random FLASK_SECRET_KEY.
+- Set a strong LOCAL_WEB_PASSWORD. A placeholder or empty FLASK_SECRET_KEY now causes the Pi agent to generate and persist a random 0600 session key at /var/lib/mqttiot/local-web-secret; do not copy the generated key into logs or commit it.
+- The local login form uses CSRF protection and throttles repeated failed attempts per source IP. Set LOCAL_WEB_COOKIE_SECURE=1 only when the local portal is served through HTTPS.
 - Verify DOMAIN, API_BASE_URL and RTSPS_HOST.
 - Keep DEVICE_ID empty to let the agent generate a persistent unique ID on first launch.
 

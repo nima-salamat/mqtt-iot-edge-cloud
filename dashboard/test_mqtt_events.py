@@ -14,7 +14,8 @@ from django.utils import timezone
 from dashboard.models import Device, DeviceCommand
 from dashboard.mqtt_events import process_mqtt_message
 from dashboard.mqtt_security import (
-    decrypt_mqtt_command, device_mqtt_signing_key, sign_mqtt_payload,
+    decrypt_mqtt_command, device_mqtt_signing_key,
+    encrypt_mqtt_command, sign_mqtt_payload,
 )
 
 User = get_user_model()

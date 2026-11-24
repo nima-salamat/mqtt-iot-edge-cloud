@@ -216,6 +216,11 @@ class DeviceMqttEventTests(TestCase):
             {"recording_supported": "true"},
             {"pending_alerts": 1.5},
             {"pending_video_segments": True},
+            {"video_fps": True},
+            {"inference_fps": "NaN"},
+            {"tracking_seconds": "Infinity"},
+            {"video_fps": 121},
+            {"tracking_seconds": -1},
         )
         for invalid in invalid_updates:
             with self.subTest(invalid=invalid):
@@ -230,6 +235,43 @@ class DeviceMqttEventTests(TestCase):
         self.assertFalse(self.device.is_online)
         self.assertIsNone(self.device.last_heartbeat)
         self.assertFalse(self.device.current_state.get("mqtt_connected", False))
+
+    def test_stale_graceful_offline_event_cannot_disconnect_a_newer_session(self):
+        self.device.current_state = {
+            "mqtt_connected": True,
+            "mqtt_status": "online",
+            "mqtt_command_subscription_ready": True,
+            "last_mqtt_status_at": timezone.now().isoformat(),
+        }
+        self.device.save(update_fields=["current_state"])
+
+        self.assertFalse(self.send("status", {
+            "device_id": self.device.device_id,
+            "status": "offline",
+            "source": "device",
+            "reported_at": (timezone.now() - timedelta(minutes=3)).isoformat(),
+        }))
+        self.device.refresh_from_db()
+        self.assertTrue(self.device.current_state["mqtt_connected"])
+        self.assertTrue(self.device.current_state["mqtt_command_subscription_ready"])
+
+    def test_fresh_graceful_offline_event_is_applied(self):
+        self.device.current_state = {
+            "mqtt_connected": True,
+            "mqtt_status": "online",
+            "mqtt_command_subscription_ready": True,
+        }
+        self.device.save(update_fields=["current_state"])
+
+        self.assertTrue(self.send("status", {
+            "device_id": self.device.device_id,
+            "status": "offline",
+            "source": "device",
+            "reported_at": timezone.now().isoformat(),
+        }))
+        self.device.refresh_from_db()
+        self.assertFalse(self.device.current_state["mqtt_connected"])
+        self.assertFalse(self.device.current_state["mqtt_command_subscription_ready"])
 
     def test_last_will_marks_mqtt_disconnected_without_erasing_https_liveness(self):
         self.device.is_online = True

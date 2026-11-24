@@ -68,6 +68,15 @@
     <button class="btn secondary" type="submit">ذخیره سیاست نگهداری</button>
   </form>
 </section>
+<section class="section cleanup-section">
+  <div class="section-heading"><div><span class="eyebrow">SERVER DATA MANAGEMENT</span><h2>پاک‌سازی دستی اطلاعات سرور</h2><p class="muted">پاک‌سازی فقط داده‌های همین حساب را حذف می‌کند؛ فایل‌های محلی روی Raspberry Pi دست‌نخورده می‌مانند.</p></div></div>
+  <div class="cleanup-toolbar">
+    <button class="btn danger" type="button" data-cleanup-kind="alarms" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">حذف همه تصاویر و هشدارها</button>
+    <button class="btn danger" type="button" data-cleanup-kind="videos" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">حذف همه ویدئوهای آرشیو</button>
+    <button class="btn danger" type="button" data-cleanup-kind="logs" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">حذف همه لاگ‌ها</button>
+  </div>
+  <p id="cleanup-status" class="muted cleanup-status" role="status" aria-live="polite"></p>
+</section>
 <div class="modal" id="pair-modal" aria-hidden="true"><div class="modal-panel">
   <button class="modal-close" id="close-modal">×</button><span class="eyebrow">SECURE DEVICE PAIRING</span><h2>ثبت Raspberry Pi Camera</h2>
   <p class="muted">این QR فقط یک‌بار قابل استفاده است و پس از دو دقیقه منقضی می‌شود. آن را فقط مقابل دوربین دستگاه خودت بگیر.</p>

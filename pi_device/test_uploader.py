@@ -345,7 +345,10 @@ class QueueManagementTests(unittest.TestCase):
             },
         }
 
-        with patch("pi_device.uploader.collect_system_stats", return_value=system):
+        with patch("pi_device.uploader.collect_system_stats", return_value=system), patch(
+            "pi_device.uploader.time.monotonic",
+            side_effect=[20.0, 20.1, 20.2, 20.3],
+        ):
             self.uploader._send_heartbeat()
 
         self.uploader._session.post.assert_called_once()

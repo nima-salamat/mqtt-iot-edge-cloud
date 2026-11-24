@@ -108,6 +108,7 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
     )
     local_password = os.getenv("LOCAL_WEB_PASSWORD", "")
     login_failures: dict[str, deque[float]] = {}
+    login_failures_lock = threading.Lock()
     login_window_seconds = 300
     login_max_attempts = 5
 
@@ -178,8 +179,11 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             ), 503
 
         client_ip = request.remote_addr or "unknown"
-        attempts = _login_attempts_for(client_ip)
-        if len(attempts) >= login_max_attempts:
+        with login_failures_lock:
+            is_rate_limited = (
+                len(_login_attempts_for(client_ip)) >= login_max_attempts
+            )
+        if is_rate_limited:
             response = make_response(
                 render_template(
                     "login.html",
@@ -192,13 +196,15 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             return response
 
         if hmac.compare_digest(password, local_password):
-            login_failures.pop(client_ip, None)
+            with login_failures_lock:
+                login_failures.pop(client_ip, None)
             session.clear()
             session["authenticated"] = True
             session["csrf_token"] = secrets.token_urlsafe(24)
             return redirect(url_for("index"))
 
-        attempts.append(time.monotonic())
+        with login_failures_lock:
+            _login_attempts_for(client_ip).append(time.monotonic())
         return render_template(
             "login.html",
             error="گذرواژه صحیح نیست.",

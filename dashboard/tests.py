@@ -246,6 +246,27 @@ class DeviceApiTests(TestCase):
         self.device.refresh_from_db()
         self.assertEqual(self.device.current_state["system"], system)
 
+    def test_dashboard_overview_is_resilient_to_malformed_cached_device_state(self):
+        self.device.current_state = ["invalid", "legacy", "state"]
+        self.device.reported_video_fps = 500
+        self.device.reported_inference_fps = -1
+        self.device.save(update_fields=[
+            "current_state", "reported_video_fps", "reported_inference_fps"
+        ])
+        self.client.force_login(self.owner)
+
+        response = self.client.get(reverse("dashboard-overview"))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["devices"][0]
+        self.assertEqual(payload["system"], {})
+        self.assertFalse(payload["mqtt_connected"])
+        self.assertEqual(payload["tracking_seconds"], 0)
+        self.assertEqual(payload["pending_alerts"], 0)
+        self.assertEqual(payload["pending_video_segments"], 0)
+        self.assertEqual(payload["video_fps"], 0)
+        self.assertEqual(payload["inference_fps"], 0)
+
     def test_device_can_upload_an_mp4_segment_and_retry_it_idempotently(self):
         video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
         segment_id = "1795533000000-abcd1234"

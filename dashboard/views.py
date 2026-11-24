@@ -90,7 +90,7 @@ def segment_file(request, segment_id):
     size = int(segment.file.size or 0)
     range_header = request.headers.get("Range", "")
     if range_header:
-        match = re.fullmatch(r"bytes=(\\d*)-(\\d*)", range_header.strip())
+        match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
         if not match or size <= 0:
             file_handle.close()
             response = JsonResponse({"error": "invalid_range"}, status=416)

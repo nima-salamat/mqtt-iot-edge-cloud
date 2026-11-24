@@ -51,6 +51,8 @@ class RaspberryPiMqttBridge:
         self._signing_key = ""
         self._command_handler = None
         self._started = False
+        self._command_subscription_ready = False
+        self._publish_warning_at = {}
         self.topic_root = f"{self.prefix}/devices/{device_id}"
         self.alarm_topic = f"{self.topic_root}/alarms"
         self.telemetry_topic = f"{self.topic_root}/telemetry"
@@ -75,6 +77,8 @@ class RaspberryPiMqttBridge:
             self.client.username_pw_set(self.username, self.password)
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
+        self.client.on_subscribe = self._on_subscribe
+        self.client.on_publish = self._on_publish
         self.client.on_message = self._on_message
 
     def set_signing_key(self, signing_key):
@@ -135,10 +139,31 @@ class RaspberryPiMqttBridge:
             self.last_error = "MQTT_PASSWORD is empty; MQTT event delivery is disabled."
             log.error(self.last_error)
             return
+        if not self._signing_key:
+            self.last_error = (
+                "MQTT connected without a device signing key; signed telemetry and "
+                "remote commands remain disabled until HTTPS credential bootstrap succeeds."
+            )
+            log.error(
+                "MQTT signing key is not loaded for device %s; check DEVICE_CREDENTIALS_PATH "
+                "and the paired credential file (key contents are never logged)",
+                self.device_id,
+            )
+        else:
+            log.info(
+                "MQTT signing key loaded for device %s; broker=%s:%s path=%s topic_root=%s",
+                self.device_id, self.host, self.port, self.ws_path, self.topic_root,
+            )
         self._configure_will()
         self._started = True
-        self.client.connect_async(self.host, self.port, keepalive=45)
-        self.client.loop_start()
+        try:
+            self.client.connect_async(self.host, self.port, keepalive=45)
+            self.client.loop_start()
+        except Exception as exc:
+            with self._lock:
+                self.last_error = f"MQTT startup failed: {exc}"[:500]
+            log.exception("Could not start MQTT event channel for device %s", self.device_id)
+            raise
 
     def _reconnect_for_will(self):
         try:
@@ -159,33 +184,120 @@ class RaspberryPiMqttBridge:
             with self._lock:
                 self.connected = False
 
+    def _report_publish_failure(self, topic, reason):
+        message = f"MQTT publish failed for {topic}: {reason}"[:500]
+        now = time.monotonic()
+        with self._lock:
+            self.last_error = message
+            previous = self._publish_warning_at.get(topic, 0.0)
+            should_log = now - previous >= 30.0
+            if should_log:
+                self._publish_warning_at[topic] = now
+        if should_log:
+            log.warning("%s", message)
+
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         with self._lock:
             self.connected = not reason_code.is_failure
-            self.last_error = "" if self.connected else f"Broker rejected connection: {reason_code}"
+            self._command_subscription_ready = False
             has_key = bool(self._signing_key)
+            self.last_error = "" if self.connected and has_key else (
+                f"Broker rejected connection: {reason_code}" if not self.connected
+                else "MQTT connected but the per-device signing key is not loaded."
+            )
         if not self.connected:
             log.error(self.last_error)
             return
-        log.info("Connected to authenticated MQTT device-event channel")
-        if has_key:
-            try:
-                client.subscribe(self.command_topic, qos=1)
-                self._publish_status("online", wait_for_ack=False)
-            except Exception:
-                log.exception("Could not initialize MQTT command subscription/status")
+        log.info(
+            "Connected to MQTT broker for device %s (broker=%s:%s, topic_root=%s)",
+            self.device_id, self.host, self.port, self.topic_root,
+        )
+        if not has_key:
+            log.error(
+                "MQTT transport is connected but cannot publish signed events or receive "
+                "remote commands because the device signing key is missing; check the "
+                "effective DEVICE_CREDENTIALS_PATH."
+            )
+            return
+        try:
+            result, mid = client.subscribe(self.command_topic, qos=1)
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                with self._lock:
+                    self.last_error = (
+                        f"MQTT command subscription could not be queued: "
+                        f"{mqtt.error_string(result)}"
+                    )
+                log.error("%s", self.last_error)
+            else:
+                log.info(
+                    "MQTT command subscription requested (topic=%s, mid=%s)",
+                    self.command_topic, mid,
+                )
+        except Exception:
+            log.exception("Could not request MQTT command subscription")
+            return
+
+        # Publish the retained online state from a worker thread. Waiting for a
+        # PUBACK inside Paho's on_connect callback would block its network loop.
+        threading.Thread(
+            target=self._publish_initial_status,
+            name="mqtt-online-status",
+            daemon=True,
+        ).start()
+
+    def _publish_initial_status(self):
+        if self._publish_status("online", wait_for_ack=True):
+            log.info("MQTT retained online status was acknowledged by the broker")
+        else:
+            with self._lock:
+                reason = self.last_error or "no PUBACK received"
+            log.error("Could not publish retained MQTT online status: %s", reason)
+
+    def _on_subscribe(self, client, userdata, mid, reason_codes, properties):
+        failures = [
+            str(code) for code in (reason_codes or [])
+            if getattr(code, "is_failure", False)
+        ]
+        if failures:
+            with self._lock:
+                self._command_subscription_ready = False
+                self.last_error = (
+                    "MQTT command subscription rejected: " + ", ".join(failures)
+                )[:500]
+            log.error("%s", self.last_error)
+            return
+        with self._lock:
+            self._command_subscription_ready = True
+            if self.last_error.startswith("MQTT command subscription"):
+                self.last_error = ""
+        log.info("MQTT command subscription acknowledged (mid=%s)", mid)
+
+    def _on_publish(self, client, userdata, mid, reason_code, properties):
+        if getattr(reason_code, "is_failure", False):
+            self._report_publish_failure(
+                "<async>", f"broker rejected PUBACK for message {mid}: {reason_code}"
+            )
+            return
+        with self._lock:
+            self.last_publish_at = utc_now()
+            if self.last_error.startswith("MQTT publish failed"):
+                self.last_error = ""
+        log.debug("MQTT broker acknowledged published message (mid=%s)", mid)
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties):
         with self._lock:
             self.connected = False
+            self._command_subscription_ready = False
             self.last_error = f"MQTT disconnected: {reason_code}"
         log.warning("MQTT disconnected; automatic reconnect remains enabled: %s", reason_code)
 
     def _publish_signed(self, topic, payload, *, retain=False, timeout=5, wait_for_ack=True):
         if not self.client.is_connected():
+            self._report_publish_failure(topic, "client is not connected")
             return False
         signed = self._signed(payload)
         if signed is None:
+            self._report_publish_failure(topic, "device signing key is missing or payload signing failed")
             return False
         try:
             info = self.client.publish(
@@ -195,21 +307,25 @@ class RaspberryPiMqttBridge:
                 retain=retain,
             )
             if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                self._report_publish_failure(
+                    topic, f"publish was not queued: {mqtt.error_string(info.rc)} (rc={info.rc})"
+                )
                 return False
-            # Do not block Paho's network thread from inside on_connect: it
-            # must keep receiving packets to process the PUBACK we would wait for.
+            # Never wait inside the Paho network callback. For normal telemetry
+            # calls, require the QoS 1 PUBACK before reporting success.
             if wait_for_ack:
                 info.wait_for_publish(timeout=timeout)
                 if not info.is_published():
+                    self._report_publish_failure(
+                        topic, f"timed out after {timeout}s waiting for QoS 1 PUBACK"
+                    )
                     return False
-            with self._lock:
-                self.last_publish_at = utc_now()
-                self.last_error = ""
+                with self._lock:
+                    self.last_publish_at = utc_now()
+                    self.last_error = ""
             return True
         except Exception as exc:
-            with self._lock:
-                self.last_error = str(exc)
-            log.warning("MQTT publish failed on %s: %s", topic, exc)
+            self._report_publish_failure(topic, f"{type(exc).__name__}: {exc}")
             return False
 
     def _publish_status(self, status, *, wait_for_ack=True):
@@ -344,6 +460,8 @@ class RaspberryPiMqttBridge:
             return {
                 "device_id": self.device_id,
                 "mqtt_connected": self.connected,
+                "mqtt_signing_key_loaded": bool(self._signing_key),
+                "mqtt_command_subscription_ready": self._command_subscription_ready,
                 "mqtt_host": self.host,
                 "mqtt_last_publish_at": self.last_publish_at,
                 "last_error": self.last_error,

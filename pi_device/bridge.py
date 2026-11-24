@@ -15,7 +15,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
 from .atomic_files import atomic_write_json
-from .mqtt_protocol import sign_payload, verify_payload
+from .mqtt_protocol import decrypt_mqtt_command, sign_payload, verify_payload
 
 log = logging.getLogger(__name__)
 
@@ -458,11 +458,19 @@ class RaspberryPiMqttBridge:
             if expires_at <= now:
                 self._send_command_ack_async(command_id, "failed", {"error": "command_expired"})
                 return
-            command_type = str(payload.get("command_type", ""))
-            command_payload = payload.get("payload")
-            if not isinstance(command_payload, dict):
-                self._send_command_ack_async(command_id, "failed", {"error": "invalid_payload"})
+            try:
+                decrypted = decrypt_mqtt_command(payload, key)
+            except ValueError as exc:
+                log.warning(
+                    "Ignoring MQTT command that was not encrypted for this device: %s",
+                    exc,
+                )
+                self._send_command_ack_async(
+                    command_id, "failed", {"error": "command_decryption_failed"}
+                )
                 return
+            command_type = decrypted["command_type"]
+            command_payload = decrypted["payload"]
             threading.Thread(
                 target=self._execute_command,
                 args=(command_id, command_type, command_payload),

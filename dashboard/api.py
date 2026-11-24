@@ -434,7 +434,13 @@ def create_stream_grant(request, device_id):
 @csrf_exempt
 @require_POST
 def mediamtx_auth(request):
-    """MediaMTX external auth hook for TLS-protected publishing and owner-scoped playback."""
+    """MediaMTX internal auth hook; never expose credential checks to the public host."""
+    # MediaMTX calls this endpoint over the private Compose network using its
+    # service URL http://api:8000. Public proxy requests must never reach the
+    # device-token / stream-grant verification oracle.
+    request_host = request.get_host().split(":", 1)[0].strip("[]").lower()
+    if request_host != "api":
+        return HttpResponse(status=404)
     try:
         payload = json.loads(request.body or b"{}")
     except (json.JSONDecodeError, UnicodeDecodeError, TypeError):

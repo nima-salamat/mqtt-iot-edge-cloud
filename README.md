@@ -73,7 +73,7 @@ The YOLOv5n NCNN model is downloaded and integrity-checked by the Pi installer. 
 
 ## Device heartbeat and liveness
 
-The Pi sends an HTTPS heartbeat every 15 seconds. It reports camera readiness, YOLOv5n NCNN model state, measured video FPS and inference FPS, RTSPS live-stream connectivity, MQTT alarm-channel connectivity, and pending alarm/video queue counts.
+The Pi sends an HTTPS heartbeat every 15 seconds. It reports camera readiness, YOLOv5n NCNN model state, measured video FPS and inference FPS, RTSPS live-stream connectivity, MQTT alarm-channel connectivity, pending alarm/video queue counts, and best-effort system telemetry (SoC temperature, CPU use, RAM use and the data-volume storage use). Django validates the telemetry fields before saving them. The account's camera cards and the device detail page show the latest reported hardware health; values remain unavailable until the Pi sends its first updated heartbeat.
 
 The server considers a device offline after 50 seconds without a successful heartbeat. The server cleanup worker checks this and the per-user retention policy every 15 seconds.
 
@@ -326,13 +326,15 @@ For PostgreSQL mode, omit `-f docker-compose.sqlite.yml`.
 
 The app's backend services are not published on public interfaces. Do not expose the local Pi management port 8080 or the PostgreSQL and raw MQTT ports to the Internet.
 
+The Django API image installs FFmpeg and ffprobe for the continuous archive chunk endpoint. Rebuild the `api` image and recreate both `api` and `web` after updating the Dockerfile; these services share the same application image.
+
 ## Web interfaces
 
 - User dashboard: https://server.echonode.website/
 - Django Admin: https://server.echonode.website/admin/
 - Operator diagnostics: https://server.echonode.website/ops/
 
-The Django user dashboard includes registered camera cards, live status, recent alarms with image thumbnails, per-device health, live WebRTC view, a chronological MP4 archive player with sequential playback, device logs, per-device cleanup actions and per-user retention settings. The account dashboard also supports cleanup of server-side alarms/images, archived videos and logs; these actions never delete the Pi's local files.
+The Django user dashboard includes registered camera cards with Pi temperature/CPU/RAM/storage health cards, live status, recent alarms with image thumbnails, per-device health, live WebRTC view, device logs, per-device cleanup actions and per-user retention settings. The device detail page provides one continuous H.264 archive player with a seekable timeline. It loads adjacent archived MP4 segments on demand as short fragmented-MP4 chunks (typically 10–15 seconds, rounded to multiples of the actual segment duration), joins them in the browser with Media Source Extensions, and fetches the next chunk as playback approaches the buffer edge. The API container includes FFmpeg/ffprobe and stream-copies H.264 rather than re-encoding it. This playback path requires locally readable media files in the shared Django media volume and a browser with MSE/H.264 support. The account dashboard also supports cleanup of server-side alarms/images, archived videos and logs; these actions never delete the Pi's local files.
 
 The Streamlit /ops page is a separate operator diagnostics view for device heartbeats, selectable alarm-image previews, archived MP4 playback, device logs, Mosquitto and database health. Its archive page also supports owner/operator-wide or per-camera evidence cleanup. It uses a separate PANEL_USERNAME / PANEL_PASSWORD; it is not the user-facing IoT panel and does not control devices. The Streamlit web container mounts the shared media volume read/write so it can display and clean up the same Django evidence files.
 

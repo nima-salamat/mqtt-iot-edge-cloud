@@ -19,7 +19,7 @@ from django.views.decorators.http import require_POST
 from .models import Alarm, Device, DeviceCommand, DeviceLog, RetentionPolicy, VideoSegment
 from .device_auth import revoke_device_access
 from .services import cleanup_iot_data
-from .mqtt_security import device_mqtt_signing_key, sign_mqtt_payload
+from .mqtt_security import device_mqtt_signing_key, encrypt_mqtt_command
 from .mqtt_commands import publish_mqtt_command
 
 logger = logging.getLogger(__name__)
@@ -719,7 +719,7 @@ def send_device_command(request, device_id):
         expires_at=expires_at,
     )
     try:
-        envelope = sign_mqtt_payload({
+        envelope = encrypt_mqtt_command({
             "device_id": device.device_id,
             "command_id": command_id,
             "command_type": command_type,

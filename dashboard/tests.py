@@ -3,6 +3,7 @@ import json
 import tempfile
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.files.base import ContentFile
@@ -127,6 +128,12 @@ class DeviceApiTests(TestCase):
                 "recording_enabled": True,
                 "last_video_upload_at": "2026-11-24T10:00:00+00:00",
                 "last_video_upload_error": "",
+                "system": {
+                    "cpu_percent": 42.5,
+                    "temperature_c": 51.8,
+                    "memory": {"total_bytes": 1000, "used_bytes": 400, "available_bytes": 600, "used_percent": 40.0},
+                    "storage": {"total_bytes": 2000, "used_bytes": 500, "free_bytes": 1500, "used_percent": 25.0, "path": "/private/pi/path"},
+                },
                 "model": "yolov5n-ncnn",
             }),
             content_type="application/json",
@@ -147,6 +154,28 @@ class DeviceApiTests(TestCase):
             "2026-11-24T10:00:00+00:00",
         )
         self.assertEqual(self.device.current_state["last_video_upload_error"], "")
+        self.assertEqual(self.device.current_state["system"]["temperature_c"], 51.8)
+        self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 40.0)
+        self.assertNotIn("path", self.device.current_state["system"]["storage"])
+
+    def test_device_heartbeat_discards_invalid_system_metrics(self):
+        response = self.client.post(
+            reverse("device-heartbeat"),
+            data=json.dumps({
+                "system": {
+                    "cpu_percent": float("nan"),
+                    "temperature_c": 900,
+                    "memory": {"used_percent": 140},
+                    "storage": {"path": "/should/not/be/stored"},
+                },
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.current_state["system"], {})
 
     def test_device_can_upload_an_mp4_segment_and_retry_it_idempotently(self):
         video_bytes = b"\\x00\\x00\\x00\\x18ftypisom\\x00\\x00\\x02\\x00isomiso2"
@@ -509,6 +538,24 @@ class DashboardVideoRangeTests(TestCase):
         )
         self.assertTrue(payload["last_video_upload_at"])
 
+    def test_video_feed_includes_persisted_hardware_metrics(self):
+        self.device.current_state = {
+            "system": {
+                "temperature_c": 48.6,
+                "cpu_percent": 21.0,
+                "memory": {"used_percent": 55.0},
+                "storage": {"used_percent": 67.0},
+            }
+        }
+        self.device.save(update_fields=["current_state"])
+        self.client.force_login(self.owner)
+        response = self.client.get(
+            reverse("dashboard:device-videos", args=[self.device.device_id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["system"]["temperature_c"], 48.6)
+        self.assertEqual(response.json()["system"]["memory"]["used_percent"], 55.0)
+
     def test_video_feed_does_not_expose_another_users_camera(self):
         other = User.objects.create_user(username="video-feed-other", password="Strong-Pass-12345")
         other_device = Device.objects.create(
@@ -519,6 +566,61 @@ class DashboardVideoRangeTests(TestCase):
             reverse("dashboard:device-videos", args=[other_device.device_id])
         )
         self.assertEqual(response.status_code, 404)
+
+    def test_device_video_chunk_is_owner_scoped_and_remuxes_adjacent_files(self):
+        first = VideoSegment.objects.create(
+            device=self.device, segment_id="chunk-first", duration_seconds=5
+        )
+        first.file.save("chunk-first.mp4", ContentFile(b"first-input"), save=True)
+        second = VideoSegment.objects.create(
+            device=self.device,
+            segment_id="chunk-second",
+            started_at=timezone.now() + timedelta(seconds=5),
+            duration_seconds=5,
+        )
+        second.file.save("chunk-second.mp4", ContentFile(b"second-input"), save=True)
+
+        from unittest.mock import patch, Mock
+
+        def fake_run(command, **kwargs):
+            if command[0] == "ffprobe":
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"streams": [{"codec_name": "h264", "profile": "High", "level": 31}]}),
+                    stderr="",
+                )
+            output_path = Path(command[-1])
+            output_path.write_bytes(b"F" * 1024)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        self.client.force_login(self.owner)
+        with patch("dashboard.views.shutil.which", return_value="/usr/bin/ffmpeg"), patch(
+            "dashboard.views.subprocess.run", side_effect=fake_run
+        ):
+            response = self.client.get(
+                reverse("dashboard:device-video-chunk", args=[self.device.device_id]),
+                {"start_id": first.pk, "seconds": 10},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response["Content-Type"], "video/mp4")
+            self.assertEqual(response["X-Video-Codec"], "avc1.64001f")
+            self.assertEqual(response["X-Video-Segment-Count"], "2")
+            self.assertEqual(b"".join(response.streaming_content), b"F" * 1024)
+            response.close()
+
+    def test_device_video_chunk_returns_clear_error_when_ffmpeg_is_missing(self):
+        segment = VideoSegment.objects.create(
+            device=self.device, segment_id="chunk-no-ffmpeg", duration_seconds=5
+        )
+        segment.file.save("chunk-no-ffmpeg.mp4", ContentFile(b"video"), save=True)
+        from unittest.mock import patch
+        self.client.force_login(self.owner)
+        with patch("dashboard.views.shutil.which", return_value=None):
+            response = self.client.get(
+                reverse("dashboard:device-video-chunk", args=[self.device.device_id]),
+                {"start_id": segment.pk, "seconds": 12},
+            )
+        self.assertEqual(response.status_code, 503)
 
     def test_archived_video_supports_browser_byte_ranges(self):
         segment = VideoSegment.objects.create(

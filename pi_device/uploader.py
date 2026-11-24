@@ -41,6 +41,8 @@ class DurableUploader:
         self._session = requests.Session()
         self.last_upload_at = ""
         self.last_upload_error = ""
+        self.last_video_upload_at = ""
+        self.last_video_upload_error = ""
         self.last_heartbeat_at = ""
         self.uploaded_segments = 0
         self._last_heartbeat_monotonic = 0.0
@@ -227,7 +229,13 @@ class DurableUploader:
             "tracking_seconds": state.get("tracking_seconds", 0.0),
             "model": "yolov5n-ncnn",
             "software_version": os.getenv("DEVICE_SOFTWARE_VERSION", "alarm-camera-0.1"),
+            "recording_enabled": bool(
+                self.settings_store.get().get("recording_enabled", True)
+            ) if self.settings_store is not None else True,
+            "last_video_upload_error": self.last_video_upload_error[:500],
         }
+        if self.last_video_upload_at:
+            payload["last_video_upload_at"] = self.last_video_upload_at
         response = self._session.post(
             f"{self.api_base}/api/device/heartbeat/",
             headers=self._headers(),
@@ -341,23 +349,30 @@ class DurableUploader:
                     started = datetime.fromtimestamp(started_ms / 1000.0, tz=timezone.utc).isoformat()
                 except (ValueError, IndexError):
                     started = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
-                with path.open("rb") as handle:
-                    response = self._session.post(
-                        f"{self.api_base}/api/device/segments/",
-                        headers=self._headers(),
-                        data={
-                            "segment_id": path.stem,
-                            "sha256": checksum,
-                            "started_at": started,
-                            "duration_seconds": str(self.settings_store.get()["segment_seconds"]),
-                        },
-                        files={"file": (path.name, handle, "video/mp4")},
-                        timeout=(15, 180),
-                    )
-                self._check_response(response)
-                path.with_suffix(".uploaded").write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+                try:
+                    with path.open("rb") as handle:
+                        response = self._session.post(
+                            f"{self.api_base}/api/device/segments/",
+                            headers=self._headers(),
+                            data={
+                                "segment_id": path.stem,
+                                "sha256": checksum,
+                                "started_at": started,
+                                "duration_seconds": str(self.settings_store.get()["segment_seconds"]),
+                            },
+                            files={"file": (path.name, handle, "video/mp4")},
+                            timeout=(15, 180),
+                        )
+                    self._check_response(response)
+                except Exception as exc:
+                    self.last_video_upload_error = str(exc)[:500]
+                    raise
+                uploaded_at = datetime.now(timezone.utc).isoformat()
+                path.with_suffix(".uploaded").write_text(uploaded_at, encoding="utf-8")
                 self.uploaded_segments += 1
-                self.last_upload_at = datetime.now(timezone.utc).isoformat()
+                self.last_upload_at = uploaded_at
+                self.last_video_upload_at = uploaded_at
+                self.last_video_upload_error = ""
 
     @staticmethod
     def _file_size(path):

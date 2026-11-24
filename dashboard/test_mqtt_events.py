@@ -110,6 +110,35 @@ class DeviceMqttEventTests(TestCase):
         self.assertEqual(device["system"]["cpu_percent"], 46.5)
         self.assertEqual(device["system"]["memory"]["used_percent"], 40.0)
 
+    def test_partial_signed_system_sample_preserves_previous_cpu_and_ram_values(self):
+        self.device.current_state = {
+            "system": {
+                "cpu_percent": 31.2,
+                "memory": {
+                    "total_bytes": 8_000,
+                    "used_bytes": 3_600,
+                    "available_bytes": 4_400,
+                    "used_percent": 45.0,
+                },
+            },
+        }
+        self.device.save(update_fields=["current_state"])
+        payload = {
+            "device_id": self.device.device_id,
+            "reported_at": timezone.now().isoformat(),
+            "system": {
+                "cpu_percent": None,
+                "memory": {"total_bytes": 8_192},
+            },
+        }
+
+        self.assertTrue(self.send("telemetry", payload))
+        self.device.refresh_from_db()
+        system = self.device.current_state["system"]
+        self.assertEqual(system["cpu_percent"], 31.2)
+        self.assertEqual(system["memory"]["total_bytes"], 8_192)
+        self.assertEqual(system["memory"]["used_percent"], 45.0)
+
     def test_out_of_order_signed_telemetry_is_rejected(self):
         last_accepted = timezone.now() - timedelta(minutes=2)
         self.device.current_state = {

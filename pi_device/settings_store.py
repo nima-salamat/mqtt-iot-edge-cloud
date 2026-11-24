@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 from pathlib import Path
@@ -17,8 +18,9 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_float(name: str, default: float) -> float:
     try:
-        return float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
+        value = float(os.getenv(name, str(default)))
+        return value if math.isfinite(value) else default
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -89,10 +91,14 @@ def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
         low, high = RANGES.get(key, (None, None))
         try:
             number = float(raw) if key == "alert_confidence" else int(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if key in {"video_fps", "inference_fps"}:
-            number = max(1, number)
+        if key == "alert_confidence" and not math.isfinite(number):
+            continue
+        if key == "video_fps":
+            number = max(1, min(120, number))
+        elif key == "inference_fps":
+            number = max(1, min(60, number))
         elif low is not None:
             number = max(low, min(high, number))
         result[key] = round(number, 3) if key == "alert_confidence" else int(number)

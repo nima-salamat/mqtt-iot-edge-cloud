@@ -396,13 +396,21 @@ def upload_segment(request):
     if digest.hexdigest() != expected_sha:
         return JsonResponse({"error": "checksum_mismatch"}, status=400)
     uploaded.seek(0)
-    segment = VideoSegment.objects.filter(device=device, segment_id=segment_id).first()
-    if segment is not None:
-        return JsonResponse({"status": "already_stored", "segment_id": segment_id, "created": False})
     try:
         duration = max(1, min(60, int(request.POST.get("duration_seconds") or 5)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return JsonResponse({"error": "invalid_duration"}, status=400)
+    segment = VideoSegment.objects.filter(device=device, segment_id=segment_id).first()
+    if segment is not None:
+        # Idempotent retries are valid only when the same segment ID still
+        # identifies the same bytes. Do not silently accept a reused ID with
+        # different content and leave the dashboard showing an older clip.
+        if (
+            (segment.checksum_sha256 and segment.checksum_sha256 != expected_sha)
+            or (segment.size_bytes and segment.size_bytes != uploaded.size)
+        ):
+            return JsonResponse({"error": "segment_id_conflict"}, status=409)
+        return JsonResponse({"status": "already_stored", "segment_id": segment_id, "created": False})
     segment = VideoSegment(
         device=device, segment_id=segment_id, started_at=_parse_time(request.POST.get("started_at")),
         duration_seconds=duration, checksum_sha256=expected_sha, size_bytes=uploaded.size,
@@ -510,15 +518,21 @@ def mediamtx_auth(request):
 
 
 def _parse_time(value):
+    now = timezone.now()
     if not value:
-        return timezone.now()
+        return now
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         if timezone.is_naive(parsed):
             parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+        # Reject absurd future timestamps from a drifting Pi clock. Past
+        # timestamps are retained so retention can expire genuinely old
+        # uploads that were queued while the camera was offline.
+        if parsed > now + timedelta(minutes=5):
+            return now
         return parsed
-    except (ValueError, TypeError):
-        return timezone.now()
+    except (ValueError, TypeError, OverflowError):
+        return now
 
 
 @login_required

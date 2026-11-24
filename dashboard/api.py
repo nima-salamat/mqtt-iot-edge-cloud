@@ -156,6 +156,14 @@ def heartbeat(request):
         "model": str(payload.get("model", "yolov5n-ncnn"))[:64],
         "software_version": str(payload.get("software_version", ""))[:64],
     })
+    if isinstance(payload.get("recording_enabled"), bool):
+        state["recording_enabled"] = payload["recording_enabled"]
+    if "last_video_upload_at" in payload:
+        last_video_upload_at = str(payload.get("last_video_upload_at") or "").strip()[:64]
+        if last_video_upload_at:
+            state["last_video_upload_at"] = last_video_upload_at
+    if "last_video_upload_error" in payload:
+        state["last_video_upload_error"] = str(payload.get("last_video_upload_error") or "").strip()[:500]
     device.current_state = state
     device.save(update_fields=[
         "is_online", "last_seen", "last_heartbeat", "reported_video_fps",

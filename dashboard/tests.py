@@ -506,7 +506,7 @@ class DeviceApiTests(TestCase):
         from django.core.files.base import ContentFile
         from django.db.models.query import QuerySet
 
-        video_bytes = b"\\x00\\x00\\x00\\x18ftypisom\\x00\\x00\\x02\\x00isomiso2"
+        video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
         segment_id = "1795533000000-race1234"
         checksum = hashlib.sha256(video_bytes).hexdigest()
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):

@@ -748,8 +748,24 @@
     populateCameraResolutions(state.video_modes, selectedValue);
     if (!latestVideoModes.length) {
       const fallbackMaximum = Number(state.camera_max_fps || 0);
-      if (fallbackMaximum > 0 && manualFpsInput) {
-        manualFpsInput.max = String(Math.max(1, Math.floor(fallbackMaximum)));
+      if (fallbackMaximum > 0) {
+        const maximum = Math.max(1, Math.floor(fallbackMaximum));
+        if (manualFpsInput) manualFpsInput.max = String(maximum);
+        if (inferenceFpsInput) inferenceFpsInput.max = String(maximum);
+        if (fpsList) {
+          fpsList.replaceChildren();
+          for (const rate of (Array.isArray(state.video_fps_options) ? state.video_fps_options : [])) {
+            const option = document.createElement('option');
+            option.value = String(Math.max(1, Math.floor(Number(rate))));
+            option.label = option.value + ' FPS · نرخ گزارش‌شده توسط درایور';
+            fpsList.append(option);
+          }
+        }
+        const maxLabel = $('camera-max-fps');
+        if (maxLabel) {
+          maxLabel.textContent = maximum.toLocaleString('fa-IR') +
+            ' FPS · گزارش درایور، نه فهرست کامل modeها';
+        }
       }
     }
   }

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 from datetime import timedelta
@@ -5,6 +6,7 @@ from pathlib import Path
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.urls import reverse
@@ -122,6 +124,9 @@ class DeviceApiTests(TestCase):
                 "rtsp_connected": True,
                 "camera_ready": True,
                 "pending_alerts": 2,
+                "recording_enabled": True,
+                "last_video_upload_at": "2026-11-24T10:00:00+00:00",
+                "last_video_upload_error": "",
                 "model": "yolov5n-ncnn",
             }),
             content_type="application/json",
@@ -136,6 +141,44 @@ class DeviceApiTests(TestCase):
         self.assertAlmostEqual(self.device.reported_inference_fps, 4.9)
         self.assertTrue(self.device.current_state["rtsp_connected"])
         self.assertEqual(self.device.current_state["pending_alerts"], 2)
+        self.assertTrue(self.device.current_state["recording_enabled"])
+        self.assertEqual(
+            self.device.current_state["last_video_upload_at"],
+            "2026-11-24T10:00:00+00:00",
+        )
+        self.assertEqual(self.device.current_state["last_video_upload_error"], "")
+
+    def test_device_can_upload_an_mp4_segment_and_retry_it_idempotently(self):
+        video_bytes = b"\\x00\\x00\\x00\\x18ftypisom\\x00\\x00\\x02\\x00isomiso2"
+        segment_id = "1795533000000-abcd1234"
+        data = {
+            "segment_id": segment_id,
+            "sha256": hashlib.sha256(video_bytes).hexdigest(),
+            "started_at": timezone.now().isoformat(),
+            "duration_seconds": "5",
+        }
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            response = self.client.post(
+                reverse("device-upload-segment"),
+                data={**data, "file": SimpleUploadedFile("clip.mp4", video_bytes, content_type="video/mp4")},
+                HTTP_AUTHORIZATION=f"Bearer {self.token}",
+                HTTP_X_DEVICE_ID=self.device.device_id,
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            self.assertTrue(response.json()["created"])
+            segment = VideoSegment.objects.get(device=self.device, segment_id=segment_id)
+            self.assertEqual(segment.size_bytes, len(video_bytes))
+            self.assertEqual(Path(segment.file.path).read_bytes(), video_bytes)
+
+            retry = self.client.post(
+                reverse("device-upload-segment"),
+                data={**data, "file": SimpleUploadedFile("clip.mp4", video_bytes, content_type="video/mp4")},
+                HTTP_AUTHORIZATION=f"Bearer {self.token}",
+                HTTP_X_DEVICE_ID=self.device.device_id,
+            )
+            self.assertEqual(retry.status_code, 200, retry.content)
+            self.assertFalse(retry.json()["created"])
+            self.assertEqual(VideoSegment.objects.filter(device=self.device, segment_id=segment_id).count(), 1)
 
     def test_mediamtx_publish_auth_accepts_internal_compose_service_host(self):
         response = self.client.post(
@@ -422,6 +465,60 @@ class DashboardVideoRangeTests(TestCase):
         media_override.enable()
         self.addCleanup(media_override.disable)
         self.addCleanup(self.media_directory.cleanup)
+
+    def test_video_feed_refreshes_with_new_segments_and_reports_recording_health(self):
+        old = VideoSegment.objects.create(
+            device=self.device,
+            segment_id="feed-old",
+            started_at=timezone.now() - timedelta(seconds=10),
+            duration_seconds=5,
+            size_bytes=8,
+        )
+        old.file.save("feed-old.mp4", ContentFile(b"old-video"), save=True)
+        latest = VideoSegment.objects.create(
+            device=self.device,
+            segment_id="feed-latest",
+            started_at=timezone.now(),
+            duration_seconds=5,
+            size_bytes=11,
+        )
+        latest.file.save("feed-latest.mp4", ContentFile(b"latest-video"), save=True)
+        self.device.current_state = {
+            "recording_enabled": True,
+            "rtsp_connected": True,
+            "pending_video_segments": 2,
+            "last_video_upload_error": "",
+        }
+        self.device.save(update_fields=["current_state"])
+
+        self.client.force_login(self.owner)
+        response = self.client.get(
+            reverse("dashboard:device-videos", args=[self.device.device_id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        payload = response.json()
+        self.assertEqual([item["segment_id"] for item in payload["segments"]], ["feed-old", "feed-latest"])
+        self.assertTrue(payload["recording_enabled"])
+        self.assertTrue(payload["rtsp_connected"])
+        self.assertEqual(payload["pending_video_segments"], 2)
+        self.assertEqual(
+            payload["segments"][-1]["url"],
+            reverse("dashboard:segment-file", args=[latest.pk]),
+        )
+        self.assertTrue(payload["last_video_upload_at"])
+
+    def test_video_feed_does_not_expose_another_users_camera(self):
+        other = User.objects.create_user(username="video-feed-other", password="Strong-Pass-12345")
+        other_device = Device.objects.create(
+            device_id="cam-video-feed-other", owner=other, name="Other Video Camera"
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(
+            reverse("dashboard:device-videos", args=[other_device.device_id])
+        )
+        self.assertEqual(response.status_code, 404)
 
     def test_archived_video_supports_browser_byte_ranges(self):
         segment = VideoSegment.objects.create(

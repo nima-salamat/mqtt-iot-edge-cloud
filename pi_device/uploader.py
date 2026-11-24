@@ -87,8 +87,15 @@ class DurableUploader:
             raise
         self.state_provider = lambda: {}
         self.credentials_revoked = True
-        if self.bridge is not None and hasattr(self.bridge, "set_signing_key"):
-            self.bridge.set_signing_key("")
+        if self.bridge is not None:
+            revoke_session = getattr(self.bridge, "revoke_credentials", None)
+            if callable(revoke_session):
+                try:
+                    revoke_session()
+                except Exception:
+                    log.exception("Could not stop the revoked MQTT session")
+            elif hasattr(self.bridge, "set_signing_key"):
+                self.bridge.set_signing_key("")
         self.last_heartbeat_at = ""
         self.last_mqtt_telemetry_at = ""
         self._last_heartbeat_monotonic = 0.0

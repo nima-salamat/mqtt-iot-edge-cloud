@@ -861,7 +861,7 @@ class CameraPipeline:
                 try:
                     # Detach only the local MP4 writer. Camera, YOLO and RTSPS
                     # remain active and receive every subsequent frame.
-                    self.local_output.switch_output(None)
+                    previous_finalized = self.local_output.switch_output(None)
                 except Exception:
                     self.recording_enabled = self._local_recording_attached
                     self.settings_store.update({
@@ -874,19 +874,24 @@ class CameraPipeline:
                 self._local_recording_attached = False
                 self.recording_enabled = False
 
-                # The uploader uses this same lock. Delete the open partial file
-                # before removing its .open marker, so it can never race and
-                # upload a segment that the operator asked us to discard. If
-                # deletion fails, leave the marker in place to keep it unqueued.
-                try:
-                    with self.uploader._queue_lock:
-                        if old_segment:
-                            old_segment.unlink(missing_ok=True)
-                        if old_marker:
-                            old_marker.unlink(missing_ok=True)
-                except OSError:
-                    log.exception(
-                        "Could not remove the partial recording; its open marker is retained if present"
+                # Never delete a segment if its MP4 container failed to
+                # finalize. Keep the .open marker so the uploader cannot read
+                # it; camera startup will discard this stale partial file.
+                if previous_finalized:
+                    try:
+                        with self.uploader._queue_lock:
+                            if old_segment:
+                                old_segment.unlink(missing_ok=True)
+                            if old_marker:
+                                old_marker.unlink(missing_ok=True)
+                    except OSError:
+                        log.exception(
+                            "Could not remove the partial recording; its open marker is retained if present"
+                        )
+                elif old_marker:
+                    log.error(
+                        "Retaining incomplete MP4 and open marker after failed recording pause: %s",
+                        old_marker.name,
                     )
 
                 self._publish_recording_state()

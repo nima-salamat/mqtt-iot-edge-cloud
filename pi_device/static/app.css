@@ -488,3 +488,103 @@ button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{
     height:18px;
   }
 }
+
+
+/* Optical centering: icon tile and SVG use the same fixed square grid. */
+.metric-card-heading{
+  display:grid!important;
+  grid-template-columns:36px minmax(0,1fr);
+  align-items:center!important;
+  min-height:40px;
+  column-gap:10px;
+}
+.metric-card-heading>.metric-icon{
+  display:grid!important;
+  place-items:center!important;
+  justify-self:start;
+  align-self:center!important;
+  width:36px!important;
+  height:36px!important;
+  min-width:36px;
+  min-height:36px;
+  aspect-ratio:1/1;
+  flex:none!important;
+  box-sizing:border-box;
+  padding:0!important;
+  margin:0!important;
+  line-height:0!important;
+  font-size:0!important;
+  overflow:hidden;
+  vertical-align:middle;
+}
+.metric-card-heading>.metric-icon svg{
+  display:block!important;
+  width:19px!important;
+  height:19px!important;
+  min-width:19px;
+  min-height:19px;
+  max-width:19px;
+  max-height:19px;
+  margin:0!important;
+  padding:0!important;
+  place-self:center;
+}
+.metric-card-heading>span:last-child{
+  display:flex!important;
+  align-items:center!important;
+  min-height:36px;
+  line-height:1.55;
+  margin:0;
+}
+.queue-card-icon{
+  width:38px!important;
+  height:38px!important;
+  min-width:38px;
+  min-height:38px;
+  aspect-ratio:1/1;
+  display:grid!important;
+  place-items:center!important;
+  align-self:center!important;
+  justify-self:center!important;
+  box-sizing:border-box;
+  line-height:0!important;
+  font-size:0!important;
+  padding:0!important;
+}
+.queue-card-icon svg{
+  display:block;
+  width:19px;
+  height:19px;
+  margin:0;
+  place-self:center;
+}
+.console-nav a .nav-icon{
+  display:grid!important;
+  place-items:center!important;
+  width:22px;
+  height:22px;
+  min-width:22px;
+  min-height:22px;
+  flex:0 0 22px;
+  line-height:0!important;
+  font-size:0!important;
+}
+.console-nav a .nav-icon svg{
+  display:block;
+  width:17px;
+  height:17px;
+  margin:0;
+}
+.camera-errors{
+  max-height:120px;
+  overflow:auto;
+  overscroll-behavior:contain;
+  overflow-wrap:anywhere;
+}
+@media(max-width:700px){
+  .metric-card-heading{grid-template-columns:32px minmax(0,1fr);column-gap:8px;min-height:36px}
+  .metric-card-heading>.metric-icon{width:32px!important;height:32px!important;min-width:32px;min-height:32px}
+  .metric-card-heading>.metric-icon svg{width:18px!important;height:18px!important;min-width:18px;min-height:18px}
+  .metric-card-heading>span:last-child{min-height:32px}
+  .queue-card-icon{width:36px!important;height:36px!important;min-width:36px;min-height:36px}
+}

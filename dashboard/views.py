@@ -58,7 +58,9 @@ def device_detail(request, device_id):
     alarm_queryset = device.alarms.all()
     alarms = alarm_queryset[:50]
     alarm_cursor = alarm_queryset.aggregate(max_id=Max("pk"))["max_id"] or 0
-    segments = device.video_segments.all()[:120]
+    # Retention tops out at 60 minutes and segments can be as short as 2 seconds.
+    # 2,000 rows cover that rolling archive without truncating the configured window.
+    segments = device.video_segments.all()[:2000]
     logs = device.logs.all()[:50]
     return render(request, "dashboard/device_detail.html", {
         "device": device, "alarms": alarms, "alarm_cursor": alarm_cursor,

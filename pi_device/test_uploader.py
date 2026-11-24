@@ -150,6 +150,29 @@ class QueueManagementTests(unittest.TestCase):
 
         self.uploader._session.post.assert_called_once()
         self.assertTrue(path.with_suffix(".uploaded").exists())
+        self.assertTrue(self.uploader.last_video_upload_at)
+        self.assertEqual(self.uploader.last_video_upload_error, "")
+
+    def test_video_upload_error_is_reported_without_marking_segment_uploaded(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import requests
+
+        path = self.uploader.video_dir / "1234567890000-failed.mp4"
+        path.write_bytes(b"recorded-video")
+        self.uploader.settings_store = SimpleNamespace(
+            get=lambda: {"recording_enabled": True, "segment_seconds": 5}
+        )
+        response = Mock()
+        response.raise_for_status.side_effect = requests.HTTPError("413 upload too large")
+        self.uploader._session.post = Mock(return_value=response)
+
+        with self.assertRaises(requests.HTTPError):
+            self.uploader._upload_segments()
+
+        self.assertEqual(self.uploader.last_video_upload_error, "413 upload too large")
+        self.assertFalse(path.with_suffix(".uploaded").exists())
+        self.assertTrue(path.exists())
 
     def test_delete_alarm_removes_one_record_and_delivery_markers(self):
         alert_id = "f" * 32

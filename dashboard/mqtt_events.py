@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone as datetime_timezone
 
 from django.conf import settings
@@ -26,11 +27,13 @@ def _parse_datetime(value):
 
 
 def _bounded_float(value, minimum=0.0, maximum=1_000_000.0, default=0.0):
+    if isinstance(value, bool):
+        return default
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
         return default
-    if not minimum <= number <= maximum:
+    if not math.isfinite(number) or not minimum <= number <= maximum:
         return default
     return number
 
@@ -76,6 +79,25 @@ def _topic_device_and_event(topic):
 
 
 def _apply_telemetry(device, payload, now):
+    boolean_fields = (
+        "model_loaded", "mqtt_connected", "mqtt_command_subscription_ready",
+        "recording_supported", "rtsp_connected", "camera_ready",
+        "tracking_active", "recording_enabled",
+    )
+    if any(field in payload and type(payload[field]) is not bool for field in boolean_fields):
+        logger.warning("Ignoring malformed MQTT telemetry booleans from %s", device.device_id)
+        return False
+
+    for field in ("pending_alerts", "pending_video_segments"):
+        if field in payload:
+            value = _bounded_float(payload[field], 0, 1_000_000, default=-1)
+            if value < 0 or not value.is_integer():
+                logger.warning(
+                    "Ignoring malformed MQTT telemetry counter %s from %s",
+                    field, device.device_id,
+                )
+                return False
+
     reported_at = _parse_datetime(payload.get("reported_at"))
     if not _fresh_timestamp(reported_at, now=now):
         skew_seconds = (
@@ -84,7 +106,7 @@ def _apply_telemetry(device, payload, now):
         )
         logger.warning(
             "Ignoring out-of-window MQTT telemetry from %s "
-            "(reported_at=%r, server_now=%s, age_seconds=%s, allowed_skew_hours=6)",
+            "(reported_at=%r, server_now=%s, age_seconds=%s, allowed_age_seconds=90)",
             device.device_id,
             payload.get("reported_at"),
             now.isoformat(),
@@ -164,6 +186,17 @@ def _apply_status(device, payload, now):
         return False
 
     state = device.current_state if isinstance(device.current_state, dict) else {}
+    if status == "offline" and payload.get("source") == "last-will":
+        last_telemetry = _parse_datetime(state.get("last_mqtt_telemetry_at"))
+        if last_telemetry is not None and last_telemetry >= now - timedelta(seconds=15):
+            # Broker Last Will delivery can race a reconnect. A just-received
+            # telemetry packet proves the current connection is already alive;
+            # let the next failed publish/HTTPS fallback establish a real loss.
+            logger.info(
+                "Ignoring delayed MQTT Last Will for %s after fresh telemetry",
+                device.device_id,
+            )
+            return False
     state["mqtt_connected"] = status == "online"
     # A transport status event is not an MQTT SUBACK. Require fresh telemetry
     # from the current connection before enabling remote command controls.

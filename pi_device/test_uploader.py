@@ -51,6 +51,21 @@ class QueueManagementTests(unittest.TestCase):
             meta.with_suffix(".uploaded").write_text("uploaded", encoding="utf-8")
         return meta, image
 
+    def test_stop_does_not_close_session_while_upload_worker_is_active(self):
+        worker = Mock()
+        worker.is_alive.return_value = True
+        self.uploader._thread = worker
+        self.uploader._session.close = Mock()
+
+        self.uploader.stop()
+
+        worker.join.assert_called_once_with(timeout=6)
+        self.uploader._session.close.assert_not_called()
+
+        worker.is_alive.return_value = False
+        self.uploader.stop()
+        self.uploader._session.close.assert_called_once_with()
+
     def test_queue_snapshot_counts_only_items_waiting_to_send(self):
         pending_video = self.uploader.video_dir / "pending.mp4"
         pending_video.write_bytes(b"video-pending")

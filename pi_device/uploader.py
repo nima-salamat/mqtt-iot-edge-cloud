@@ -315,9 +315,14 @@ class DurableUploader:
             "tracking_seconds": state.get("tracking_seconds", 0.0),
             "model": "yolov5n-ncnn",
             "software_version": os.getenv("DEVICE_SOFTWARE_VERSION", "alarm-camera-0.1"),
-            "recording_enabled": bool(
-                self.settings_store.get().get("recording_enabled", True)
-            ) if self.settings_store is not None else True,
+            "recording_enabled": (
+                state["recording_enabled"]
+                if isinstance(state.get("recording_enabled"), bool)
+                else (
+                    bool(self.settings_store.get().get("recording_enabled", True))
+                    if self.settings_store is not None else True
+                )
+            ),
             "last_video_upload_error": self.last_video_upload_error[:500],
         }
         try:

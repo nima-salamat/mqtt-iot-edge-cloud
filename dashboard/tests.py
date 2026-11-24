@@ -175,7 +175,29 @@ class DeviceApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.device.refresh_from_db()
-        self.assertEqual(self.device.current_state["system"], {})
+        # Invalid/empty readings must not create an empty snapshot or erase
+        # a previously valid system-health report.
+        self.assertNotIn("system", self.device.current_state)
+
+    def test_heartbeat_preserves_last_valid_system_metrics_when_readings_are_empty(self):
+        self.device.current_state = {
+            "system": {
+                "cpu_percent": 23.0,
+                "memory": {"used_percent": 44.0},
+            },
+        }
+        self.device.save(update_fields=["current_state"])
+        response = self.client.post(
+            reverse("device-heartbeat"),
+            data=json.dumps({"system": {"cpu_percent": None, "memory": {}}}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.current_state["system"]["cpu_percent"], 23.0)
+        self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 44.0)
 
     def test_device_can_upload_an_mp4_segment_and_retry_it_idempotently(self):
         video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"

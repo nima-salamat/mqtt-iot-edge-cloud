@@ -24,6 +24,10 @@ def sha256_file(path):
     return digest.hexdigest()
 
 class DurableUploader:
+    # MQTT PUBACK confirms broker receipt, not Django processing. Keep a
+    # periodic authenticated HTTPS heartbeat as an application-level fallback.
+    HTTPS_HEARTBEAT_INTERVAL_SECONDS = 30
+
     def __init__(self, device_id, settings_store, bridge, state_provider):
         self.device_id = device_id
         self.settings_store = settings_store
@@ -48,8 +52,10 @@ class DurableUploader:
         self.last_video_upload_at = ""
         self.last_video_upload_error = ""
         self.last_heartbeat_at = ""
+        self.last_mqtt_telemetry_at = ""
         self.uploaded_segments = 0
         self._last_heartbeat_monotonic = 0.0
+        self._last_https_heartbeat_monotonic = 0.0
         self.credentials_revoked = False
 
     def start(self):
@@ -289,7 +295,8 @@ class DurableUploader:
                 self._stop.wait(2)
 
     def _send_heartbeat(self):
-        if time.monotonic() - self._last_heartbeat_monotonic < 15:
+        now_monotonic = time.monotonic()
+        if now_monotonic - self._last_heartbeat_monotonic < 15:
             return
         state = self.bridge.snapshot()
         payload = {
@@ -314,29 +321,37 @@ class DurableUploader:
         try:
             payload["system"] = collect_system_stats(self.data_dir)
         except Exception:
-            log.debug("Could not collect Raspberry Pi system metrics for heartbeat", exc_info=True)
+            log.warning("Could not collect Raspberry Pi system metrics for heartbeat", exc_info=True)
         if self.last_video_upload_at:
             payload["last_video_upload_at"] = self.last_video_upload_at
-        # MQTT is the primary path for small, frequent telemetry. Until an
-        # installation receives its per-device signing key over HTTPS, or
-        # whenever MQTT is disconnected, retain the authenticated HTTPS fallback.
+
+        # Publish frequent telemetry over MQTT, but do not confuse a broker
+        # PUBACK with successful processing by the Django listener.
         publish_telemetry = getattr(self.bridge, "publish_telemetry", None)
         if callable(publish_telemetry):
             if publish_telemetry(payload):
                 self._last_heartbeat_monotonic = time.monotonic()
-                self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
-                return
-            bridge_state = self.bridge.snapshot() if self.bridge is not None else {}
-            mqtt_reason = (
-                bridge_state.get("last_error", "")
-                if isinstance(bridge_state, dict) else ""
-            )
-            log.warning(
-                "Signed MQTT heartbeat was not acknowledged; using authenticated HTTPS fallback. "
-                "Reason: %s",
-                mqtt_reason or "MQTT publisher is unavailable or not connected.",
-            )
+                self.last_mqtt_telemetry_at = datetime.now(timezone.utc).isoformat()
+                if (
+                    time.monotonic() - self._last_https_heartbeat_monotonic
+                    < self.HTTPS_HEARTBEAT_INTERVAL_SECONDS
+                ):
+                    return
+            else:
+                bridge_state = self.bridge.snapshot() if self.bridge is not None else {}
+                mqtt_reason = (
+                    bridge_state.get("last_error", "")
+                    if isinstance(bridge_state, dict) else ""
+                )
+                log.warning(
+                    "Signed MQTT heartbeat was not acknowledged; using authenticated HTTPS fallback. "
+                    "Reason: %s",
+                    mqtt_reason or "MQTT publisher is unavailable or not connected.",
+                )
 
+        # This endpoint applies metrics directly in Django and is the recovery
+        # path when an MQTT message is broker-acknowledged but rejected by the
+        # application (for example because of device clock skew).
         response = self._session.post(
             f"{self.api_base}/api/device/heartbeat/",
             headers=self._headers(),
@@ -354,7 +369,8 @@ class DurableUploader:
         )
         if re.fullmatch(r"[a-fA-F0-9]{64}", str(signing_key or "")):
             self._persist_mqtt_signing_key(signing_key)
-        self._last_heartbeat_monotonic = time.monotonic()
+        self._last_https_heartbeat_monotonic = time.monotonic()
+        self._last_heartbeat_monotonic = self._last_https_heartbeat_monotonic
         self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
 
     def _persist_mqtt_signing_key(self, signing_key):

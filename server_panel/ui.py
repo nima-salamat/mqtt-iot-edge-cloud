@@ -9,10 +9,18 @@ import pandas as pd
 import streamlit as st
 
 from .mqtt_control import read_broker_metrics
-from .repository import get_alarms, get_database_status, get_logs, get_snapshot
+from .repository import (
+    cleanup_iot_data,
+    get_alarm_preview,
+    get_alarms,
+    get_database_status,
+    get_logs,
+    get_snapshot,
+    get_video_preview,
+)
 
 
-PAGES = ["نمای کلی", "هشدارها", "دستگاه‌ها و سلامت", "لاگ‌های سیستم", "Broker و زیرساخت"]
+PAGES = ["نمای کلی", "هشدارها", "دستگاه‌ها و سلامت", "آرشیو و پاک‌سازی", "لاگ‌های سیستم", "Broker و زیرساخت"]
 
 
 def apply_theme() -> None:
@@ -200,14 +208,32 @@ def _render_overview() -> None:
     _section("سلامت دستگاه‌ها", "DEVICE HEARTBEATS")
     devices = snapshot["devices"]
     if devices:
-        st.dataframe(_device_frame(devices), width="stretch", hide_index=True)
+        st.dataframe(_device_frame(devices), width="stretch", hide_index=True, height=300)
     else:
         st.info("هیچ دوربینی Pair نشده است. از حساب کاربری در پنل Django یک QR اتصال بساز.")
 
     _section("هشدارهای اخیر", "PERSON DETECTION EVENTS")
     alarms = snapshot["latest_alarms"]
     if alarms:
-        st.dataframe(_alarms_frame(alarms), width="stretch", hide_index=True)
+        st.dataframe(_alarms_frame(alarms), width="stretch", hide_index=True, height=280)
+        choices = [row for row in alarms if row.get("has_snapshot")]
+        if choices:
+            preview_id = st.selectbox(
+                "پیش‌نمایش تصویر هشدار",
+                [row["id"] for row in choices],
+                format_func=lambda value: next(
+                    f'{_fmt_time(item["detected_at"])} · {item["device_name"]}'
+                    for item in choices if item["id"] == value
+                ),
+                key="overview_alarm_preview",
+            )
+            preview = get_alarm_preview(preview_id)
+            if preview and preview.get("image"):
+                st.image(
+                    preview["image"],
+                    caption=f'{preview["device_name"]} · {_fmt_time(preview["detected_at"])}',
+                    use_container_width=True,
+                )
     else:
         st.info("هنوز هشدار تشخیص انسانی ثبت نشده است.")
 
@@ -225,7 +251,7 @@ def _render_alarms() -> None:
         limit = st.select_slider("تعداد رکورد", options=[50, 100, 300, 500, 1000], value=300)
     rows = get_alarms(limit=limit, only_unacknowledged=only_new)
     if rows:
-        st.dataframe(_alarms_frame(rows), width="stretch", hide_index=True, height=500)
+        st.dataframe(_alarms_frame(rows), width="stretch", hide_index=True, height=340)
         frame = _alarms_frame(rows)
         st.download_button(
             "خروجی هشدارها (CSV)",
@@ -233,13 +259,27 @@ def _render_alarms() -> None:
             file_name="alarm-events.csv",
             mime="text/csv",
         )
-        with st.expander("نمایش جزئیات یک هشدار"):
-            index = st.selectbox(
-                "Alert",
-                range(len(rows)),
-                format_func=lambda i: f"{_fmt_time(rows[i]['detected_at'])} · {rows[i]['device_name']} · {rows[i]['alert_id'][:10]}",
-            )
-            selected = rows[index]
+        index = st.selectbox(
+            "انتخاب هشدار برای پیش‌نمایش",
+            range(len(rows)),
+            format_func=lambda i: f"{_fmt_time(rows[i]['detected_at'])} · {rows[i]['device_name']} · {rows[i]['alert_id'][:10]}",
+            key="alarm_preview_selection",
+        )
+        selected = rows[index]
+        left, right = st.columns([1.15, 1])
+        with left:
+            preview = get_alarm_preview(selected["id"])
+            if preview and preview.get("image"):
+                st.image(
+                    preview["image"],
+                    caption=f'{preview["device_name"]} · {_fmt_time(preview["detected_at"])}',
+                    use_container_width=True,
+                )
+            elif selected.get("has_snapshot") and preview and preview.get("image_size", 0) > 12 * 1024 * 1024:
+                st.warning("تصویر بزرگ‌تر از سقف پیش‌نمایش ۱۲ مگابایت است؛ در پنل Django بازش کن.")
+            else:
+                st.info("برای این هشدار تصویری ذخیره نشده است.")
+        with right:
             st.json({
                 "alert_id": selected["alert_id"],
                 "device_id": selected["device_id"],
@@ -248,7 +288,7 @@ def _render_alarms() -> None:
                 "bbox_count": selected["bbox_count"],
                 "model": selected["model"],
                 "acknowledged": selected["acknowledged"],
-            })
+            }, expanded=False)
     else:
         st.info("هشداری مطابق فیلتر وجود ندارد.")
 
@@ -266,7 +306,7 @@ def _render_devices() -> None:
     if not devices:
         st.info("هیچ دستگاهی ثبت نشده است.")
         return
-    st.dataframe(_device_frame(devices), width="stretch", hide_index=True, height=400)
+    st.dataframe(_device_frame(devices), width="stretch", hide_index=True, height=320)
     _section("آخرین قطعه‌های ویدئو", "SERVER VIDEO SEGMENTS")
     segments = snapshot["latest_segments"]
     if segments:
@@ -282,9 +322,121 @@ def _render_devices() -> None:
             }
             for row in segments
         ])
-        st.dataframe(frame, width="stretch", hide_index=True)
+        st.dataframe(frame, width="stretch", hide_index=True, height=300)
+        segment_choices = [row for row in segments if row.get("id")]
+        if segment_choices:
+            selected_segment_id = st.selectbox(
+                "انتخاب ویدئو برای پخش",
+                [row["id"] for row in segment_choices],
+                format_func=lambda value: next(
+                    f'{_fmt_time(item["started_at"])} · {item["device_name"]} · {item["duration_seconds"]}s'
+                    for item in segment_choices if item["id"] == value
+                ),
+                key="device_video_preview",
+            )
+            preview = get_video_preview(selected_segment_id)
+            if preview and preview.get("video"):
+                st.video(preview["video"])
+            elif preview and preview.get("size_bytes", 0) > 48 * 1024 * 1024:
+                st.warning("این ویدئو از ۴۸ مگابایت بزرگ‌تر است؛ برای پخش آن از آرشیو صفحه دستگاه در Django استفاده کن.")
     else:
         st.caption("هنوز ویدئویی از دستگاه‌ها روی سرور دریافت نشده است.")
+
+
+def _render_archive_cleanup() -> None:
+    _hero(
+        "آرشیو و پاک‌سازی",
+        "پیش‌نمایش تصویر هشدارها، پخش قطعه‌های ویدئوی ذخیره‌شده و مدیریت پاک‌سازی شواهد سرور.",
+        "SERVER EVIDENCE ARCHIVE",
+    )
+    snapshot = _snapshot_or_error()
+    if snapshot is None:
+        return
+
+    alarms = get_alarms(limit=500)
+    videos = snapshot["latest_segments"]
+    left, right = st.columns(2)
+    with left:
+        _section("پیش‌نمایش هشدار", "IMAGE EVIDENCE")
+        image_rows = [row for row in alarms if row.get("has_snapshot")]
+        if image_rows:
+            selected_alarm = st.selectbox(
+                "هشدار",
+                [row["id"] for row in image_rows],
+                format_func=lambda value: next(
+                    f'{_fmt_time(item["detected_at"])} · {item["device_name"]}'
+                    for item in image_rows if item["id"] == value
+                ),
+                key="archive_alarm_selection",
+            )
+            preview = get_alarm_preview(selected_alarm)
+            if preview and preview.get("image"):
+                st.image(
+                    preview["image"],
+                    caption=f'{preview["device_name"]} · اطمینان {preview["confidence"]:.2f}',
+                    use_container_width=True,
+                )
+            elif preview:
+                st.warning("تصویر در دسترس نیست یا از سقف پیش‌نمایش بزرگ‌تر است.")
+        else:
+            st.info("تصویری برای پیش‌نمایش وجود ندارد.")
+
+    with right:
+        _section("پخش ویدئوی گذشته", "RECORDED SEGMENTS")
+        if videos:
+            selected_video = st.selectbox(
+                "قطعه ویدئو",
+                [row["id"] for row in videos],
+                format_func=lambda value: next(
+                    f'{_fmt_time(item["started_at"])} · {item["device_name"]} · {item["duration_seconds"]}s'
+                    for item in videos if item["id"] == value
+                ),
+                key="archive_video_selection",
+            )
+            preview = get_video_preview(selected_video)
+            if preview and preview.get("video"):
+                st.video(preview["video"])
+            elif preview:
+                st.warning("این قطعه برای پیش‌نمایش در پنل اپراتور بیش از ۴۸ مگابایت است.")
+        else:
+            st.info("هنوز ویدئویی روی سرور ذخیره نشده است.")
+
+    _section("پاک‌سازی شواهد ذخیره‌شده", "IRREVERSIBLE SERVER ACTION")
+    device_options = ["همه دوربین‌ها"] + [
+        f'{row["name"]} · {row["device_id"]}' for row in snapshot["devices"]
+    ]
+    device_ids = [""] + [row["device_id"] for row in snapshot["devices"]]
+    with st.form("server_archive_cleanup_form"):
+        kind = st.selectbox(
+            "نوع داده",
+            ["alarms", "videos", "logs", "all"],
+            format_func=lambda value: {
+                "alarms": "تصاویر و هشدارها",
+                "videos": "ویدئوهای آرشیو",
+                "logs": "لاگ‌ها",
+                "all": "همه داده‌های انتخاب‌شده",
+            }[value],
+        )
+        selected_device = st.selectbox(
+            "محدوده دوربین",
+            range(len(device_options)),
+            format_func=lambda index: device_options[index],
+        )
+        confirmed = st.checkbox("حذف این داده‌ها از سرور را تأیید می‌کنم.")
+        submitted = st.form_submit_button("پاک‌سازی داده‌ها", type="primary", width="stretch")
+    if submitted:
+        if not confirmed:
+            st.warning("برای ادامه، تأیید حذف را فعال کن.")
+        else:
+            try:
+                result = cleanup_iot_data(kind, device_ids[selected_device] or None)
+                st.success(
+                    f'{result["removed_count"]} مورد حذف شد؛ '
+                    f'{result["removed_bytes"] / (1024**2):.1f} MB فایل آزاد شد.'
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"پاک‌سازی ناموفق بود: {exc}")
 
 
 def _render_logs() -> None:
@@ -316,20 +468,24 @@ def _render_logs() -> None:
         }
         for row in rows
     ])
-    st.dataframe(frame, width="stretch", hide_index=True, height=500)
+    st.dataframe(frame, width="stretch", hide_index=True, height=340)
     st.download_button(
         "دانلود لاگ‌ها (CSV)",
         frame.to_csv(index=False).encode("utf-8-sig"),
         file_name="device-logs.csv",
         mime="text/csv",
     )
-    with st.expander("جزئیات JSON"):
-        selected = st.selectbox(
-            "انتخاب لاگ",
-            range(len(rows)),
-            format_func=lambda i: f"{_fmt_time(rows[i]['created_at'])} · {rows[i]['level']} · {rows[i]['device_name']}",
+    selected = st.selectbox(
+        "انتخاب لاگ برای جزئیات",
+        range(len(rows)),
+        format_func=lambda i: f"{_fmt_time(rows[i]['created_at'])} · {rows[i]['level']} · {rows[i]['device_name']}",
+        key="log_detail_selection",
+    )
+    with st.container(height=220, border=True):
+        st.code(
+            json.dumps(rows[selected]["details"], ensure_ascii=False, indent=2),
+            language="json",
         )
-        st.json(rows[selected]["details"])
 
 
 def _render_broker() -> None:
@@ -351,6 +507,7 @@ def _render_broker() -> None:
             [{"Topic": topic, "Value": value} for topic, value in metrics.items()],
             width="stretch",
             hide_index=True,
+            height=340,
         )
     else:
         st.error(broker.get("error") or "اتصال Broker برقرار نشد.")
@@ -389,6 +546,7 @@ def render_application() -> None:
                 "نمای کلی": "◈  نمای کلی",
                 "هشدارها": "⚑  هشدارها",
                 "دستگاه‌ها و سلامت": "▣  دستگاه‌ها و سلامت",
+                "آرشیو و پاک‌سازی": "▤  آرشیو و پاک‌سازی",
                 "لاگ‌های سیستم": "≋  لاگ‌های سیستم",
                 "Broker و زیرساخت": "◎  Broker و زیرساخت",
             }[value],
@@ -427,6 +585,8 @@ def _render_live_page(page: str) -> None:
         _render_alarms()
     elif page == "دستگاه‌ها و سلامت":
         _render_devices()
+    elif page == "آرشیو و پاک‌سازی":
+        _render_archive_cleanup()
     elif page == "لاگ‌های سیستم":
         _render_logs()
     else:

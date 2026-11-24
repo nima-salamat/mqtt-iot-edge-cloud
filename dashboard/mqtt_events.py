@@ -38,15 +38,15 @@ def _bounded_float(value, minimum=0.0, maximum=1_000_000.0, default=0.0):
 def _fresh_timestamp(
     value,
     now=None,
-    max_age_seconds=6 * 60 * 60,
-    max_future_seconds=6 * 60 * 60,
+    max_age_seconds=90,
+    max_future_seconds=30,
 ):
     """
-    Accept signed device events despite a temporarily skewed Pi RTC.
+    Accept only recent messages.
 
-    MQTT messages are authenticated with a per-device HMAC. A six-hour clock
-    window accommodates timezone/NTP errors; telemetry ordering is checked
-    separately against the last accepted device timestamp.
+    Pi MQTT publishers use the server-time offset learned from the authenticated
+    HTTPS heartbeat. A short window prevents a queued QoS 1 packet from being
+    mistaken for a fresh heartbeat when the Listener reconnects.
     """
     parsed = _parse_datetime(value)
     now = now or timezone.now()

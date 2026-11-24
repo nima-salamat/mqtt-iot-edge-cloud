@@ -283,10 +283,17 @@
     const query = new URLSearchParams({after: String(cursor)});
     if (deviceId) query.set('device_id', deviceId);
     let delay = document.hidden ? 7000 : 2200;
+    const controller = new AbortController();
+    let requestTimedOut = false;
+    const timer = window.setTimeout(() => {
+      requestTimedOut = true;
+      controller.abort();
+    }, 6000);
     try {
       const response = await fetch('/api/dashboard/alerts/?' + query.toString(), {
         cache: 'no-store',
-        headers: {'Accept': 'application/json'}
+        headers: {'Accept': 'application/json'},
+        signal: controller.signal
       });
       if (response.status === 401 || response.status === 403) {
         stopped = true;
@@ -302,10 +309,14 @@
       cursor = Math.max(cursor, Number(payload.next_cursor) || 0);
       if (payload.has_more) delay = 100;
     } catch (error) {
-      console.warn('Live alert check failed', error);
+      if (error.name !== 'AbortError' || requestTimedOut) {
+        console.warn('Live alert check failed', error);
+      }
       delay = 8000;
+    } finally {
+      window.clearTimeout(timer);
     }
-    window.setTimeout(pollAlerts, delay);
+    if (!stopped) window.setTimeout(pollAlerts, delay);
   }
 
   pollAlerts();

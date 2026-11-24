@@ -60,3 +60,7 @@
   .video-segment-list{grid-template-columns:1fr;max-height:190px}
   .log-table-wrap{max-height:280px}
 }
+
+
+.camera-icon{display:grid;place-items:center;line-height:0;font-size:0}
+.camera-icon svg{display:block;width:21px;height:21px;margin:0}

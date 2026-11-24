@@ -76,7 +76,9 @@ def _sanitize_system_metrics(raw):
             clean["used_percent"] = round(used_percent, 1)
         if clean:
             result[key] = clean
-    return result
+    # A transient sensor/procfs read failure must not erase the last valid
+    # CPU/RAM/storage snapshot already stored for this device.
+    return result or None
 
 
 @login_required
@@ -195,6 +197,8 @@ def heartbeat(request):
     state = device.current_state if isinstance(device.current_state, dict) else {}
     state.update({
         "mqtt_connected": bool(payload.get("mqtt_connected", False)),
+        "telemetry_transport": "https",
+        "last_https_heartbeat_at": now.isoformat(),
         "rtsp_connected": bool(payload.get("rtsp_connected", False)),
         "camera_ready": bool(payload.get("camera_ready", False)),
         "pending_alerts": pending_alerts,

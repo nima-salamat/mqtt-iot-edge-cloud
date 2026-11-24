@@ -281,6 +281,35 @@ class DeviceApiTests(TestCase):
         self.assertEqual(payload["video_fps"], 0)
         self.assertEqual(payload["inference_fps"], 0)
 
+    def test_alarm_upload_rejects_non_finite_confidence_and_box_values(self):
+        invalid_payloads = [
+            ({
+                "alert_id": "a" * 32,
+                "device_id": self.device.device_id,
+                "confidence": float("nan"),
+                "bbox": [],
+            }, "invalid_confidence"),
+            ({
+                "alert_id": "b" * 32,
+                "device_id": self.device.device_id,
+                "confidence": 0.5,
+                "bbox": [{
+                    "x1": 0.1, "y1": 0.1, "x2": 0.8, "y2": 0.8,
+                    "confidence": float("inf"),
+                }],
+            }, "invalid_bounding_boxes"),
+        ]
+        for payload, expected_error in invalid_payloads:
+            with self.subTest(expected_error=expected_error):
+                response = self.client.post(
+                    reverse("device-upload-alarm"),
+                    data={"payload": json.dumps(payload)},
+                    HTTP_AUTHORIZATION=f"Bearer {self.token}",
+                    HTTP_X_DEVICE_ID=self.device.device_id,
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"], expected_error)
+
     def test_device_log_upload_is_idempotent_for_retried_event_ids(self):
         payload = {
             "event_id": "retryable-event-123",

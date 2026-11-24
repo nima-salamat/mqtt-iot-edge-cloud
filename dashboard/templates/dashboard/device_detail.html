@@ -317,6 +317,51 @@
           ? 'در حال رهگیری · '+seconds.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه'
           : (seconds>0?'آخرین رهگیری · '+seconds.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه':'—');
       }
+      const system=device.system||{};
+      const memory=system.memory||{};
+      const storage=system.storage||{};
+      const numeric=value=>typeof value==='number'&&Number.isFinite(value);
+      const displayPercent=value=>numeric(value)
+        ? value.toLocaleString('fa-IR',{maximumFractionDigits:1})+'٪'
+        : '—';
+      const setText=(id,value)=>{
+        const node=document.getElementById(id);
+        if(node)node.textContent=value;
+      };
+      const setProgress=(id,value)=>{
+        const node=document.getElementById(id);
+        if(node)node.style.width=numeric(value)?Math.max(0,Math.min(100,value))+'%':'0%';
+      };
+      const formatBytes=value=>{
+        if(!numeric(value)||value<0)return '—';
+        const units=['B','KB','MB','GB','TB'];
+        let amount=value,index=0;
+        while(amount>=1024&&index<units.length-1){amount/=1024;index++;}
+        return amount.toLocaleString('fa-IR',{maximumFractionDigits:1})+' '+units[index];
+      };
+      setText('system-temperature',numeric(system.temperature_c)
+        ? system.temperature_c.toLocaleString('fa-IR',{maximumFractionDigits:1})+'°C':'—');
+      setText('system-cpu',displayPercent(system.cpu_percent));
+      setText('memory-usage',displayPercent(memory.used_percent));
+      setText('storage-usage',displayPercent(storage.used_percent));
+      setProgress('temperature-progress',system.temperature_c);
+      setProgress('cpu-progress',system.cpu_percent);
+      setProgress('memory-progress',memory.used_percent);
+      setProgress('storage-progress',storage.used_percent);
+      setText('memory-note',numeric(memory.used_bytes)&&numeric(memory.total_bytes)
+        ? formatBytes(memory.used_bytes)+' / '+formatBytes(memory.total_bytes)
+        : 'در انتظار داده سیستم');
+      setText('storage-note',numeric(storage.free_bytes)
+        ? formatBytes(storage.free_bytes)+' آزاد'
+        : 'فضای آزاد دیسک');
+      document.querySelector('[data-system-metric="temperature"]')
+        ?.classList.toggle('is-warning',numeric(system.temperature_c)&&system.temperature_c>=75);
+      document.querySelector('[data-system-metric="cpu"]')
+        ?.classList.toggle('is-warning',numeric(system.cpu_percent)&&system.cpu_percent>=90);
+      document.querySelector('[data-system-metric="memory"]')
+        ?.classList.toggle('is-warning',numeric(memory.used_percent)&&memory.used_percent>=90);
+      document.querySelector('[data-system-metric="storage"]')
+        ?.classList.toggle('is-warning',numeric(storage.used_percent)&&storage.used_percent>=90);
       const badge=document.getElementById('device-connection-state');
       if(badge && device.is_paired){
         const online=!!device.is_online;

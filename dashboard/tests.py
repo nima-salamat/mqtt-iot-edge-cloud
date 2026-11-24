@@ -444,9 +444,32 @@ class DeviceApiTests(TestCase):
                 self.assertEqual(response.status_code, 400)
         self.assertFalse(DeviceLog.objects.filter(device=self.device).exists())
 
+    def test_alarm_upload_rejects_oversized_metadata_json(self):
+        response = self.client.post(
+            reverse("device-upload-alarm"),
+            data={"payload": '{"padding":"' + ("x" * (64 * 1024)) + '"}'},
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
+        self.assertEqual(response.status_code, 413)
+        self.assertFalse(Alarm.objects.filter(device=self.device).exists())
+
+    def test_device_log_rejects_malformed_event_ids_instead_of_truncating_them(self):
+        for event_id in ("not-a-uuid", "e" * 65, {"id": "nested"}):
+            with self.subTest(event_id=event_id):
+                response = self.client.post(
+                    reverse("device-log"),
+                    data=json.dumps({"event_id": event_id, "message": "x"}),
+                    content_type="application/json",
+                    HTTP_AUTHORIZATION=f"Bearer {self.token}",
+                    HTTP_X_DEVICE_ID=self.device.device_id,
+                )
+                self.assertEqual(response.status_code, 400)
+        self.assertFalse(DeviceLog.objects.filter(device=self.device).exists())
+
     def test_device_log_upload_is_idempotent_for_retried_event_ids(self):
         payload = {
-            "event_id": "retryable-event-123",
+            "event_id": "e" * 32,
             "level": "warning",
             "category": "camera",
             "message": "Camera recovered",
@@ -474,7 +497,7 @@ class DeviceApiTests(TestCase):
         self.assertEqual(second.json()["status"], "already_stored")
         self.assertEqual(
             DeviceLog.objects.filter(
-                device=self.device, event_id="retryable-event-123"
+                device=self.device, event_id="e" * 32
             ).count(),
             1,
         )

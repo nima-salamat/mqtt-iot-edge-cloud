@@ -190,6 +190,47 @@ class DeviceMqttEventTests(TestCase):
         self.assertEqual(self.device.reported_video_fps, 0)
         self.assertFalse(self.device.is_online)
 
+    def test_delayed_last_will_cannot_override_fresh_mqtt_telemetry(self):
+        self.device.current_state = {
+            "mqtt_connected": True,
+            "mqtt_command_subscription_ready": True,
+            "last_mqtt_telemetry_at": (
+                timezone.now() - timedelta(seconds=5)
+            ).isoformat(),
+        }
+        self.device.save(update_fields=["current_state"])
+
+        self.assertFalse(self.send("status", {
+            "device_id": self.device.device_id,
+            "status": "offline",
+            "source": "last-will",
+        }))
+        self.device.refresh_from_db()
+        self.assertTrue(self.device.current_state["mqtt_connected"])
+        self.assertTrue(self.device.current_state["mqtt_command_subscription_ready"])
+
+    def test_mqtt_telemetry_rejects_string_booleans_and_fractional_queue_counters(self):
+        invalid_updates = (
+            {"mqtt_connected": "false"},
+            {"camera_ready": 1},
+            {"recording_supported": "true"},
+            {"pending_alerts": 1.5},
+            {"pending_video_segments": True},
+        )
+        for invalid in invalid_updates:
+            with self.subTest(invalid=invalid):
+                payload = {
+                    "device_id": self.device.device_id,
+                    "reported_at": timezone.now().isoformat(),
+                    **invalid,
+                }
+                self.assertFalse(self.send("telemetry", payload))
+
+        self.device.refresh_from_db()
+        self.assertFalse(self.device.is_online)
+        self.assertIsNone(self.device.last_heartbeat)
+        self.assertFalse(self.device.current_state.get("mqtt_connected", False))
+
     def test_last_will_marks_mqtt_disconnected_without_erasing_https_liveness(self):
         self.device.is_online = True
         self.device.last_seen = timezone.now()

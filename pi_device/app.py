@@ -14,7 +14,7 @@ from collections import deque
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, Response, abort, jsonify, make_response, redirect, render_template, request, send_file, session, url_for
 from waitress import serve
 
 from .atomic_files import atomic_write_text
@@ -154,7 +154,9 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
 
     @flask_app.post("/login/")
     def login_post():
-        if not csrf_valid():
+        if not hmac.compare_digest(
+            request.form.get("csrf_token", ""), session.get("csrf_token", "")
+        ):
             return "درخواست ورود معتبر نیست؛ صفحه را دوباره بارگذاری کن.", 403
 
         password = request.form.get("password", "")

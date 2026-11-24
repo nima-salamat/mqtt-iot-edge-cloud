@@ -6,6 +6,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from collections import deque
@@ -143,6 +145,109 @@ class CameraPipelineStructureTests(unittest.TestCase):
             self.assertTrue(target.is_symlink())
             self.assertTrue(camera._pair_status.startswith("failed:"))
             camera.bridge.set_signing_key.assert_not_called()
+
+    def test_failed_old_mp4_finalize_keeps_new_output_active_and_reports_failure(self):
+        module = self._load_camera_module()
+        package = types.ModuleType("picamera2")
+        package.__path__ = []
+        outputs_module = types.ModuleType("picamera2.outputs")
+
+        class BaseOutput:
+            def start(self):
+                self.started = True
+
+            def _add_stream(self, encoder_stream, codec_name, **kwargs):
+                pass
+
+            def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+                pass
+
+            def stop(self):
+                pass
+
+        outputs_module.Output = BaseOutput
+
+        class ChildOutput:
+            def __init__(self, fail_stop=False):
+                self.fail_stop = fail_stop
+                self.started = False
+                self.stopped = False
+
+            def start(self):
+                self.started = True
+
+            def _add_stream(self, encoder_stream, codec_name, **kwargs):
+                pass
+
+            def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+                pass
+
+            def stop(self):
+                self.stopped = True
+                if self.fail_stop:
+                    raise OSError("simulated MP4 finalize failure")
+
+        with patch.dict(sys.modules, {
+            "picamera2": package,
+            "picamera2.outputs": outputs_module,
+        }):
+            output_class = module._switchable_output_class()
+            previous = ChildOutput(fail_stop=True)
+            replacement = ChildOutput()
+            switchable = output_class(previous)
+            switchable.start()
+
+            result = []
+            worker = threading.Thread(
+                target=lambda: result.append(
+                    switchable.switch_output(replacement, timeout=2)
+                )
+            )
+            worker.start()
+            deadline = time.monotonic() + 1
+            while not switchable._switch_pending and time.monotonic() < deadline:
+                time.sleep(0.001)
+            self.assertTrue(switchable._switch_pending)
+
+            switchable.outputframe(None, keyframe=True)
+            worker.join(timeout=2)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(result, [False])
+            self.assertTrue(previous.stopped)
+            self.assertTrue(replacement.started)
+            self.assertIs(switchable._output, replacement)
+
+    def test_switchable_output_reports_child_finalize_failures_on_shutdown(self):
+        module = self._load_camera_module()
+        package = types.ModuleType("picamera2")
+        package.__path__ = []
+        outputs_module = types.ModuleType("picamera2.outputs")
+
+        class BaseOutput:
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        outputs_module.Output = BaseOutput
+
+        class FailingOutput:
+            def start(self):
+                pass
+
+            def stop(self):
+                raise OSError("simulated close failure")
+
+        with patch.dict(sys.modules, {
+            "picamera2": package,
+            "picamera2.outputs": outputs_module,
+        }):
+            output_class = module._switchable_output_class()
+            switchable = output_class(FailingOutput())
+            switchable.stop()
+            self.assertTrue(switchable.stop_failed)
 
     def test_tracking_duration_is_finalized_after_detection_grace_period(self):
         module = self._load_camera_module()

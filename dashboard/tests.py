@@ -214,6 +214,29 @@ class DeviceApiTests(TestCase):
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
         self.assertTrue(response.json()["token"])
 
+    def test_heartbeat_and_device_log_have_independent_small_body_limits(self):
+        headers = {
+            "content_type": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {self.token}",
+            "HTTP_X_DEVICE_ID": self.device.device_id,
+        }
+        heartbeat = self.client.post(
+            reverse("device-heartbeat"),
+            data=b'{"padding":"' + (b"x" * (64 * 1024)) + b'"}',
+            **headers,
+        )
+        self.assertEqual(heartbeat.status_code, 413)
+
+        device_log = self.client.post(
+            reverse("device-log"),
+            data=b'{"padding":"' + (b"x" * (256 * 1024)) + b'"}',
+            **headers,
+        )
+        self.assertEqual(device_log.status_code, 413)
+        self.device.refresh_from_db()
+        self.assertIsNone(self.device.last_heartbeat)
+        self.assertFalse(DeviceLog.objects.filter(device=self.device).exists())
+
     def test_device_heartbeat_rejects_non_finite_runtime_metrics(self):
         for invalid_value in (float("nan"), float("inf"), -float("inf")):
             with self.subTest(invalid_value=invalid_value):

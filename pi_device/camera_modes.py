@@ -38,9 +38,10 @@ def select_sensor_mode(
         item for item in usable
         if item[1] >= int(width) and item[2] >= int(height)
     ]
-    compatible = resolution_compatible or usable
-
+    compatible = resolution_compatible
     target = max(1.0, float(requested_fps))
+    if not compatible:
+        return None, target
     if auto:
         selected = max(
             compatible,

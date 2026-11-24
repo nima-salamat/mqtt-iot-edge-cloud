@@ -5,7 +5,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}"
-      - "traefik.http.routers.mqtt-iot-api.rule=Host(`${DOMAIN:-server.echonode.website}`) && !PathPrefix(`/mqtt`) && !PathPrefix(`/ops`) && !PathPrefix(`/webrtc`) && !PathPrefix(`/streams`)"
+      - "traefik.http.routers.mqtt-iot-api.rule=Host(`${DOMAIN:-server.echonode.website}`) && !PathPrefix(`/mqtt`) && !PathPrefix(`/ops`) && !PathPrefix(`/webrtc`) && !PathPrefix(`/streams`) && !PathPrefix(`/api/mediamtx/auth`)"
       - "traefik.http.routers.mqtt-iot-api.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
       - "traefik.http.routers.mqtt-iot-api.priority=10"
       - "traefik.http.routers.mqtt-iot-api.tls=true"

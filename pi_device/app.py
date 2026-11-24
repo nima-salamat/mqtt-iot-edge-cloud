@@ -16,6 +16,7 @@ from pathlib import Path
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 from waitress import serve
 
+from .atomic_files import atomic_write_text
 from .bridge import RaspberryPiMqttBridge
 from .camera import CameraPipeline
 from .settings_store import SettingsStore
@@ -438,11 +439,62 @@ def main() -> None:
     if not os.getenv("FLASK_SECRET_KEY") or os.getenv("FLASK_SECRET_KEY", "").startswith("REPLACE_"):
         raise SystemExit("Set a random FLASK_SECRET_KEY in /etc/mqtt-iot-pi.env.")
 
-    device_id = load_device_id()
+    credentials_path = Path(
+        os.getenv("DEVICE_CREDENTIALS_PATH", "/var/lib/mqttiot/device.json")
+    ).expanduser()
+    credentials = load_credentials()
+    credential_device_id = str(credentials.get("device_id") or "").strip()
+    configured_device_id = os.getenv("DEVICE_ID", "").strip()
+
+    if (
+        configured_device_id
+        and credential_device_id
+        and configured_device_id != credential_device_id
+    ):
+        raise SystemExit(
+            "DEVICE_ID does not match the paired credential device_id. "
+            "Correct /etc/mqtt-iot-pi.env or restore the matching device credential."
+        )
+
+    if credential_device_id and not configured_device_id:
+        device_id = credential_device_id
+        device_id_path = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot")) / "device_id"
+        try:
+            previous_device_id = device_id_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            previous_device_id = ""
+        if previous_device_id != device_id:
+            log.warning(
+                "Paired credential device_id differs from the local device_id file; "
+                "using the paired device ID and repairing the local identity file."
+            )
+            atomic_write_text(device_id_path, device_id + "\\n")
+    else:
+        device_id = load_device_id()
+
+    signing_key = str(credentials.get("mqtt_signing_key") or "")
+    signing_key_valid = bool(re.fullmatch(r"[a-fA-F0-9]{64}", signing_key))
+    log.info(
+        "Loaded device credentials from %s (api_token=%s, mqtt_signing_key=%s, device_id=%s)",
+        credentials_path,
+        "present" if credentials.get("api_token") else "missing",
+        "valid" if signing_key_valid else "missing_or_invalid",
+        "present" if credential_device_id else "missing",
+    )
+    if not credentials.get("api_token"):
+        log.error(
+            "No paired API token loaded from %s; HTTPS heartbeat cannot bootstrap MQTT signing.",
+            credentials_path,
+        )
+    elif not signing_key_valid:
+        log.warning(
+            "No valid MQTT signing key loaded from %s; waiting for authenticated HTTPS heartbeat bootstrap.",
+            credentials_path,
+        )
+
     settings_store = SettingsStore()
     bridge = RaspberryPiMqttBridge(device_id)
-    credentials = load_credentials()
-    bridge.set_signing_key(credentials.get("mqtt_signing_key", ""))
+    bridge.set_signing_key(signing_key if signing_key_valid else "")
     uploader = DurableUploader(device_id, settings_store, bridge, load_credentials)
     camera = CameraPipeline(device_id, settings_store, bridge, uploader)
 

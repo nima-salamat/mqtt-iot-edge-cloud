@@ -1,7 +1,9 @@
 """Unit tests for Pi-side MQTT message authentication."""
 import unittest
 
-from pi_device.mqtt_protocol import sign_payload, verify_payload
+from pi_device.mqtt_protocol import (
+    decrypt_mqtt_command, encrypt_mqtt_command, sign_payload, verify_payload,
+)
 
 
 class MqttProtocolTests(unittest.TestCase):
@@ -98,12 +100,12 @@ class MqttBridgePublishTests(unittest.TestCase):
         from datetime import datetime, timedelta, timezone
         from types import SimpleNamespace
         from unittest.mock import Mock, patch
-        from pi_device.mqtt_protocol import sign_payload
+        from pi_device.mqtt_protocol import encrypt_mqtt_command
 
         local_now = datetime.now(timezone.utc)
         issued_at = local_now + timedelta(minutes=5)
         command_id = "c" * 32
-        payload = sign_payload({
+        payload = encrypt_mqtt_command({
             "device_id": self.bridge.device_id,
             "command_id": command_id,
             "command_type": "recording.set",
@@ -131,6 +133,74 @@ class MqttBridgePublishTests(unittest.TestCase):
             self.bridge._on_message(self.bridge.client, None, message)
 
         handler.assert_called_once_with("recording.set", {"enabled": False})
+
+    def test_aes_gcm_command_round_trip_and_device_isolation(self):
+        command = {
+            "device_id": self.bridge.device_id,
+            "command_id": "f" * 32,
+            "command_type": "recording.set",
+            "payload": {"enabled": False},
+            "issued_at": "2026-11-25T12:00:00+00:00",
+            "expires_at": "2026-11-25T12:01:00+00:00",
+        }
+        envelope = encrypt_mqtt_command(command, "a" * 64)
+
+        self.assertEqual(envelope["encryption"], "aes-256-gcm-v1")
+        self.assertNotIn("command_type", envelope)
+        self.assertNotIn("payload", envelope)
+        self.assertEqual(decrypt_mqtt_command(envelope, "a" * 64), {
+            "command_type": "recording.set",
+            "payload": {"enabled": False},
+        })
+        with self.assertRaises(ValueError):
+            decrypt_mqtt_command(envelope, "b" * 64)
+
+    def test_aes_gcm_command_tampering_is_rejected(self):
+        command = {
+            "device_id": self.bridge.device_id,
+            "command_id": "e" * 32,
+            "command_type": "recording.set",
+            "payload": {"enabled": True},
+            "issued_at": "2026-11-25T12:00:00+00:00",
+            "expires_at": "2026-11-25T12:01:00+00:00",
+        }
+        envelope = encrypt_mqtt_command(command, "a" * 64)
+        envelope["ciphertext"] = envelope["ciphertext"][:-2] + "AA"
+        with self.assertRaises(ValueError):
+            decrypt_mqtt_command(envelope, "a" * 64)
+
+    def test_bridge_does_not_execute_signed_but_unencrypted_commands(self):
+        import json
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        now = self.bridge._server_now()
+        command_id = "d" * 32
+        payload = sign_payload({
+            "device_id": self.bridge.device_id,
+            "command_id": command_id,
+            "command_type": "recording.set",
+            "payload": {"enabled": False},
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=45)).isoformat(),
+        }, "a" * 64)
+        handler = Mock()
+        self.bridge.set_command_handler(handler)
+        message = SimpleNamespace(
+            topic=self.bridge.command_topic,
+            payload=json.dumps(payload).encode("utf-8"),
+        )
+
+        with patch("pi_device.bridge.threading.Thread") as thread_factory:
+            self.bridge._on_message(self.bridge.client, None, message)
+
+        handler.assert_not_called()
+        thread_factory.assert_called_once()
+        self.assertEqual(
+            thread_factory.call_args.kwargs["args"],
+            (command_id, "failed", {"error": "command_decryption_failed"}),
+        )
 
     def test_telemetry_timestamp_uses_calibrated_server_clock(self):
         import json

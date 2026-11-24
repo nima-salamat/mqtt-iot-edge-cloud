@@ -1051,7 +1051,10 @@ class DashboardVideoRangeTests(TestCase):
             if command[0] == "ffprobe":
                 return SimpleNamespace(
                     returncode=0,
-                    stdout=json.dumps({"streams": [{"codec_name": "h264", "profile": "High", "level": 31}]}),
+                    stdout=json.dumps({"streams": [{
+                        "codec_name": "h264", "profile": "High", "level": 31,
+                        "width": 1280, "height": 720, "pix_fmt": "yuv420p",
+                    }]}),
                     stderr="",
                 )
             output_path = Path(command[-1])
@@ -1071,6 +1074,61 @@ class DashboardVideoRangeTests(TestCase):
             self.assertEqual(response["X-Video-Codec"], "avc1.64001f")
             self.assertEqual(response["X-Video-Segment-Count"], "2")
             self.assertEqual(b"".join(response.streaming_content), b"F" * 1024)
+            response.close()
+
+    def test_device_video_chunk_stops_before_resolution_change(self):
+        first = VideoSegment.objects.create(
+            device=self.device, segment_id="chunk-resolution-720p", duration_seconds=5
+        )
+        first.file.save("chunk-resolution-720p.mp4", ContentFile(b"first-input"), save=True)
+        second = VideoSegment.objects.create(
+            device=self.device,
+            segment_id="chunk-resolution-480p",
+            started_at=timezone.now() + timedelta(seconds=5),
+            duration_seconds=5,
+        )
+        second.file.save("chunk-resolution-480p.mp4", ContentFile(b"second-input"), save=True)
+
+        from unittest.mock import patch
+
+        probed = []
+
+        def fake_run(command, **kwargs):
+            if command[0] == "ffprobe":
+                path = command[-1]
+                probed.append(Path(path).name)
+                width, height = (
+                    (1280, 720) if "720p" in path else (640, 480)
+                )
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"streams": [{
+                        "codec_name": "h264",
+                        "profile": "High",
+                        "level": 31,
+                        "width": width,
+                        "height": height,
+                        "pix_fmt": "yuv420p",
+                    }]}),
+                    stderr="",
+                )
+            Path(command[-1]).write_bytes(b"F" * 1024)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        self.client.force_login(self.owner)
+        with patch("dashboard.views.shutil.which", return_value="/usr/bin/ffmpeg"), patch(
+            "dashboard.views.subprocess.run", side_effect=fake_run
+        ):
+            response = self.client.get(
+                reverse("dashboard:device-video-chunk", args=[self.device.device_id]),
+                {"start_id": first.pk, "seconds": 10},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response["X-Video-Width"], "1280")
+            self.assertEqual(response["X-Video-Height"], "720")
+            self.assertEqual(response["X-Video-Segment-Count"], "1")
+            self.assertEqual(response["X-Video-Segment-Ids"], str(first.pk))
+            self.assertEqual(len(probed), 2)
             response.close()
 
     def test_device_video_chunk_returns_clear_error_when_ffmpeg_is_missing(self):

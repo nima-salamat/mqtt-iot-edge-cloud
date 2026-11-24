@@ -32,7 +32,27 @@ echo "Deploying source $SOURCE_COMMIT to $INSTALL_DIR"
 echo "Only pi_device source files will be synchronized."
 echo "The virtualenv, model weights, /etc/mqtt-iot-pi.env and /var/lib/mqttiot will be preserved."
 
+# AES-GCM is required by the new per-device encrypted MQTT command envelope.
+# Install it before stopping the running camera so a package/network failure
+# cannot leave the service down with a partially updated runtime.
+echo "Ensuring the per-device MQTT encryption dependency is installed..."
+runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -m pip install \
+  --disable-pip-version-check "cryptography>=45,<51"
+
+SERVICE_STOPPED=0
+restart_on_failure() {
+  local status=$?
+  trap - EXIT
+  if [[ "$SERVICE_STOPPED" -eq 1 ]]; then
+    echo "Update did not finish cleanly; attempting to restart $SERVICE_NAME." >&2
+    systemctl start "$SERVICE_NAME" || true
+  fi
+  exit "$status"
+}
+trap restart_on_failure EXIT
+
 systemctl stop "$SERVICE_NAME"
+SERVICE_STOPPED=1
 rsync -a --delete \
   --exclude='.venv' \
   --exclude='models/*.bin' \
@@ -43,6 +63,8 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/pi_device"
 runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -m compileall -q "$INSTALL_DIR/pi_device"
 
 systemctl start "$SERVICE_NAME"
+SERVICE_STOPPED=0
+trap - EXIT
 systemctl --no-pager --full status "$SERVICE_NAME"
 
 echo

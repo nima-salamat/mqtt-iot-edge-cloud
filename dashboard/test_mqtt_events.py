@@ -71,8 +71,61 @@ class DeviceMqttEventTests(TestCase):
         self.assertAlmostEqual(self.device.reported_video_fps, 24.5)
         self.assertEqual(self.device.current_state["telemetry_transport"], "mqtt")
         self.assertEqual(self.device.current_state["system"]["temperature_c"], 52.0)
+        self.assertEqual(self.device.current_state["system"]["cpu_percent"], 30.0)
+        self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 40.0)
         self.assertNotIn("path", self.device.current_state["system"])
+        self.assertTrue(self.device.current_state["last_device_reported_at"])
         self.assertFalse(self.device.telemetry.exists())
+
+    def test_signed_telemetry_with_pi_clock_skew_updates_dashboard_health(self):
+        payload = {
+            "device_id": self.device.device_id,
+            # Simulate a Pi clock several minutes behind the Django server.
+            "reported_at": (timezone.now() - timedelta(minutes=5)).isoformat(),
+            "video_fps": 18.0,
+            "inference_fps": 4.0,
+            "system": {
+                "cpu_percent": 46.5,
+                "memory": {
+                    "total_bytes": 8_000_000,
+                    "used_bytes": 3_200_000,
+                    "available_bytes": 4_800_000,
+                    "used_percent": 40.0,
+                },
+            },
+        }
+
+        self.assertTrue(self.send("telemetry", payload))
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.current_state["system"]["cpu_percent"], 46.5)
+        self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 40.0)
+
+        self.client.force_login(self.owner)
+        overview = self.client.get(reverse("dashboard-overview"))
+        self.assertEqual(overview.status_code, 200)
+        device = next(
+            item for item in overview.json()["devices"]
+            if item["device_id"] == self.device.device_id
+        )
+        self.assertEqual(device["system"]["cpu_percent"], 46.5)
+        self.assertEqual(device["system"]["memory"]["used_percent"], 40.0)
+
+    def test_out_of_order_signed_telemetry_is_rejected(self):
+        last_accepted = timezone.now() - timedelta(minutes=2)
+        self.device.current_state = {
+            "last_device_reported_at": last_accepted.isoformat(),
+            "system": {"cpu_percent": 12.0},
+        }
+        self.device.save(update_fields=["current_state"])
+        older_payload = {
+            "device_id": self.device.device_id,
+            "reported_at": (last_accepted - timedelta(minutes=1)).isoformat(),
+            "system": {"cpu_percent": 99.0},
+        }
+
+        self.assertFalse(self.send("telemetry", older_payload))
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.current_state["system"]["cpu_percent"], 12.0)
 
     def test_invalid_hmac_is_ignored(self):
         payload = self.signed({

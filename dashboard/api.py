@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import logging
 import math
 import json
 import re
@@ -9,7 +10,7 @@ import secrets
 from datetime import datetime, timedelta
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.hashers import check_password, make_password
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -24,6 +25,27 @@ from .mqtt_security import device_mqtt_signing_key
 
 DEVICE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}$")
 SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
+
+logger = logging.getLogger(__name__)
+
+
+def _existing_segment_response(device, segment_id, expected_sha, uploaded_size):
+    """Return an idempotent retry response, or None when no row won the race."""
+    existing = VideoSegment.objects.filter(
+        device=device, segment_id=segment_id
+    ).first()
+    if existing is None:
+        return None
+    if (
+        (existing.checksum_sha256 and existing.checksum_sha256 != expected_sha)
+        or (existing.size_bytes and existing.size_bytes != uploaded_size)
+    ):
+        return JsonResponse({"error": "segment_id_conflict"}, status=409)
+    return JsonResponse({
+        "status": "already_stored",
+        "segment_id": segment_id,
+        "created": False,
+    })
 
 
 def _json_body(request):
@@ -427,22 +449,40 @@ def upload_segment(request):
         duration = max(1, min(60, int(request.POST.get("duration_seconds") or 5)))
     except (TypeError, ValueError, OverflowError):
         return JsonResponse({"error": "invalid_duration"}, status=400)
-    segment = VideoSegment.objects.filter(device=device, segment_id=segment_id).first()
-    if segment is not None:
-        # Idempotent retries are valid only when the same segment ID still
-        # identifies the same bytes. Do not silently accept a reused ID with
-        # different content and leave the dashboard showing an older clip.
-        if (
-            (segment.checksum_sha256 and segment.checksum_sha256 != expected_sha)
-            or (segment.size_bytes and segment.size_bytes != uploaded.size)
-        ):
-            return JsonResponse({"error": "segment_id_conflict"}, status=409)
-        return JsonResponse({"status": "already_stored", "segment_id": segment_id, "created": False})
+    existing_response = _existing_segment_response(
+        device, segment_id, expected_sha, uploaded.size
+    )
+    if existing_response is not None:
+        return existing_response
+
     segment = VideoSegment(
         device=device, segment_id=segment_id, started_at=_parse_time(request.POST.get("started_at")),
         duration_seconds=duration, checksum_sha256=expected_sha, size_bytes=uploaded.size,
     )
-    segment.file.save(f"{segment_id}.mp4", uploaded, save=True)
+    try:
+        # The unique (device, segment_id) constraint is the final arbiter when
+        # two retry requests pass the first lookup at the same time.
+        with transaction.atomic():
+            segment.file.save(f"{segment_id}.mp4", uploaded, save=True)
+    except IntegrityError:
+        # FileField writes to storage before inserting the database row. If a
+        # concurrent request won the unique-key race, remove only this losing
+        # request's newly written file before returning the winner's result.
+        stored_name = segment.file.name
+        if stored_name:
+            try:
+                segment.file.storage.delete(stored_name)
+            except OSError:
+                logger.exception(
+                    "Could not remove duplicate video segment file %s",
+                    stored_name,
+                )
+        existing_response = _existing_segment_response(
+            device, segment_id, expected_sha, uploaded.size
+        )
+        if existing_response is None:
+            raise
+        return existing_response
     device.last_seen = timezone.now()
     device.save(update_fields=["last_seen", "updated_at"])
     return JsonResponse({"status": "stored", "segment_id": segment_id, "created": True}, status=201)

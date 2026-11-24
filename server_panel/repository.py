@@ -101,6 +101,7 @@ def get_snapshot() -> dict[str, Any]:
             ],
             "latest_segments": [
                 {
+                    "id": row.pk,
                     "segment_id": row.segment_id,
                     "device_id": row.device_id,
                     "device_name": row.device.name,
@@ -127,6 +128,7 @@ def get_alarms(limit: int = 300, only_unacknowledged: bool = False) -> list[dict
             rows = rows.filter(acknowledged=False)
         return [
             {
+                "id": row.pk,
                 "alert_id": row.alert_id,
                 "device_id": row.device_id,
                 "device_name": row.device.name,
@@ -187,3 +189,73 @@ def get_database_status() -> tuple[bool, str]:
         return _db_call(query)
     except Exception as exc:
         return False, str(exc)
+
+
+def get_alarm_preview(alarm_id: int) -> dict[str, Any] | None:
+    """Read one selected alert image for the authenticated operator panel."""
+    def query():
+        from dashboard.models import Alarm
+        row = Alarm.objects.select_related("device", "device__owner").filter(pk=alarm_id).first()
+        if row is None or not row.snapshot:
+            return None
+        try:
+            size = int(row.snapshot.size or 0)
+            if size <= 12 * 1024 * 1024:
+                with row.snapshot.open("rb") as image_file:
+                    image_bytes = image_file.read(12 * 1024 * 1024 + 1)
+            else:
+                image_bytes = b""
+        except (OSError, ValueError):
+            image_bytes = b""
+            size = 0
+        return {
+            "id": row.pk,
+            "device_name": row.device.name,
+            "detected_at": row.detected_at,
+            "confidence": row.confidence,
+            "image": image_bytes if image_bytes and len(image_bytes) <= 12 * 1024 * 1024 else None,
+            "image_size": size,
+        }
+    return _db_call(query)
+
+
+def get_video_preview(segment_id: int) -> dict[str, Any] | None:
+    """Read one selected archived segment; refuse oversized files in the UI worker."""
+    def query():
+        from dashboard.models import VideoSegment
+        row = VideoSegment.objects.select_related("device", "device__owner").filter(pk=segment_id).first()
+        if row is None or not row.file:
+            return None
+        try:
+            size = int(row.file.size or 0)
+            if size <= 48 * 1024 * 1024:
+                with row.file.open("rb") as video_file:
+                    video_bytes = video_file.read(48 * 1024 * 1024 + 1)
+            else:
+                video_bytes = b""
+        except (OSError, ValueError):
+            video_bytes = b""
+            size = 0
+        return {
+            "id": row.pk,
+            "device_name": row.device.name,
+            "started_at": row.started_at,
+            "duration_seconds": row.duration_seconds,
+            "size_bytes": size,
+            "video": video_bytes if video_bytes and len(video_bytes) <= 48 * 1024 * 1024 else None,
+        }
+    return _db_call(query)
+
+
+def cleanup_iot_data(kind: str, device_id: str | None = None) -> dict[str, Any]:
+    """Operator-only cleanup across all devices or one selected camera."""
+    from dashboard.services import cleanup_iot_data as cleanup_service
+
+    def query():
+        from dashboard.models import Device
+        devices = Device.objects.all()
+        if device_id:
+            devices = devices.filter(device_id=device_id)
+        return cleanup_service(kind, devices)
+
+    return _db_call(query)

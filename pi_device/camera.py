@@ -1348,12 +1348,20 @@ class CameraPipeline:
             )
             response.raise_for_status()
             credentials = response.json()
+            if not isinstance(credentials, dict):
+                raise ValueError("Pairing response must be a JSON object.")
+            if (
+                credentials.get("device_id") != self.device_id
+                or not isinstance(credentials.get("api_token"), str)
+                or not credentials.get("api_token")
+                or not re.fullmatch(
+                    r"[a-fA-F0-9]{64}",
+                    str(credentials.get("mqtt_signing_key", "")),
+                )
+            ):
+                raise ValueError("Pairing response did not contain valid credentials for this device.")
             target = Path(os.getenv("DEVICE_CREDENTIALS_PATH", "/var/lib/mqttiot/device.json"))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temporary = target.with_suffix(".tmp")
-            temporary.write_text(json.dumps(credentials, indent=2), encoding="utf-8")
-            os.chmod(temporary, 0o600)
-            temporary.replace(target)
+            atomic_write_json(target, credentials, indent=2)
             self.uploader.state_provider = lambda: credentials
             self.uploader.credentials_revoked = False
             self.bridge.set_signing_key(credentials.get("mqtt_signing_key", ""))

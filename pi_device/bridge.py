@@ -48,6 +48,7 @@ class RaspberryPiMqttBridge:
         self.tracking_active = False
         self.tracking_seconds = 0.0
         self._lock = threading.RLock()
+        self._reconnect_lock = threading.Lock()
         self._signing_key = ""
         self._command_handler = None
         self._started = False
@@ -166,23 +167,45 @@ class RaspberryPiMqttBridge:
             raise
 
     def _reconnect_for_will(self):
-        try:
-            self.client.disconnect()
-            time.sleep(0.25)
-            self.client.reconnect()
-        except Exception:
-            log.exception("Could not reconnect MQTT after signing-key bootstrap")
+        """Restart Paho's network loop once so the new signed Will is sent on CONNECT."""
+        with self._reconnect_lock:
+            with self._lock:
+                if not self._started:
+                    return
+            try:
+                # A manual reconnect while loop_start's worker is still active
+                # can race its automatic network handling and create duplicate
+                # connections with the same persistent client ID.
+                self.client.disconnect()
+                self.client.loop_stop()
+                with self._lock:
+                    if not self._started:
+                        return
+                self.client.connect_async(self.host, self.port, keepalive=45)
+                self.client.loop_start()
+            except Exception:
+                log.exception("Could not reconnect MQTT after signing-key bootstrap")
+                # Keep the client recoverable after a failed reconnect attempt.
+                try:
+                    with self._lock:
+                        should_restart = self._started
+                    if should_restart:
+                        self.client.connect_async(self.host, self.port, keepalive=45)
+                        self.client.loop_start()
+                except Exception:
+                    log.exception("Could not restart MQTT network loop after reconnect failure")
 
     def stop(self):
-        try:
-            if self.client.is_connected():
-                self._publish_status("offline")
-                self.client.disconnect()
-        finally:
-            self.client.loop_stop()
-            self._started = False
-            with self._lock:
-                self.connected = False
+        with self._reconnect_lock:
+            try:
+                if self.client.is_connected():
+                    self._publish_status("offline")
+                    self.client.disconnect()
+            finally:
+                self.client.loop_stop()
+                self._started = False
+                with self._lock:
+                    self.connected = False
 
     def _report_publish_failure(self, topic, reason):
         message = f"MQTT publish failed for {topic}: {reason}"[:500]

@@ -81,6 +81,23 @@ def _sanitize_system_metrics(raw):
     return result or None
 
 
+def _merge_system_metrics(existing, incoming):
+    """Merge partial sensor samples without erasing the last valid readings."""
+    merged = dict(existing) if isinstance(existing, dict) else {}
+    if not isinstance(incoming, dict):
+        return merged or None
+    for key, value in incoming.items():
+        if isinstance(value, dict):
+            previous = merged.get(key)
+            nested = dict(previous) if isinstance(previous, dict) else {}
+            nested.update(value)
+            if nested:
+                merged[key] = nested
+        elif value is not None:
+            merged[key] = value
+    return merged or None
+
+
 @login_required
 @require_POST
 def create_pairing(request):
@@ -218,7 +235,9 @@ def heartbeat(request):
         state["last_video_upload_error"] = str(payload.get("last_video_upload_error") or "").strip()[:500]
     system_metrics = _sanitize_system_metrics(payload.get("system"))
     if system_metrics is not None:
-        state["system"] = system_metrics
+        merged_system = _merge_system_metrics(state.get("system"), system_metrics)
+        if merged_system is not None:
+            state["system"] = merged_system
     device.current_state = state
     device.save(update_fields=[
         "is_online", "last_seen", "last_heartbeat", "reported_video_fps",

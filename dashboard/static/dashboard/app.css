@@ -64,3 +64,10 @@
 
 .camera-icon{display:grid;place-items:center;line-height:0;font-size:0}
 .camera-icon svg{display:block;width:21px;height:21px;margin:0}
+
+
+.video-history-panel .video-segment-list{max-height:300px;overflow-y:auto;overscroll-behavior:contain}
+.log-table-wrap{height:auto;max-height:340px;overflow:auto;overscroll-behavior:contain}
+.log-table-wrap table{min-width:680px}
+.log-table-wrap thead th{position:sticky;top:0;z-index:2}
+.log-table-wrap td:last-child{white-space:normal;overflow-wrap:anywhere;max-width:620px}

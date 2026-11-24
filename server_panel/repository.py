@@ -259,3 +259,30 @@ def cleanup_iot_data(kind: str, device_id: str | None = None) -> dict[str, Any]:
         return cleanup_service(kind, devices)
 
     return _db_call(query)
+
+
+def get_video_segments(limit: int = 200, device_id: str | None = None) -> list[dict[str, Any]]:
+    """Return a bounded chronological archive for the authenticated operator UI."""
+    limit = max(1, min(int(limit), 1000))
+
+    def query():
+        from dashboard.models import VideoSegment
+        rows = VideoSegment.objects.select_related("device", "device__owner")
+        if device_id:
+            rows = rows.filter(device_id=device_id)
+        return [
+            {
+                "id": row.pk,
+                "segment_id": row.segment_id,
+                "device_id": row.device_id,
+                "device_name": row.device.name,
+                "owner": row.device.owner.get_username() if row.device.owner_id else "Unassigned",
+                "started_at": row.started_at,
+                "duration_seconds": row.duration_seconds,
+                "size_bytes": row.size_bytes,
+                "uploaded_at": row.uploaded_at,
+            }
+            for row in rows.order_by("-started_at")[:limit]
+        ]
+
+    return _db_call(query)

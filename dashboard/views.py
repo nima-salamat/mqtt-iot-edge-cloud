@@ -78,6 +78,12 @@ def device_videos(request, device_id):
     )
     segments = list(reversed(recent))
     state = device.current_state if isinstance(device.current_state, dict) else {}
+    try:
+        pending_video_segments = max(
+            0, int(state.get("pending_video_segments", 0) or 0)
+        )
+    except (TypeError, ValueError):
+        pending_video_segments = 0
     latest_segment = device.video_segments.order_by("-uploaded_at").only("uploaded_at").first()
     latest_uploaded_at = (
         timezone.localtime(latest_segment.uploaded_at).isoformat()
@@ -101,7 +107,7 @@ def device_videos(request, device_id):
             if isinstance(state.get("recording_enabled"), bool) else None
         ),
         "rtsp_connected": bool(state.get("rtsp_connected", False)),
-        "pending_video_segments": max(0, int(state.get("pending_video_segments", 0) or 0)),
+        "pending_video_segments": pending_video_segments,
         "last_video_upload_at": latest_uploaded_at,
         "last_video_upload_error": str(state.get("last_video_upload_error", ""))[:500],
     })

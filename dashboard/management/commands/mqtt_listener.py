@@ -45,7 +45,32 @@ class Command(BaseCommand):
                 logger.error("MQTT listener connection rejected: %s", reason_code)
                 return
             result, mid = mqtt_client.subscribe(subscriptions)
-            logger.info("MQTT listener subscribed to %s (rc=%s, mid=%s)", subscriptions, result, mid)
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                logger.error(
+                    "MQTT listener could not queue subscriptions (rc=%s, topics=%s)",
+                    result, subscriptions,
+                )
+                return
+            logger.info(
+                "MQTT listener subscription request queued (topics=%s, mid=%s)",
+                subscriptions, mid,
+            )
+
+        def on_subscribe(mqtt_client, userdata, mid, reason_codes, properties):
+            failures = [
+                str(code) for code in (reason_codes or [])
+                if getattr(code, "is_failure", False)
+            ]
+            if failures:
+                logger.error(
+                    "MQTT listener subscription rejected (mid=%s): %s",
+                    mid, ", ".join(failures),
+                )
+            else:
+                logger.info(
+                    "MQTT listener broker subscription acknowledged (mid=%s, grants=%s)",
+                    mid, reason_codes,
+                )
 
         def on_disconnect(mqtt_client, userdata, disconnect_flags, reason_code, properties):
             logger.warning("MQTT listener disconnected: %s", reason_code)
@@ -54,14 +79,17 @@ class Command(BaseCommand):
             close_old_connections()
             try:
                 applied = process_mqtt_message(message.topic, message.payload, message.qos)
-                if not applied:
-                    logger.debug("MQTT event ignored or not applicable: %s", message.topic)
+                if applied:
+                    logger.info("Applied MQTT event from broker: %s", message.topic)
+                else:
+                    logger.warning("MQTT event was ignored or rejected: %s", message.topic)
             except Exception:
                 logger.exception("Failed to process MQTT event on %s", message.topic)
             finally:
                 close_old_connections()
 
         client.on_connect = on_connect
+        client.on_subscribe = on_subscribe
         client.on_disconnect = on_disconnect
         client.on_message = on_message
 

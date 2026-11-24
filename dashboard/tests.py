@@ -46,6 +46,19 @@ class PairingFlowTests(TestCase):
         )
         self.assertEqual(first.status_code, 201)
         old_token = first.json()["api_token"]
+        device = Device.objects.get(device_id="cam-recover-token-01")
+        device.is_online = True
+        device.last_seen = timezone.now()
+        device.last_heartbeat = timezone.now()
+        device.current_state = {
+            "mqtt_connected": True,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "recording_enabled": True,
+            "system": {"cpu_percent": 50.0},
+        }
+        device.model_loaded = True
+        device.save()
 
         second_qr = self.client.post(reverse("create-pairing")).json()
         second_code = second_qr["qr_payload"].split(":", 1)[1]
@@ -61,6 +74,14 @@ class PairingFlowTests(TestCase):
         self.assertEqual(second.status_code, 201)
         new_token = second.json()["api_token"]
         self.assertNotEqual(old_token, new_token)
+        device.refresh_from_db()
+        self.assertFalse(device.is_online)
+        self.assertIsNone(device.last_heartbeat)
+        self.assertIsNone(device.last_seen)
+        self.assertFalse(device.model_loaded)
+        self.assertFalse(device.current_state["mqtt_connected"])
+        self.assertNotIn("recording_enabled", device.current_state)
+        self.assertNotIn("system", device.current_state)
 
         heartbeat = self.client.post(
             reverse("device-heartbeat"),

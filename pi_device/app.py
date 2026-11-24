@@ -230,6 +230,8 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
                 continue
             try:
                 payload = json.loads(meta_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    continue
                 image_path = alarm_dir / f"{meta_path.stem}.jpg"
                 if not image_path.is_file() or image_path.is_symlink():
                     continue
@@ -399,8 +401,12 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             "video_width" in clean or "video_height" in clean
         ):
             try:
-                width = int(clean.get("video_width", current["video_width"]))
-                height = int(clean.get("video_height", current["video_height"]))
+                raw_width = clean.get("video_width", current["video_width"])
+                raw_height = clean.get("video_height", current["video_height"])
+                if isinstance(raw_width, bool) or isinstance(raw_height, bool):
+                    raise ValueError("Boolean is not a resolution")
+                width = int(raw_width)
+                height = int(raw_height)
             except (TypeError, ValueError, OverflowError):
                 return jsonify({"error": "وضوح تصویر باید با دو عدد صحیح معتبر مشخص شود."}), 400
             compatible_modes = [

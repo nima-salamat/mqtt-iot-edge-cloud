@@ -174,6 +174,37 @@ class QueueManagementTests(unittest.TestCase):
         self.assertFalse(path.with_suffix(".uploaded").exists())
         self.assertTrue(path.exists())
 
+    def test_heartbeat_includes_temperature_cpu_memory_and_storage(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        self.uploader.bridge = SimpleNamespace(snapshot=lambda: {
+            "video_fps": 25.0,
+            "inference_fps": 5.0,
+            "model_loaded": True,
+            "mqtt_connected": True,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "pending_alerts": 0,
+            "pending_video_segments": 1,
+            "tracking_active": False,
+            "tracking_seconds": 0.0,
+        })
+        response = Mock(status_code=200)
+        self.uploader._session.post = Mock(return_value=response)
+        system = {
+            "cpu_percent": 20.0,
+            "temperature_c": 49.5,
+            "memory": {"total_bytes": 1000, "used_bytes": 400, "available_bytes": 600, "used_percent": 40.0},
+            "storage": {"total_bytes": 2000, "used_bytes": 800, "free_bytes": 1200, "used_percent": 40.0},
+        }
+        with patch("pi_device.uploader.collect_system_stats", return_value=system):
+            self.uploader._send_heartbeat()
+
+        payload = self.uploader._session.post.call_args.kwargs["json"]
+        self.assertEqual(payload["system"]["temperature_c"], 49.5)
+        self.assertEqual(payload["system"]["memory"]["used_percent"], 40.0)
+
     def test_delete_alarm_removes_one_record_and_delivery_markers(self):
         alert_id = "f" * 32
         meta, image = self._alarm(alert_id, published=False)

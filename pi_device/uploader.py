@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import requests
 
+from .system_stats import collect_system_stats
+
 log = logging.getLogger(__name__)
 
 def sha256_file(path):
@@ -234,6 +236,10 @@ class DurableUploader:
             ) if self.settings_store is not None else True,
             "last_video_upload_error": self.last_video_upload_error[:500],
         }
+        try:
+            payload["system"] = collect_system_stats(self.data_dir)
+        except Exception:
+            log.debug("Could not collect Raspberry Pi system metrics for heartbeat", exc_info=True)
         if self.last_video_upload_at:
             payload["last_video_upload_at"] = self.last_video_upload_at
         response = self._session.post(

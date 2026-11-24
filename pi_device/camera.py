@@ -547,6 +547,9 @@ class CameraPipeline:
             supported = ", ".join(
                 sorted({f'{m["size"][0]}x{m["size"][1]}' for m in sensor_modes})
             )
+            # The capture object has been opened but is not yet attached to
+            # the pipeline. Release it before returning this configuration error.
+            capture.release()
             raise RuntimeError(
                 f"Selected resolution {output_width}x{output_height} is not supported. "
                 f"Available resolutions: {supported}"

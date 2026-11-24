@@ -281,6 +281,41 @@ class DeviceApiTests(TestCase):
         self.assertEqual(payload["video_fps"], 0)
         self.assertEqual(payload["inference_fps"], 0)
 
+    def test_device_log_upload_is_idempotent_for_retried_event_ids(self):
+        payload = {
+            "event_id": "retryable-event-123",
+            "level": "warning",
+            "category": "camera",
+            "message": "Camera recovered",
+            "details": {"attempt": 2},
+        }
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {self.token}",
+            "HTTP_X_DEVICE_ID": self.device.device_id,
+        }
+        first = self.client.post(
+            reverse("device-log"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            **headers,
+        )
+        second = self.client.post(
+            reverse("device-log"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["status"], "stored")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["status"], "already_stored")
+        self.assertEqual(
+            DeviceLog.objects.filter(
+                device=self.device, event_id="retryable-event-123"
+            ).count(),
+            1,
+        )
+
     def test_device_can_upload_an_mp4_segment_and_retry_it_idempotently(self):
         video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
         segment_id = "1795533000000-abcd1234"

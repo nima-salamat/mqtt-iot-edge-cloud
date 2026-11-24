@@ -341,55 +341,7 @@
       text('video-fps-target', (state.video_fps_auto ? 'انتخاب خودکار · ' : 'هدف دستی · ') +
         Number(state.target_video_fps || state.settings?.video_fps || 30).toLocaleString('fa-IR') +
         ' FPS · ' + (state.camera_resolution || 'وضوح نامشخص'));
-      const cameraFpsCap = Number(state.camera_max_fps || 0);
-      const inputFpsCap = cameraFpsCap > 0 ? Math.max(1, Math.floor(cameraFpsCap)) : 1000;
-      const videoFpsInput = settingsForm.elements.namedItem('video_fps');
-      const inferenceFpsInput = settingsForm.elements.namedItem('inference_fps');
-      if (videoFpsInput) videoFpsInput.max = String(inputFpsCap);
-      if (inferenceFpsInput) inferenceFpsInput.max = String(inputFpsCap);
-      const fpsList = $('camera-fps-options');
-      if (fpsList) {
-        fpsList.replaceChildren();
-        const modes = Array.isArray(state.video_modes) ? state.video_modes : [];
-        if (modes.length) {
-          const groupedRates = new Map();
-          for (const mode of modes) {
-            const rate = Number(mode.fps || 0);
-            if (!Number.isFinite(rate) || rate <= 0) continue;
-            const key = String(Math.floor(rate));
-            const resolutions = groupedRates.get(key) || new Set();
-            resolutions.add(String(mode.resolution || 'وضوح نامشخص'));
-            groupedRates.set(key, resolutions);
-          }
-          for (const [rate, resolutions] of [...groupedRates.entries()]
-            .sort((a, b) => Number(a[0]) - Number(b[0]))) {
-            const option = document.createElement('option');
-            option.value = rate;
-            option.label = Number(rate).toLocaleString('fa-IR') + ' FPS · ' +
-              [...resolutions].join(' / ');
-            fpsList.append(option);
-          }
-        } else {
-          for (const rate of (Array.isArray(state.video_fps_options) ? state.video_fps_options : [])) {
-            const option = document.createElement('option');
-            option.value = String(Math.max(1, Math.floor(Number(rate))));
-            option.label = Number(rate).toLocaleString('fa-IR') + ' FPS';
-            fpsList.append(option);
-          }
-        }
-      }
-      const fpsHint = settingsForm.elements.namedItem('video_fps')?.closest('label')?.querySelector('small');
-      if (fpsHint && cameraFpsCap > 0) {
-        fpsHint.textContent = 'حداکثر کل حالت‌های سنسور: ' +
-          cameraFpsCap.toLocaleString('fa-IR', {maximumFractionDigits: 1}) +
-          ' FPS. اگر این نرخ در وضوح فعلی ممکن نباشد، برای رسیدن به آن وضوح استریم به mode سریع‌تر دوربین کاهش می‌یابد.';
-      }
-      const inferenceHint = settingsForm.elements.namedItem('inference_fps')?.closest('label')?.querySelector('small');
-      if (inferenceHint && cameraFpsCap > 0) {
-        inferenceHint.textContent = 'سقف سنسور ' +
-          cameraFpsCap.toLocaleString('fa-IR', {maximumFractionDigits: 1}) +
-          ' FPS است؛ ظرفیت Workerها و بار پردازنده سقف واقعی YOLO را پایین‌تر می‌آورد.';
-      }
+      refreshCameraModeControls(state);
       text('inference-fps', Number(state.inference_fps || 0).toFixed(1) + ' FPS');
       const pool = state.inference_pool || {};
       const workers = Number(pool.workers || state.settings?.inference_workers || 0);
@@ -659,6 +611,140 @@
 
   const autoFpsSelect = settingsForm.elements.namedItem('video_fps_auto');
   const manualFpsInput = settingsForm.elements.namedItem('video_fps');
+  const resolutionSelect = $('video-resolution');
+  const videoWidthInput = settingsForm.elements.namedItem('video_width');
+  const videoHeightInput = settingsForm.elements.namedItem('video_height');
+  const fpsList = $('camera-fps-options');
+  const inferenceFpsInput = settingsForm.elements.namedItem('inference_fps');
+  let latestVideoModes = [];
+  function parseResolution(value) {
+    const match = /^(\\d+)x(\\d+)$/.exec(String(value || ''));
+    return match ? {width: Number(match[1]), height: Number(match[2])} : null;
+  }
+
+  function getCompatibleVideoModes(value) {
+    const selected = parseResolution(value);
+    if (!selected) return [];
+    return latestVideoModes.filter(mode => {
+      const resolution = parseResolution(mode.resolution);
+      return resolution && resolution.width >= selected.width &&
+        resolution.height >= selected.height && Number(mode.fps) > 0;
+    });
+  }
+
+  function updateResolutionFields() {
+    const selected = parseResolution(resolutionSelect?.value);
+    if (!selected) return;
+    if (videoWidthInput) videoWidthInput.value = String(selected.width);
+    if (videoHeightInput) videoHeightInput.value = String(selected.height);
+    updateCameraFpsLimits();
+  }
+
+  function updateCameraFpsLimits() {
+    const selectedValue = resolutionSelect?.value || '';
+    const compatible = getCompatibleVideoModes(selectedValue);
+    const rates = [...new Set(compatible
+      .map(mode => Number(mode.fps))
+      .filter(rate => Number.isFinite(rate) && rate > 0)
+      .map(rate => Math.floor(rate)))].sort((a, b) => a - b);
+    const maximum = rates.length ? Math.max(...rates) : 0;
+    const inputMaximum = maximum > 0 ? maximum : 1000;
+
+    if (manualFpsInput) manualFpsInput.max = String(inputMaximum);
+    if (inferenceFpsInput) inferenceFpsInput.max = String(inputMaximum);
+    if (fpsList) {
+      fpsList.replaceChildren();
+      for (const rate of rates) {
+        const option = document.createElement('option');
+        option.value = String(rate);
+        option.label = rate.toLocaleString('fa-IR') + ' FPS در وضوح ' + selectedValue;
+        fpsList.append(option);
+      }
+    }
+
+    const maxLabel = $('camera-max-fps');
+    if (maxLabel) {
+      maxLabel.textContent = maximum > 0
+        ? maximum.toLocaleString('fa-IR') + ' FPS در ' + selectedValue
+        : 'در انتظار دریافت modeهای دوربین';
+    }
+    const fpsHint = manualFpsInput?.closest('label')?.querySelector('small');
+    if (fpsHint) {
+      fpsHint.textContent = maximum > 0
+        ? 'سقف این وضوح ' + maximum.toLocaleString('fa-IR') +
+          ' FPS است. برای نرخ بالاتر، وضوح دیگری را از فهرست پشتیبانی‌شده انتخاب کن.'
+        : 'پس از شناسایی دوربین، FPSهای پشتیبانی‌شده برای وضوح انتخابی نمایش داده می‌شوند.';
+    }
+    const inferenceHint = inferenceFpsInput?.closest('label')?.querySelector('small');
+    if (inferenceHint) {
+      inferenceHint.textContent = maximum > 0
+        ? 'سقف فریم حسگر در این وضوح ' + maximum.toLocaleString('fa-IR') +
+          ' FPS است؛ قدرت پردازنده و Workerها ظرفیت نهایی YOLO را پایین‌تر می‌آورند.'
+        : 'ظرفیت Workerها و پردازنده نیز نرخ واقعی YOLO را محدود می‌کند.';
+    }
+
+    if (maximum > 0 && manualFpsInput &&
+        autoFpsSelect?.value === 'false' &&
+        Number(manualFpsInput.value) > maximum) {
+      manualFpsInput.value = String(maximum);
+      text('settings-result', 'نرخ FPS به سقف وضوح انتخاب‌شده (' +
+        maximum.toLocaleString('fa-IR') + ') محدود شد.');
+    }
+  }
+
+  function populateCameraResolutions(modes, preferredValue) {
+    if (!resolutionSelect) return;
+    latestVideoModes = (Array.isArray(modes) ? modes : [])
+      .filter(mode => parseResolution(mode.resolution) && Number(mode.fps) > 0);
+    const selectedValue = preferredValue || resolutionSelect.value ||
+      (videoWidthInput?.value + 'x' + videoHeightInput?.value);
+    const resolutionRates = new Map();
+
+    for (const mode of latestVideoModes) {
+      const rate = Number(mode.fps);
+      const current = resolutionRates.get(mode.resolution) || 0;
+      if (rate > current) resolutionRates.set(mode.resolution, rate);
+    }
+
+    const options = [...resolutionRates.entries()]
+      .sort((a, b) => {
+        const left = parseResolution(a[0]);
+        const right = parseResolution(b[0]);
+        return (right.width * right.height) - (left.width * left.height);
+      });
+
+    resolutionSelect.replaceChildren();
+    for (const [resolution, maximum] of options) {
+      const option = document.createElement('option');
+      option.value = resolution;
+      option.textContent = resolution + ' · حداکثر ' +
+        maximum.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + ' FPS';
+      resolutionSelect.append(option);
+    }
+
+    if (selectedValue && !resolutionRates.has(selectedValue)) {
+      const option = document.createElement('option');
+      option.value = selectedValue;
+      option.textContent = selectedValue + ' · در modeهای گزارش‌شده موجود نیست';
+      resolutionSelect.append(option);
+    }
+    if (selectedValue) resolutionSelect.value = selectedValue;
+    updateCameraFpsLimits();
+  }
+
+  function refreshCameraModeControls(state) {
+    const selectedValue = resolutionSelect?.value ||
+      (Number(state.settings?.video_width || 0) + 'x' +
+       Number(state.settings?.video_height || 0));
+    populateCameraResolutions(state.video_modes, selectedValue);
+    if (!latestVideoModes.length) {
+      const fallbackMaximum = Number(state.camera_max_fps || 0);
+      if (fallbackMaximum > 0 && manualFpsInput) {
+        manualFpsInput.max = String(Math.max(1, Math.floor(fallbackMaximum)));
+      }
+    }
+  }
+
   function updateVideoFpsControls() {
     if (!autoFpsSelect || !manualFpsInput) return;
     manualFpsInput.disabled = autoFpsSelect.value === 'true';
@@ -668,7 +754,12 @@
     updateVideoFpsControls();
     updateSettingsDirty();
   });
+  resolutionSelect?.addEventListener('change', () => {
+    updateResolutionFields();
+    updateSettingsDirty();
+  });
   updateVideoFpsControls();
+  updateResolutionFields();
 
   function updateConfidenceOutput() {
     if (confidenceInput && confidenceOutput) {
@@ -695,6 +786,8 @@
       if (input) input.value = value;
     }
     updateConfidenceOutput();
+    updateVideoFpsControls();
+    updateResolutionFields();
     text('settings-result', 'تغییرات فرم لغو شد.');
     text('settings-restart-hint', 'مقادیر ذخیره‌شده دوباره بارگذاری شدند.');
     updateSettingsDirty();
@@ -740,7 +833,9 @@
     const data = Object.fromEntries(new FormData(settingsForm).entries());
     for (const key of Object.keys(data)) {
       const input = settingsForm.elements.namedItem(key);
-      if (key === 'video_fps_auto') {
+      if (key === 'video_resolution') {
+        continue;
+      } else if (key === 'video_fps_auto') {
         data[key] = data[key] === 'true';
       } else if (key === 'camera_backend' || key === 'camera_source') {
         data[key] = String(data[key] || '').trim();
@@ -763,15 +858,22 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'ذخیره تنظیمات ناموفق بود.');
 
+      delete data.video_resolution;
       for (const [key, value] of Object.entries(result.settings || {})) {
         const input = settingsForm.elements.namedItem(key);
         if (input) input.value = value;
       }
+      const savedResolution = Number(result.settings?.video_width || videoWidthInput?.value || 0) +
+        'x' + Number(result.settings?.video_height || videoHeightInput?.value || 0);
+      if (resolutionSelect) resolutionSelect.value = savedResolution;
+      updateResolutionFields();
       savedSettings = captureSettings();
       updateConfidenceOutput();
       updateVideoFpsControls();
 
       const restartLabels = {
+        video_width: 'وضوح افقی دوربین',
+        video_height: 'وضوح عمودی دوربین',
         video_fps: 'نرخ فریم ویدئو',
         video_bitrate: 'بیت‌ریت ویدئو',
         segment_seconds: 'مدت قطعه ویدئو',

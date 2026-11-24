@@ -36,6 +36,21 @@ class CameraPipelineStructureTests(unittest.TestCase):
         }):
             return importlib.import_module("pi_device.camera")
 
+    def _load_local_app_module(self):
+        cv2_stub = types.ModuleType("cv2")
+        pyzbar_package = types.ModuleType("pyzbar")
+        pyzbar_package.__path__ = []
+        pyzbar_module = types.ModuleType("pyzbar.pyzbar")
+        pyzbar_module.decode = MagicMock(return_value=[])
+        sys.modules.pop("pi_device.app", None)
+        sys.modules.pop("pi_device.camera", None)
+        with patch.dict(sys.modules, {
+            "cv2": cv2_stub,
+            "pyzbar": pyzbar_package,
+            "pyzbar.pyzbar": pyzbar_module,
+        }):
+            return importlib.import_module("pi_device.app")
+
     def test_camera_pipeline_class_and_lifecycle_methods_are_defined(self):
         module = self._load_camera_module()
         self.assertTrue(hasattr(module, "CameraPipeline"))
@@ -48,8 +63,7 @@ class CameraPipelineStructureTests(unittest.TestCase):
         )
 
     def test_local_alarm_list_skips_corrupt_non_object_metadata(self):
-        module = self._load_camera_module()
-        from pi_device.app import create_local_app
+        module = self._load_local_app_module()
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "PI_DATA_DIR": directory,
@@ -61,7 +75,7 @@ class CameraPipelineStructureTests(unittest.TestCase):
             (alarm_dir / f'{"b" * 32}.json').write_text("{broken-json", encoding="utf-8")
 
             camera = SimpleNamespace(device_id="cam-local-test-01")
-            app = create_local_app(
+            app = module.create_local_app(
                 camera,
                 SimpleNamespace(get=lambda: {}),
                 MagicMock(),
@@ -78,8 +92,7 @@ class CameraPipelineStructureTests(unittest.TestCase):
             self.assertEqual(response.get_json(), {"alarms": []})
 
     def test_local_settings_reject_boolean_and_fractional_camera_resolutions(self):
-        module = self._load_camera_module()
-        from pi_device.app import create_local_app
+        module = self._load_local_app_module()
         from pi_device.settings_store import SettingsStore
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -88,7 +101,7 @@ class CameraPipelineStructureTests(unittest.TestCase):
         }):
             settings = SettingsStore(str(Path(directory) / "settings.json"))
             camera = SimpleNamespace(device_id="cam-local-test-02", available_video_modes=[])
-            app = create_local_app(
+            app = module.create_local_app(
                 camera,
                 settings,
                 MagicMock(),

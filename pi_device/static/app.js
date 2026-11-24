@@ -1,5 +1,25 @@
 (() => {
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    try {
+      return await fetch(url, {...options, signal: controller.signal});
+    } catch (error) {
+      if (timedOut) throw new Error('درخواست به سرور در مهلت تعیین‌شده پاسخ نداد.');
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  let stateRefreshInFlight = false;
+  let alarmRefreshInFlight = false;
   const $ = (id) => document.getElementById(id);
   const text = (id, value) => { const node = $(id); if (node) node.textContent = value ?? '—'; };
   const boolLabel = (value) => value ? 'متصل' : 'قطع';
@@ -78,9 +98,10 @@
 
   async function refreshAlarms() {
     const gallery = $('alarm-gallery');
-    if (!gallery) return;
+    if (!gallery || alarmRefreshInFlight) return;
+    alarmRefreshInFlight = true;
     try {
-      const response = await fetch('/api/alarms/', {cache: 'no-store'});
+      const response = await fetchWithTimeout('/api/alarms/', {cache: 'no-store'});
       if (!response.ok) throw new Error('دریافت تصاویر تشخیص ناموفق بود.');
       const data = await response.json();
       const alarms = Array.isArray(data.alarms) ? data.alarms : [];
@@ -199,6 +220,8 @@
       message.className = 'gallery-empty';
       message.textContent = error.message;
       if (!gallery.querySelector('.alarm-thumb-card')) gallery.replaceChildren(message);
+    } finally {
+      alarmRefreshInFlight = false;
     }
   }
 
@@ -214,7 +237,7 @@
     ))) return;
     button.disabled = true;
     try {
-      const response = await fetch('/api/alarms/' + encodeURIComponent(alertId) + '/', {
+      const response = await fetchWithTimeout('/api/alarms/' + encodeURIComponent(alertId) + '/', {
         method: 'DELETE',
         headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
       });
@@ -245,7 +268,7 @@
     ))) return;
     button.disabled = true;
     try {
-      const response = await fetch('/api/alarms/cleanup/', {
+      const response = await fetchWithTimeout('/api/alarms/cleanup/', {
         method: 'POST',
         headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
       });
@@ -264,8 +287,10 @@
   });
 
   async function refreshState() {
+    if (stateRefreshInFlight) return;
+    stateRefreshInFlight = true;
     try {
-      const response = await fetch('/api/state/', {cache: 'no-store'});
+      const response = await fetchWithTimeout('/api/state/', {cache: 'no-store'}, 7000);
       if (!response.ok) throw new Error('دریافت وضعیت دستگاه ناموفق بود.');
       const state = await response.json();
       const mqtt = state.mqtt || {};
@@ -445,6 +470,8 @@
     } catch (error) {
       badgeText('camera-status', 'عدم دسترسی به عامل محلی');
       text('preview-status', error.message);
+    } finally {
+      stateRefreshInFlight = false;
     }
   }
 
@@ -463,7 +490,7 @@
     if (!approved) return;
     button.disabled = true;
     try {
-      const response = await fetch('/api/disconnect/', {
+      const response = await fetchWithTimeout('/api/disconnect/', {
         method: 'POST',
         headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
       });
@@ -520,11 +547,11 @@
     button.disabled = true;
     text('recording-status', enabled ? 'در حال شروع ضبط…' : 'در حال توقف ضبط در مرز فریم کلیدی…');
     try {
-      const response = await fetch('/api/recording/', {
+      const response = await fetchWithTimeout('/api/recording/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
         body: JSON.stringify({enabled})
-      });
+      }, 18000);
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'تغییر وضعیت ضبط ناموفق بود.');
       button.setAttribute('aria-pressed', String(!!result.recording_enabled));
@@ -549,7 +576,7 @@
     button.disabled = true;
     text('pairing-state', 'دوربین را به سمت QR نمایش‌داده‌شده در پنل وب بگیر…');
     try {
-      const response = await fetch('/api/pair/scan/', {method: 'POST', headers: {'X-CSRF-Token': csrf}});
+      const response = await fetchWithTimeout('/api/pair/scan/', {method: 'POST', headers: {'X-CSRF-Token': csrf}});
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'شروع اسکن QR ناموفق بود.');
       text('pairing-state', 'اسکن فعال شد؛ QR یک‌بارمصرف پنل وب را مقابل دوربین قرار بده. اگر تشخیص نداد، کد را دستی وارد کن.');
@@ -575,7 +602,7 @@
     button.disabled = true;
     text('pairing-state', 'در حال ارسال کد اتصال به سرور…');
     try {
-      const response = await fetch('/api/pair/manual/', {
+      const response = await fetchWithTimeout('/api/pair/manual/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
         body: JSON.stringify({pairing_code: pairingCode})
@@ -827,7 +854,7 @@
     if (!datalist) return;
     if (button) button.disabled = true;
     try {
-      const response = await fetch('/api/cameras/', {cache: 'no-store'});
+      const response = await fetchWithTimeout('/api/cameras/', {cache: 'no-store'});
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'جست‌وجوی دوربین‌ها ناموفق بود.');
       datalist.replaceChildren();
@@ -876,7 +903,7 @@
     text('settings-result', 'در حال ذخیره تنظیمات…');
     try {
       delete data.video_resolution;
-      const response = await fetch('/api/settings/', {
+      const response = await fetchWithTimeout('/api/settings/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
         body: JSON.stringify(data)
@@ -944,11 +971,11 @@
       button.disabled = true;
       text('queue-action-status', 'در حال پاک‌سازی صف…');
       try {
-        const response = await fetch('/api/queue/clear/', {
+        const response = await fetchWithTimeout('/api/queue/clear/', {
           method: 'POST',
           headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
           body: JSON.stringify({queue})
-        });
+        }, 30000);
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'پاک‌سازی صف ناموفق بود.');
         const count = Number(result.removed_count || 0).toLocaleString('fa-IR');

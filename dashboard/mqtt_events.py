@@ -35,12 +35,28 @@ def _bounded_float(value, minimum=0.0, maximum=1_000_000.0, default=0.0):
     return number
 
 
-def _fresh_timestamp(value, now=None, max_age_seconds=90):
+def _fresh_timestamp(
+    value,
+    now=None,
+    max_age_seconds=6 * 60 * 60,
+    max_future_seconds=6 * 60 * 60,
+):
+    """
+    Accept signed device events despite a temporarily skewed Pi RTC.
+
+    MQTT messages are authenticated with a per-device HMAC. A six-hour clock
+    window accommodates timezone/NTP errors; telemetry ordering is checked
+    separately against the last accepted device timestamp.
+    """
     parsed = _parse_datetime(value)
     now = now or timezone.now()
     if parsed is None:
         return False
-    return now - timedelta(seconds=max_age_seconds) <= parsed <= now + timedelta(seconds=30)
+    return (
+        now - timedelta(seconds=max_age_seconds)
+        <= parsed
+        <= now + timedelta(seconds=max_future_seconds)
+    )
 
 
 def _topic_device_and_event(topic):
@@ -60,8 +76,32 @@ def _topic_device_and_event(topic):
 
 
 def _apply_telemetry(device, payload, now):
-    if not _fresh_timestamp(payload.get("reported_at"), now=now):
-        logger.warning("Ignoring stale MQTT telemetry from %s", device.device_id)
+    reported_at = _parse_datetime(payload.get("reported_at"))
+    if not _fresh_timestamp(reported_at, now=now):
+        skew_seconds = (
+            round((now - reported_at).total_seconds(), 1)
+            if reported_at is not None else None
+        )
+        logger.warning(
+            "Ignoring out-of-window MQTT telemetry from %s "
+            "(reported_at=%r, server_now=%s, age_seconds=%s, allowed_skew_hours=6)",
+            device.device_id,
+            payload.get("reported_at"),
+            now.isoformat(),
+            skew_seconds,
+        )
+        return False
+
+    state = device.current_state if isinstance(device.current_state, dict) else {}
+    previous_reported_at = _parse_datetime(state.get("last_device_reported_at"))
+    if previous_reported_at is not None and reported_at <= previous_reported_at:
+        logger.warning(
+            "Ignoring out-of-order MQTT telemetry from %s "
+            "(reported_at=%s, last_accepted=%s)",
+            device.device_id,
+            reported_at.isoformat(),
+            previous_reported_at.isoformat(),
+        )
         return False
 
     video_fps = _bounded_float(payload.get("video_fps"), 0, 120)
@@ -77,11 +117,11 @@ def _apply_telemetry(device, payload, now):
     device.reported_inference_fps = inference_fps
     device.model_loaded = bool(payload.get("model_loaded", False))
 
-    state = device.current_state if isinstance(device.current_state, dict) else {}
     state.update({
         "mqtt_connected": True,
         "telemetry_transport": "mqtt",
         "last_mqtt_telemetry_at": now.isoformat(),
+        "last_device_reported_at": reported_at.isoformat(),
         "rtsp_connected": bool(payload.get("rtsp_connected", False)),
         "camera_ready": bool(payload.get("camera_ready", False)),
         "pending_alerts": pending_alerts,
@@ -99,7 +139,7 @@ def _apply_telemetry(device, payload, now):
     if "last_video_upload_error" in payload:
         state["last_video_upload_error"] = str(payload.get("last_video_upload_error") or "")[:500]
     system = _sanitize_system_metrics(payload.get("system"))
-    if system is not None:
+    if system:
         state["system"] = system
 
     device.current_state = state

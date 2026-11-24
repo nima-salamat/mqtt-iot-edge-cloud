@@ -40,17 +40,85 @@ def _safe_state_count(value, default=0, maximum=1_000_000):
     return int(number)
 
 
+def _safe_device_state(device):
+    """Normalize JSON runtime state before it reaches a Django template or API."""
+    raw = device.current_state if isinstance(device.current_state, dict) else {}
+    state = {}
+
+    for key in ("mqtt_connected", "rtsp_connected", "camera_ready",
+                "tracking_active", "recording_enabled"):
+        if isinstance(raw.get(key), bool):
+            state[key] = raw[key]
+
+    for key, maximum in (
+        ("tracking_seconds", 86400),
+        ("pending_alerts", 1_000_000),
+        ("pending_video_segments", 1_000_000),
+    ):
+        value = raw.get(key)
+        number = _safe_state_number(value, default=None, maximum=maximum)
+        if number is not None:
+            if key.startswith("pending_") and not number.is_integer():
+                continue
+            state[key] = int(number) if key.startswith("pending_") else round(number, 1)
+
+    for key, limit in (
+        ("model", 64), ("software_version", 64),
+        ("last_video_upload_at", 64), ("last_video_upload_error", 500),
+        ("telemetry_transport", 16), ("connection_state", 32),
+    ):
+        if isinstance(raw.get(key), str):
+            state[key] = raw[key][:limit]
+
+    source_system = raw.get("system")
+    system = {}
+    if isinstance(source_system, dict):
+        for key, minimum, maximum in (
+            ("cpu_percent", 0, 100),
+            ("temperature_c", -10, 150),
+        ):
+            number = _safe_state_number(
+                source_system.get(key), default=None, minimum=minimum, maximum=maximum
+            )
+            if number is not None:
+                system[key] = round(number, 1)
+
+        for group in ("memory", "storage"):
+            source_group = source_system.get(group)
+            if not isinstance(source_group, dict):
+                continue
+            clean_group = {}
+            keys = (
+                ("total_bytes", 1 << 50),
+                ("used_bytes", 1 << 50),
+                ("available_bytes" if group == "memory" else "free_bytes", 1 << 50),
+                ("used_percent", 100),
+            )
+            for key, maximum in keys:
+                number = _safe_state_number(
+                    source_group.get(key), default=None, maximum=maximum
+                )
+                if number is not None:
+                    clean_group[key] = round(number, 1) if key == "used_percent" else int(number)
+            if clean_group:
+                system[group] = clean_group
+    if system:
+        state["system"] = system
+
+    device.current_state = state
+    return state
+
+
 def _visible_devices(user):
     return Device.objects.select_related("owner") if user.is_staff else Device.objects.filter(owner=user)
 
 
 @login_required
 def home(request):
-    devices = _visible_devices(request.user).order_by("name", "device_id")
-    online_count = devices.filter(
-        api_token_hash__gt="",
-        last_heartbeat__gte=timezone.now() - timedelta(seconds=50)
-    ).count()
+    devices = list(_visible_devices(request.user).order_by("name", "device_id"))
+    for device in devices:
+        _safe_device_state(device)
+    online_count = sum(1 for device in devices if device.is_online_now)
     alarm_queryset = Alarm.objects.filter(device__in=devices)
     recent_alarms = alarm_queryset.select_related("device")[:12]
     alarm_cursor = alarm_queryset.aggregate(max_id=Max("pk"))["max_id"] or 0
@@ -82,6 +150,7 @@ def disconnect_device(request, device_id):
 @login_required
 def device_detail(request, device_id):
     device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
+    _safe_device_state(device)
     alarm_queryset = device.alarms.all()
     alarms = alarm_queryset[:50]
     alarm_cursor = alarm_queryset.aggregate(max_id=Max("pk"))["max_id"] or 0

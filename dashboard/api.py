@@ -40,12 +40,25 @@ def _no_store(response):
     return response
 
 
-def _strict_json_object(request):
-    """Parse a non-empty JSON object without silently turning malformed bodies into {}."""
-    if not request.body:
+class RequestBodyTooLarge(Exception):
+    """Raised when a small JSON API receives an unexpectedly large request."""
+
+
+def _strict_json_object(request, *, max_bytes=256 * 1024):
+    """Parse a bounded JSON object without silently converting invalid bodies to {}."""
+    try:
+        content_length = int(request.META.get("CONTENT_LENGTH") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if content_length > max_bytes:
+        raise RequestBodyTooLarge
+    body = request.body
+    if len(body) > max_bytes:
+        raise RequestBodyTooLarge
+    if not body:
         return None
     try:
-        value = json.loads(request.body)
+        value = json.loads(body)
     except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
         return None
     return value if isinstance(value, dict) else None
@@ -226,7 +239,10 @@ def disconnect_device(request):
 @device_required
 @require_POST
 def heartbeat(request):
-    payload = _strict_json_object(request)
+    try:
+        payload = _strict_json_object(request, max_bytes=64 * 1024)
+    except RequestBodyTooLarge:
+        return JsonResponse({"error": "heartbeat_payload_too_large"}, status=413)
     if payload is None:
         return JsonResponse({"error": "invalid_json_object"}, status=400)
     device = request.iot_device
@@ -431,7 +447,10 @@ def upload_segment(request):
 @device_required
 @require_POST
 def device_log(request):
-    payload = _strict_json_object(request)
+    try:
+        payload = _strict_json_object(request, max_bytes=256 * 1024)
+    except RequestBodyTooLarge:
+        return JsonResponse({"error": "device_log_payload_too_large"}, status=413)
     if payload is None:
         return JsonResponse({"error": "invalid_json_object"}, status=400)
     event_id = str(payload.get("event_id", "")).strip()[:64]

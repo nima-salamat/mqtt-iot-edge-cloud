@@ -229,11 +229,12 @@ def device_videos(request, device_id):
     return response
 
 
-def _ffprobe_h264_codec(path):
+def _ffprobe_h264_info(path):
+    """Return the MSE codec and dimensions required to keep concat chunks homogeneous."""
     result = subprocess.run(
         [
             "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=codec_name,profile,level",
+            "-show_entries", "stream=codec_name,profile,level,width,height,pix_fmt",
             "-of", "json", str(path),
         ],
         capture_output=True,
@@ -265,7 +266,19 @@ def _ffprobe_h264_codec(path):
         level = max(10, min(62, int(stream.get("level") or 31)))
     except (TypeError, ValueError):
         level = 31
-    return f"avc1.{profile_prefix}{level:02x}"
+    try:
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("ابعاد تصویر ویدئو قابل خواندن نیست.")
+    if not (16 <= width <= 8192 and 16 <= height <= 8192):
+        raise ValueError("ابعاد تصویر ویدئو خارج از محدوده معتبر است.")
+    return {
+        "codec": f"avc1.{profile_prefix}{level:02x}",
+        "width": width,
+        "height": height,
+        "pixel_format": str(stream.get("pix_fmt") or ""),
+    }
 
 
 @login_required
@@ -298,6 +311,7 @@ def device_video_chunk(request, device_id):
     selected_seconds = 0
     maximum_chunk_bytes = 48 * 1024 * 1024
     paths = []
+    video_info = None
     for segment in candidates:
         try:
             file_size = int(segment.size_bytes or segment.file.size or 0)
@@ -314,6 +328,23 @@ def device_video_chunk(request, device_id):
             return JsonResponse({
                 "error": "حجم این قطعه از سقف پردازش سرور بیشتر است."
             }, status=413)
+        try:
+            candidate_info = _ffprobe_h264_info(file_path)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            if selected:
+                # Return the valid prefix already collected. The next request
+                # will surface the bad segment as a clear error at its boundary.
+                logger.warning(
+                    "Stopping archive chunk before incompatible video segment %s: %s",
+                    segment.segment_id, exc,
+                )
+                break
+            return JsonResponse({"error": str(exc)}, status=415)
+        if video_info is not None and candidate_info != video_info:
+            # A device may change resolution/profile between recordings. Never
+            # stream a single MSE chunk with multiple H.264 initialization configs.
+            break
+        video_info = candidate_info
         selected.append(segment)
         paths.append(file_path)
         source_bytes += file_size
@@ -328,10 +359,9 @@ def device_video_chunk(request, device_id):
             "error": "پردازشگر FFmpeg روی سرور نصب نیست؛ ایمیج api را با نسخه جدید بازسازی کن."
         }, status=503)
 
-    try:
-        codec = _ffprobe_h264_codec(paths[0])
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        return JsonResponse({"error": str(exc)}, status=415)
+    if video_info is None:
+        return JsonResponse({"error": "ویدئوی سازگار برای ساخت چانک پیدا نشد."}, status=415)
+    codec = video_info["codec"]
 
     temporary_directory = tempfile.TemporaryDirectory(prefix="iot-video-chunk-")
     temp_root = Path(temporary_directory.name)
@@ -376,6 +406,8 @@ def device_video_chunk(request, device_id):
         response["Cache-Control"] = "private, no-store"
         response["X-Content-Type-Options"] = "nosniff"
         response["X-Video-Codec"] = codec
+        response["X-Video-Width"] = str(video_info["width"])
+        response["X-Video-Height"] = str(video_info["height"])
         response["X-Video-Start-Ms"] = str(int(first.started_at.timestamp() * 1000))
         response["X-Video-Duration"] = str(total_duration)
         response["X-Video-Segment-Count"] = str(len(selected))

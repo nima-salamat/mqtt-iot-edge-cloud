@@ -179,6 +179,28 @@ class DeviceApiTests(TestCase):
         self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 40.0)
         self.assertNotIn("path", self.device.current_state["system"]["storage"])
 
+    def test_heartbeat_rejects_empty_malformed_non_object_and_wrong_boolean_payloads(self):
+        headers = {
+            "content_type": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {self.token}",
+            "HTTP_X_DEVICE_ID": self.device.device_id,
+        }
+        invalid_bodies = (
+            b"",
+            b"{not-json",
+            json.dumps([]),
+            json.dumps({"mqtt_connected": "false"}),
+        )
+        for body in invalid_bodies:
+            with self.subTest(body=body):
+                response = self.client.post(
+                    reverse("device-heartbeat"), data=body, **headers
+                )
+                self.assertEqual(response.status_code, 400)
+        self.device.refresh_from_db()
+        self.assertIsNone(self.device.last_heartbeat)
+        self.assertFalse(self.device.is_online)
+
     def test_device_heartbeat_rejects_non_finite_runtime_metrics(self):
         for invalid_value in (float("nan"), float("inf"), -float("inf")):
             with self.subTest(invalid_value=invalid_value):
@@ -328,6 +350,20 @@ class DeviceApiTests(TestCase):
                 )
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(response.json()["error"], expected_error)
+
+    def test_device_log_rejects_empty_malformed_and_non_object_json(self):
+        headers = {
+            "content_type": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {self.token}",
+            "HTTP_X_DEVICE_ID": self.device.device_id,
+        }
+        for body in (b"", b"{not-json", json.dumps([])):
+            with self.subTest(body=body):
+                response = self.client.post(
+                    reverse("device-log"), data=body, **headers
+                )
+                self.assertEqual(response.status_code, 400)
+        self.assertFalse(DeviceLog.objects.filter(device=self.device).exists())
 
     def test_device_log_upload_is_idempotent_for_retried_event_ids(self):
         payload = {

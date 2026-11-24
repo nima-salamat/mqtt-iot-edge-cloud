@@ -55,6 +55,7 @@ class RaspberryPiMqttBridge:
         self._server_time_offset_seconds = None
         self._command_handler = None
         self._started = False
+        self._restart_after_pair = False
         self._command_subscription_ready = False
         self._publish_warning_at = {}
         self.topic_root = f"{self.prefix}/devices/{device_id}"
@@ -94,17 +95,37 @@ class RaspberryPiMqttBridge:
             changed = signing_key != self._signing_key
             self._signing_key = signing_key.lower()
             connected = self.connected
+            should_restart = bool(
+                changed and self._signing_key and self._restart_after_pair and not self._started
+            )
+            if should_restart:
+                self._restart_after_pair = False
         if changed and self._signing_key:
             self._configure_will()
-            # The Will is transmitted as part of CONNECT. Reconnect once after
-            # key bootstrap so an already-paired Pi also receives a signed LWT.
-            if connected and self._started:
+            if should_restart:
+                # A revoked credential session was fully stopped. A new,
+                # validated pairing starts that same client exactly once.
+                self.start()
+            elif connected and self._started:
+                # The Will is transmitted as part of CONNECT. Reconnect once
+                # after key bootstrap so an already-paired Pi receives a
+                # signed Last Will without creating a second Paho loop.
                 threading.Thread(
                     target=self._reconnect_for_will,
                     name="mqtt-will-refresh",
                     daemon=True,
                 ).start()
         return True
+
+    def revoke_credentials(self):
+        """Close the broker session after the server has revoked the API token."""
+        with self._lock:
+            self._restart_after_pair = True
+        try:
+            # Publish the last valid offline state before removing the old key.
+            self.stop()
+        finally:
+            self.set_signing_key("")
 
     def set_server_time_offset(self, offset_seconds):
         """Use the HTTPS server clock for command expiry when the Pi RTC drifts."""

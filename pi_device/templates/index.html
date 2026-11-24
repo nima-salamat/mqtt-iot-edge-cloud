@@ -223,10 +223,10 @@
             </div>
             <label>انتخاب نرخ فریم
               <select name="video_fps_auto">
-                <option value="true" {% if settings.video_fps_auto %}selected{% endif %}>خودکار؛ سریع‌ترین mode سازگار سنسور</option>
+                <option value="true" {% if settings.video_fps_auto %}selected{% endif %}>خودکار؛ بهترین mode سازگار با نرخ هدف</option>
                 <option value="false" {% if not settings.video_fps_auto %}selected{% endif %}>دستی؛ نرخ درخواستی</option>
               </select>
-              <small>در حالت خودکار، سریع‌ترین mode سازگار سنسور انتخاب می‌شود. در حالت دستی، فقط نرخ‌های قابل پشتیبانی همین دوربین پیشنهاد می‌شوند.</small>
+              <small>در حالت خودکار، دوربین از بهترین mode سازگار استفاده می‌کند اما از نرخ هدف بالاتر نمی‌رود؛ برای درخواست نرخ بالاتر، حالت دستی را انتخاب کن.</small>
             </label>
             <datalist id="camera-fps-options"></datalist>
             <label>نرخ فریم در حالت دستی

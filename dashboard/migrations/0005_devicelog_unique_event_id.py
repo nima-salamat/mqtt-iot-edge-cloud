@@ -10,7 +10,10 @@ def remove_duplicate_device_log_events(apps, schema_editor):
         .annotate(total=Count("pk"))
         .filter(total__gt=1)
     )
-    for duplicate in duplicates.iterator():
+    # Materialize groups before deleting rows from the same table. This
+    # avoids changing the underlying cursor while it is being iterated,
+    # including on SQLite deployments.
+    for duplicate in list(duplicates):
         ids = list(
             DeviceLog.objects.filter(
                 device_id=duplicate["device_id"],

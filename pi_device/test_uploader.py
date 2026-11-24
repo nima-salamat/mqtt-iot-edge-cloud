@@ -78,6 +78,87 @@ class QueueManagementTests(unittest.TestCase):
         self.assertGreater(queues["videos"]["bytes"], 0)
         self.assertGreater(queues["alarms"]["bytes"], 0)
 
+    def test_queue_snapshot_quarantines_non_object_alarm_metadata(self):
+        alert_id = "7" * 32
+        meta = self.uploader.alarm_dir / f"{alert_id}.json"
+        image = self.uploader.alarm_dir / f"{alert_id}.jpg"
+        meta.write_text("[]", encoding="utf-8")
+        image.write_bytes(b"jpeg-data")
+
+        queues = self.uploader.queue_snapshot()
+
+        self.assertEqual(queues["alarms"]["count"], 0)
+        self.assertFalse(meta.exists())
+        self.assertFalse(image.exists())
+        quarantine = self.uploader.quarantine_dir / "alarms"
+        self.assertTrue((quarantine / meta.name).exists())
+        self.assertTrue((quarantine / image.name).exists())
+
+    def test_queue_snapshot_skips_symlinked_queue_files(self):
+        external = Path(self.temp_dir.name) / "outside"
+        external.mkdir()
+        external_video = external / "outside.mp4"
+        external_alarm = external / "outside.json"
+        external_log = external / "outside-log.json"
+        external_video.write_bytes(b"external-video")
+        external_alarm.write_text("{}", encoding="utf-8")
+        external_log.write_text("{}", encoding="utf-8")
+
+        (self.uploader.video_dir / "linked.mp4").symlink_to(external_video)
+        (self.uploader.alarm_dir / f'{"8" * 32}.json').symlink_to(external_alarm)
+        (self.uploader.log_dir / "linked-log.json").symlink_to(external_log)
+
+        queues = self.uploader.queue_snapshot()
+
+        self.assertEqual(queues["videos"]["count"], 0)
+        self.assertEqual(queues["alarms"]["count"], 0)
+        self.assertEqual(queues["logs"]["count"], 0)
+        self.assertTrue(external_video.exists())
+        self.assertTrue(external_alarm.exists())
+        self.assertTrue(external_log.exists())
+
+    def test_retention_cleanup_skips_symlinks_and_handles_unreadable_paths(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import time
+
+        external = Path(self.temp_dir.name) / "retention-outside"
+        external.mkdir()
+        targets = {
+            "video": external / "external.mp4",
+            "alarm": external / "external-alarm.json",
+            "log": external / "external-log.json",
+            "archive": external / "external-archive.json",
+        }
+        for path in targets.values():
+            path.write_text("external-data", encoding="utf-8")
+            os.utime(path, (time.time() - 10 * 86400, time.time() - 10 * 86400))
+
+        links = {
+            "video": self.uploader.video_dir / "linked.mp4",
+            "alarm": self.uploader.alarm_dir / f'{"9" * 32}.json',
+            "log": self.uploader.log_dir / "linked-log.json",
+            "archive": self.uploader.log_archive_dir / "linked-archive.json",
+        }
+        for key, link in links.items():
+            link.symlink_to(targets[key])
+
+        self.uploader.settings_store = SimpleNamespace(get=lambda: {
+            "local_video_retention_minutes": 0,
+            "upload_queue_retention_hours": 1,
+            "upload_queue_max_gb": 1,
+            "local_alarm_retention_days": 1,
+            "local_log_retention_days": 1,
+        })
+        self.uploader.bridge = SimpleNamespace(publish_log=Mock())
+
+        self.uploader._cleanup()
+
+        for link in links.values():
+            self.assertTrue(link.is_symlink())
+        for target in targets.values():
+            self.assertTrue(target.exists())
+
     def test_clear_pending_queues_preserves_recording_and_uploaded_data(self):
         pending_video = self.uploader.video_dir / "pending.mp4"
         pending_video.write_bytes(b"video-pending")

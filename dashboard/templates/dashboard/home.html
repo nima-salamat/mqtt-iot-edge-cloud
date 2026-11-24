@@ -27,6 +27,14 @@
         <div class="device-meta"><span>ویدئوی زنده</span><b class="stream-status">{% if device.current_state.rtsp_connected %}متصل{% else %}قطع{% endif %}</b></div>
         <div class="device-meta"><span>هشدار ارسال‌نشده</span><b class="pending-alerts">{{ device.current_state.pending_alerts|default:0 }}</b></div>
         <div class="device-meta"><span>ویدئوی ارسال‌نشده</span><b class="pending-videos">{{ device.current_state.pending_video_segments|default:0 }}</b></div>
+        {% with system=device.current_state.system %}
+        <div class="device-health-grid">
+          <div class="device-health-item" data-health="temperature"><span>دمای Pi</span><b class="health-temperature">{% if system.temperature_c != None %}{{ system.temperature_c }}°C{% else %}—{% endif %}</b></div>
+          <div class="device-health-item" data-health="cpu"><span>CPU</span><b class="health-cpu">{% if system.cpu_percent != None %}{{ system.cpu_percent }}٪{% else %}—{% endif %}</b></div>
+          <div class="device-health-item" data-health="memory"><span>RAM</span><b class="health-memory">{% if system.memory.used_percent != None %}{{ system.memory.used_percent }}٪{% else %}—{% endif %}</b></div>
+          <div class="device-health-item" data-health="storage"><span>فضای دیسک</span><b class="health-storage">{% if system.storage.used_percent != None %}{{ system.storage.used_percent }}٪{% else %}—{% endif %}</b></div>
+        </div>
+        {% endwith %}
         <div class="device-footer"><span>آخرین ارتباط: <time class="last-heartbeat">{{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"هنوز دریافت نشده" }}</time></span><b>مشاهده دستگاه ←</b></div>
         </a>
         {% if device.api_token_hash %}
@@ -206,6 +214,23 @@ async function refreshOverview(){
       set('.stream-status',device.rtsp_connected?'متصل':'قطع');
       set('.pending-alerts',Number(device.pending_alerts||0).toLocaleString('fa-IR'));
       set('.pending-videos',Number(device.pending_video_segments||0).toLocaleString('fa-IR'));
+      const system=device.system||{};
+      const memory=system.memory||{};
+      const storage=system.storage||{};
+      const setMetric=(selector,value)=>{const node=card.querySelector(selector);if(node)node.textContent=value;};
+      const temp=Number(system.temperature_c);
+      const cpu=Number(system.cpu_percent);
+      const memoryPercent=Number(memory.used_percent);
+      const storagePercent=Number(storage.used_percent);
+      setMetric('.health-temperature',Number.isFinite(temp)?temp.toLocaleString('fa-IR',{maximumFractionDigits:1})+'°C':'—');
+      setMetric('.health-cpu',Number.isFinite(cpu)?cpu.toLocaleString('fa-IR',{maximumFractionDigits:1})+'٪':'—');
+      setMetric('.health-memory',Number.isFinite(memoryPercent)?memoryPercent.toLocaleString('fa-IR',{maximumFractionDigits:1})+'٪':'—');
+      setMetric('.health-storage',Number.isFinite(storagePercent)?storagePercent.toLocaleString('fa-IR',{maximumFractionDigits:1})+'٪':'—');
+      const temperatureItem=card.querySelector('[data-health="temperature"]');
+      temperatureItem?.classList.toggle('is-warning',Number.isFinite(temp)&&temp>=75);
+      card.querySelector('[data-health="cpu"]')?.classList.toggle('is-warning',Number.isFinite(cpu)&&cpu>=90);
+      card.querySelector('[data-health="memory"]')?.classList.toggle('is-warning',Number.isFinite(memoryPercent)&&memoryPercent>=90);
+      card.querySelector('[data-health="storage"]')?.classList.toggle('is-warning',Number.isFinite(storagePercent)&&storagePercent>=90);
       set('.last-heartbeat',device.last_heartbeat?new Date(device.last_heartbeat).toLocaleString('fa-IR'):'هنوز دریافت نشده');
       const dwell=Number(device.tracking_seconds||0);
       set('.tracking-duration',device.tracking_active

@@ -22,7 +22,12 @@
       const overview = await response.json();
       const device = (overview.devices || []).find(item => item.device_id === deviceId);
       if (!device) return;
-      canControl = !!(device.is_paired && device.is_online && device.mqtt_connected);
+      canControl = !!(
+        device.is_paired
+        && device.is_online
+        && device.mqtt_connected
+        && device.mqtt_command_subscription_ready
+      );
       if (!busy) button.disabled = !canControl;
       if (mqttBadge) {
         mqttBadge.classList.toggle('online', !!device.mqtt_connected);
@@ -37,7 +42,9 @@
           ? 'برای کنترل از راه دور، دوربین و کانال MQTT باید آنلاین باشند.'
           : 'اتصال دوربین لغو شده است؛ ابتدا آن را دوباره Pair کن.';
       } else if (canControl && !busy) {
-        status.textContent = 'اتصال MQTT آمادهٔ دریافت فرمان است.';
+        status.textContent = 'اتصال MQTT و اشتراک فرمان آماده است.';
+      } else if (device.is_online && device.mqtt_connected && !busy) {
+        status.textContent = 'MQTT متصل است، اما اشتراک فرمان هنوز تأیید نشده است.';
       }
     } catch (_) {
       // The local command state remains visible if the status endpoint is temporarily unavailable.

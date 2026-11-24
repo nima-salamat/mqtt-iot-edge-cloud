@@ -259,6 +259,7 @@ class CameraPipeline:
         self._last_detection_at = 0.0
         self._last_preview_at = 0.0
         self._last_encoder_count = 0
+        self._last_metrics_update_at = 0.0
         self.video_fps = 0.0
         self.inference_fps = 0.0
         self.inference_latency_ms = 0.0
@@ -307,6 +308,31 @@ class CameraPipeline:
             and not item.with_suffix(".uploaded").exists()
         )
 
+    def _publish_bridge_metrics(self, now, pending_videos=None):
+        """Publish slow-changing queue/worker diagnostics at most once per second."""
+        if now - self._last_metrics_update_at < 1.0:
+            return
+
+        pool = self.inference_pool
+        pool_stats = pool.snapshot() if pool is not None else {}
+        model_ready = bool(
+            pool is not None
+            and pool_stats.get("ready_workers", 0) == pool.worker_count
+        )
+        if pending_videos is None:
+            pending_videos = self._pending_video_count()
+
+        self.bridge.set_metrics(
+            self.video_fps,
+            self.inference_fps,
+            model_ready,
+            self._pending_alarm_count(),
+            pending_videos=pending_videos,
+            rtsp_connected=bool(self.live_output and self.live_output.connected),
+            camera_ready=self._is_camera_ready(),
+        )
+        self._last_metrics_update_at = now
+
     def _segment_path(self):
         return self.video_dir / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.mp4"
 
@@ -340,6 +366,7 @@ class CameraPipeline:
             self._last_detection_at = 0.0
         self._frame_count = 0
         self._fps_started = time.monotonic()
+        self._last_metrics_update_at = 0.0
         self._tracking_started_at = 0.0
         self._tracking_active = False
         self._tracking_seconds = 0.0
@@ -958,14 +985,7 @@ class CameraPipeline:
                     self._frame_count = 0
                     self._fps_started = now
 
-                self.bridge.set_metrics(
-                    self.video_fps, self.inference_fps,
-                    bool(self.inference_pool and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count),
-                    self._pending_alarm_count(),
-                    pending_videos=self._pending_video_count(),
-                    rtsp_connected=bool(self.live_output and self.live_output.connected),
-                    camera_ready=self._is_camera_ready(),
-                )
+                self._publish_bridge_metrics(now)
             except Exception as exc:
                 self.camera_error = str(exc)
                 log.exception("Picamera2 capture/preview error")
@@ -1036,14 +1056,7 @@ class CameraPipeline:
                     self.video_fps = self._frame_count / elapsed
                     self._frame_count = 0
                     self._fps_started = now
-                self.bridge.set_metrics(
-                    self.video_fps, self.inference_fps,
-                    bool(self.inference_pool and self.inference_pool.snapshot()["ready_workers"] == self.inference_pool.worker_count),
-                    self._pending_alarm_count(),
-                    pending_videos=0,
-                    rtsp_connected=False,
-                    camera_ready=self._is_camera_ready(),
-                )
+                self._publish_bridge_metrics(now, pending_videos=0)
             except Exception as exc:
                 self.camera_error = str(exc)
                 log.warning("OpenCV camera capture error: %s", exc)

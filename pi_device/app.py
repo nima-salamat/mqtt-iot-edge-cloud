@@ -387,11 +387,14 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         # The active camera mode list is authoritative. Reject an unsupported
         # resolution before persisting it, unless the same request changes
         # camera backend/source (those capabilities are only known after restart).
-        source_changed = "camera_backend" in clean or "camera_source" in clean
+        current = settings_store.get()
+        source_changed = (
+            str(clean.get("camera_backend", current["camera_backend"])) != current["camera_backend"]
+            or str(clean.get("camera_source", current["camera_source"])) != current["camera_source"]
+        )
         if not source_changed and camera.available_video_modes and (
             "video_width" in clean or "video_height" in clean
         ):
-            current = settings_store.get()
             width = int(clean.get("video_width", current["video_width"]))
             height = int(clean.get("video_height", current["video_height"]))
             compatible_modes = [

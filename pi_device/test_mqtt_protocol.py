@@ -191,6 +191,31 @@ class MqttBridgePublishTests(unittest.TestCase):
         ))
         thread_factory.return_value.start.assert_called_once()
 
+    def test_revoked_mqtt_session_stops_and_restarts_after_new_pairing(self):
+        from unittest.mock import call
+
+        self.bridge._started = True
+        self.bridge.connected = False
+        self.bridge.client.is_connected.return_value = False
+
+        self.bridge.revoke_credentials()
+
+        self.assertFalse(self.bridge._started)
+        self.assertEqual(self.bridge._signing_key, "")
+        self.assertTrue(self.bridge._restart_after_pair)
+        self.bridge.client.loop_stop.assert_called_once()
+
+        self.bridge.client.reset_mock()
+        self.assertTrue(self.bridge.set_signing_key("b" * 64))
+
+        self.assertTrue(self.bridge._started)
+        self.assertFalse(self.bridge._restart_after_pair)
+        self.bridge.client.connect_async.assert_called_once_with(
+            "localhost", 1883, keepalive=45
+        )
+        self.bridge.client.loop_start.assert_called_once()
+        self.bridge.client.will_set.assert_called_once()
+
     def test_publish_requires_connected_broker(self):
         self.bridge.client.is_connected.return_value = False
 

@@ -179,6 +179,20 @@ class DeviceApiTests(TestCase):
         self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 40.0)
         self.assertNotIn("path", self.device.current_state["system"]["storage"])
 
+    def test_device_heartbeat_rejects_non_finite_runtime_metrics(self):
+        for invalid_value in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(invalid_value=invalid_value):
+                response = self.client.post(
+                    reverse("device-heartbeat"),
+                    data=json.dumps({"video_fps": invalid_value}),
+                    content_type="application/json",
+                    HTTP_AUTHORIZATION=f"Bearer {self.token}",
+                    HTTP_X_DEVICE_ID=self.device.device_id,
+                )
+                self.assertEqual(response.status_code, 400)
+        self.device.refresh_from_db()
+        self.assertIsNone(self.device.last_heartbeat)
+
     def test_device_heartbeat_discards_invalid_system_metrics(self):
         response = self.client.post(
             reverse("device-heartbeat"),

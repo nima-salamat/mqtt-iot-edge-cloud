@@ -1,4 +1,5 @@
 {% extends "dashboard/base.html" %}
+{% load static %}
 {% block title %}{{ device.name }}{% endblock %}
 {% block content %}
 <form id="csrf-token-form" hidden>{% csrf_token %}</form>
@@ -40,7 +41,11 @@
 <section class="section" data-live-alerts data-device-id="{{ device.device_id }}" data-alarm-cursor="{{ alarm_cursor }}">
   <div class="section-heading">
     <div><span class="eyebrow">PERSON DETECTION · LIVE</span><h2>هشدارها و تصاویر ثبت‌شده</h2><p class="muted">هشدارها و عکس‌های تازه بدون ریلود صفحه اضافه می‌شوند.</p></div>
-    <div class="inline-actions"><button class="btn secondary" id="enable-alert-notifications" type="button">فعال‌سازی اعلان مرورگر</button><span class="muted" id="alert-notification-status" aria-live="polite">دریافت هشدار زنده فعال است</span></div>
+    <div class="inline-actions">
+      <button class="btn secondary" id="enable-alert-notifications" type="button">فعال‌سازی اعلان مرورگر</button>
+      <span class="muted" id="alert-notification-status" aria-live="polite">دریافت هشدار زنده فعال است</span>
+      <button class="btn danger" type="button" data-cleanup-kind="alarms" data-device-id="{{ device.device_id }}" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">پاک‌سازی هشدارهای این دوربین</button>
+    </div>
   </div>
   <div class="alarm-grid" data-live-alert-grid>
     {% for alarm in alarms %}
@@ -67,17 +72,46 @@
 </section>
 
 <section class="section">
-  <div class="section-heading"><div><span class="eyebrow">RECORDED VIDEO</span><h2>قطعه‌های ویدئوی ذخیره‌شده روی سرور</h2></div><span class="muted">با توجه به مدت نگهداری حساب</span></div>
+  <div class="section-heading">
+    <div><span class="eyebrow">RECORDED VIDEO</span><h2>آرشیو و پخش ویدئوهای گذشته</h2><p class="muted">قطعه‌ها بر اساس زمان مرتب شده‌اند؛ می‌توانی یک قطعه را انتخاب کنی یا آرشیو موجود را پشت‌سرهم پخش کنی.</p></div>
+    <button class="btn danger" type="button" data-cleanup-kind="videos" data-device-id="{{ device.device_id }}" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">پاک‌سازی ویدئوهای این دوربین</button>
+  </div>
+  <div class="video-history-panel">
+    <video id="recorded-video-player" controls playsinline preload="metadata"></video>
+    <div class="video-history-controls">
+      <button class="btn primary" id="play-video-history" type="button" {% if not segments %}disabled{% endif %}>پخش پشت‌سرهم آرشیو</button>
+      <button class="btn secondary" id="previous-video-segment" type="button" disabled>قطعه قبلی</button>
+      <button class="btn secondary" id="next-video-segment" type="button" disabled>قطعه بعدی</button>
+      <span id="recorded-video-label" class="muted" aria-live="polite">یک قطعه ویدئو انتخاب کن.</span>
+    </div>
+    <div class="video-segment-list" id="video-segment-list">
+      {% for segment in segments %}
+        <button class="video-segment-option" type="button"
+          data-video-url="{% url 'dashboard:segment-file' segment.pk %}"
+          data-started-at="{{ segment.started_at|date:'c' }}"
+          data-duration="{{ segment.duration_seconds }}"
+          data-label="{{ segment.started_at|date:'Y-m-d H:i:s' }}">
+          <span>{{ segment.started_at|date:"Y-m-d H:i:s" }}</span>
+          <small>{{ segment.duration_seconds }} ثانیه · {{ segment.size_bytes|filesizeformat }}</small>
+        </button>
+      {% empty %}
+        <div class="empty-card">هنوز قطعه‌ای از دوربین روی سرور ذخیره نشده است.</div>
+      {% endfor %}
+    </div>
+  </div>
   <div class="table-wrap"><table><thead><tr><th>زمان شروع</th><th>مدت</th><th>حجم</th><th>فایل</th></tr></thead><tbody>
     {% for segment in segments %}
-      <tr><td>{{ segment.started_at|date:"Y-m-d H:i:s" }}</td><td>{{ segment.duration_seconds }} ثانیه</td><td>{{ segment.size_bytes|filesizeformat }}</td><td><a href="{% url 'dashboard:segment-file' segment.pk %}" target="_blank" rel="noopener">پخش / دریافت</a></td></tr>
+      <tr><td>{{ segment.started_at|date:"Y-m-d H:i:s" }}</td><td>{{ segment.duration_seconds }} ثانیه</td><td>{{ segment.size_bytes|filesizeformat }}</td><td><button class="table-link-button" type="button" data-play-video-url="{% url 'dashboard:segment-file' segment.pk %}">انتخاب برای پخش</button></td></tr>
     {% empty %}<tr><td colspan="4" class="empty">هنوز قطعه ویدئویی دریافت نشده است.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 
 <section class="section">
-  <div class="section-heading"><div><span class="eyebrow">DEVICE LOGS</span><h2>آخرین لاگ‌های دستگاه</h2></div></div>
-  <div class="table-wrap"><table><thead><tr><th>زمان</th><th>سطح</th><th>دسته</th><th>پیام</th></tr></thead><tbody>
+  <div class="section-heading">
+    <div><span class="eyebrow">DEVICE LOGS</span><h2>آخرین لاگ‌های دستگاه</h2></div>
+    <button class="btn danger" type="button" data-cleanup-kind="logs" data-device-id="{{ device.device_id }}" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">پاک‌سازی لاگ‌های این دوربین</button>
+  </div>
+  <div class="table-wrap log-table-wrap"><table><thead><tr><th>زمان</th><th>سطح</th><th>دسته</th><th>پیام</th></tr></thead><tbody>
     {% for item in logs %}
       <tr><td>{{ item.created_at|date:"Y-m-d H:i:s" }}</td><td>{{ item.level|upper }}</td><td>{{ item.category }}</td><td>{{ item.message }}</td></tr>
     {% empty %}<tr><td colspan="4" class="empty">لاگی ثبت نشده است.</td></tr>{% endfor %}
@@ -252,4 +286,5 @@
   }));
 })();
 </script>
+<script src="{% static 'dashboard/video_history.js' %}" defer></script>
 {% endblock %}

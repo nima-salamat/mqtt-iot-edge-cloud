@@ -69,6 +69,47 @@ def device_detail(request, device_id):
 
 
 @login_required
+def device_videos(request, device_id):
+    """Return a fresh, owner-scoped video archive snapshot for live page updates."""
+    device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
+    recent = list(
+        device.video_segments.exclude(file="")
+        .order_by("-started_at", "-pk")[:2000]
+    )
+    segments = list(reversed(recent))
+    state = device.current_state if isinstance(device.current_state, dict) else {}
+    latest_segment = device.video_segments.order_by("-uploaded_at").only("uploaded_at").first()
+    latest_uploaded_at = (
+        timezone.localtime(latest_segment.uploaded_at).isoformat()
+        if latest_segment else str(state.get("last_video_upload_at") or "")
+    )
+    response = JsonResponse({
+        "device_id": device.device_id,
+        "segments": [
+            {
+                "id": segment.pk,
+                "segment_id": segment.segment_id,
+                "started_at": timezone.localtime(segment.started_at).isoformat(),
+                "duration_seconds": segment.duration_seconds,
+                "size_bytes": segment.size_bytes or (segment.file.size if segment.file else 0),
+                "url": reverse("dashboard:segment-file", args=[segment.pk]),
+            }
+            for segment in segments
+        ],
+        "recording_enabled": (
+            state.get("recording_enabled")
+            if isinstance(state.get("recording_enabled"), bool) else None
+        ),
+        "rtsp_connected": bool(state.get("rtsp_connected", False)),
+        "pending_video_segments": max(0, int(state.get("pending_video_segments", 0) or 0)),
+        "last_video_upload_at": latest_uploaded_at,
+        "last_video_upload_error": str(state.get("last_video_upload_error", ""))[:500],
+    })
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@login_required
 def alarm_image(request, alarm_id):
     alarm = get_object_or_404(Alarm.objects.select_related("device"), pk=alarm_id)
     if not (request.user.is_staff or alarm.device.owner_id == request.user.id):

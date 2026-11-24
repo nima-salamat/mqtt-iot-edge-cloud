@@ -88,8 +88,8 @@ def select_sensor_mode(
         return selected[0], target
 
     selected = max(
-        compatible,
-        key=lambda item: (item[3], -item[1] * item[2]),
+        usable,
+        key=lambda item: (item[3], item[1] * item[2]),
     )
     return selected[0], selected[3]
 

@@ -340,7 +340,7 @@ def _render_archive_cleanup() -> None:
         return
 
     alarms = get_alarms(limit=500)
-    videos = get_video_segments(limit=200)
+    videos = get_video_segments(limit=2000)
     left, right = st.columns(2)
     with left:
         _section("پیش‌نمایش هشدار", "IMAGE EVIDENCE")

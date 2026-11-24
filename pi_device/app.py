@@ -516,6 +516,10 @@ def main() -> None:
 
     def handle_remote_command(command_type, payload):
         if command_type == "recording.set" and set(payload) == {"enabled"} and type(payload.get("enabled")) is bool:
+            if not camera.is_running():
+                raise RuntimeError("camera_not_running")
+            if camera.camera_backend != "picamera2":
+                raise RuntimeError("recording_requires_picamera2")
             return camera.set_recording_enabled(payload["enabled"])
         raise ValueError("فرمان MQTT پشتیبانی نمی‌شود یا پارامتر آن معتبر نیست.")
 

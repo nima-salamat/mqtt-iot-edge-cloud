@@ -430,7 +430,9 @@ def mediamtx_auth(request):
     """MediaMTX external auth hook for TLS-protected publishing and owner-scoped playback."""
     try:
         payload = json.loads(request.body or b"{}")
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+        return HttpResponse(status=403)
+    if not isinstance(payload, dict):
         return HttpResponse(status=403)
     username = str(payload.get("user", ""))
     password = str(payload.get("password", ""))

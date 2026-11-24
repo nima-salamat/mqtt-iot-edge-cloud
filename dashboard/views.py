@@ -166,6 +166,21 @@ def device_detail(request, device_id):
     })
 
 
+def _safe_segment_size(segment):
+    """Read a stored video size without failing the entire timeline on a stale file row."""
+    if segment.size_bytes:
+        return max(0, int(segment.size_bytes))
+    try:
+        return max(0, int(segment.file.size)) if segment.file else 0
+    except (AttributeError, NotImplementedError, OSError, TypeError, ValueError):
+        logger.warning(
+            "Could not read stored video size for segment %s",
+            getattr(segment, "segment_id", segment.pk),
+            exc_info=True,
+        )
+        return 0
+
+
 @login_required
 def device_videos(request, device_id):
     """Return a fresh, owner-scoped video archive snapshot for live page updates."""
@@ -175,14 +190,14 @@ def device_videos(request, device_id):
         .order_by("-started_at", "-pk")[:2000]
     )
     segments = list(reversed(recent))
-    state = device.current_state if isinstance(device.current_state, dict) else {}
-    try:
-        pending_video_segments = max(
-            0, int(state.get("pending_video_segments", 0) or 0)
-        )
-    except (TypeError, ValueError):
-        pending_video_segments = 0
-    latest_segment = device.video_segments.order_by("-uploaded_at").only("uploaded_at").first()
+    # Use the same allowlisted state projection as the dashboard overview. This
+    # prevents legacy cached values (paths, NaN, string booleans, etc.) from
+    # leaking through this independently-polled endpoint.
+    state = _safe_device_state(device)
+    pending_video_segments = _safe_state_count(state.get("pending_video_segments"))
+    latest_segment = device.video_segments.exclude(file="").order_by("-uploaded_at").only(
+        "uploaded_at"
+    ).first()
     latest_uploaded_at = (
         timezone.localtime(latest_segment.uploaded_at).isoformat()
         if latest_segment else str(state.get("last_video_upload_at") or "")
@@ -196,7 +211,7 @@ def device_videos(request, device_id):
                 "segment_id": segment.segment_id,
                 "started_at": timezone.localtime(segment.started_at).isoformat(),
                 "duration_seconds": segment.duration_seconds,
-                "size_bytes": segment.size_bytes or (segment.file.size if segment.file else 0),
+                "size_bytes": segment.size_bytes or _safe_segment_size(segment),
                 "url": reverse("dashboard:segment-file", args=[segment.pk]),
             }
             for segment in segments

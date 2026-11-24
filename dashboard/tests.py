@@ -1,11 +1,14 @@
 import json
+import tempfile
 from datetime import timedelta
+from pathlib import Path
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
-from django.test import TestCase
+from django.core.files.base import ContentFile
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.urls import reverse
-from .models import Alarm, Device, PairingRequest, RetentionPolicy, StreamGrant
+from .models import Alarm, Device, DeviceLog, PairingRequest, RetentionPolicy, StreamGrant, VideoSegment
 
 User = get_user_model()
 
@@ -307,3 +310,132 @@ class LiveDashboardAlertTests(TestCase):
     def test_alert_feed_rejects_invalid_cursor(self):
         response = self.client.get(reverse("dashboard-alerts"), {"after": "invalid"})
         self.assertEqual(response.status_code, 400)
+
+
+
+class DashboardCleanupTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="cleanup-owner", password="Strong-Pass-12345"
+        )
+        self.other_owner = User.objects.create_user(
+            username="cleanup-other", password="Strong-Pass-12345"
+        )
+        self.device = Device.objects.create(
+            device_id="cam-cleanup-owner", owner=self.owner, name="Owner Camera"
+        )
+        self.other_device = Device.objects.create(
+            device_id="cam-cleanup-other", owner=self.other_owner, name="Other Camera"
+        )
+        self.media_directory = tempfile.TemporaryDirectory()
+        media_override = override_settings(MEDIA_ROOT=self.media_directory.name)
+        media_override.enable()
+        self.addCleanup(media_override.disable)
+        self.addCleanup(self.media_directory.cleanup)
+
+    def _add_alarm(self, device, alert_id):
+        alarm = Alarm.objects.create(
+            device=device, alert_id=alert_id, confidence=0.9
+        )
+        alarm.snapshot.save(
+            f"{alert_id}.jpg", ContentFile(b"fake-jpeg-evidence"), save=True
+        )
+        return alarm
+
+    def _add_video(self, device, segment_id):
+        segment = VideoSegment.objects.create(
+            device=device, segment_id=segment_id, duration_seconds=5, size_bytes=10
+        )
+        segment.file.save(
+            f"{segment_id}.mp4", ContentFile(b"0123456789"), save=True
+        )
+        return segment
+
+    def test_owner_can_clean_all_evidence_for_one_camera(self):
+        own_alarm = self._add_alarm(self.device, "cleanup-alarm-owner")
+        own_video = self._add_video(self.device, "cleanup-video-owner")
+        own_log = DeviceLog.objects.create(
+            device=self.device, event_id="cleanup-log-owner", message="owner log"
+        )
+        other_alarm = self._add_alarm(self.other_device, "cleanup-alarm-other")
+        other_video = self._add_video(self.other_device, "cleanup-video-other")
+        other_log = DeviceLog.objects.create(
+            device=self.other_device, event_id="cleanup-log-other", message="other log"
+        )
+        own_alarm_path = Path(own_alarm.snapshot.path)
+        own_video_path = Path(own_video.file.path)
+        other_alarm_path = Path(other_alarm.snapshot.path)
+        other_video_path = Path(other_video.file.path)
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("dashboard:cleanup-data"),
+            data=json.dumps({"kind": "all", "device_id": self.device.device_id}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["removed_alarms"], 1)
+        self.assertEqual(response.json()["removed_videos"], 1)
+        self.assertEqual(response.json()["removed_logs"], 1)
+        self.assertFalse(Alarm.objects.filter(pk=own_alarm.pk).exists())
+        self.assertFalse(VideoSegment.objects.filter(pk=own_video.pk).exists())
+        self.assertFalse(DeviceLog.objects.filter(pk=own_log.pk).exists())
+        self.assertFalse(own_alarm_path.exists())
+        self.assertFalse(own_video_path.exists())
+        self.assertTrue(Alarm.objects.filter(pk=other_alarm.pk).exists())
+        self.assertTrue(VideoSegment.objects.filter(pk=other_video.pk).exists())
+        self.assertTrue(DeviceLog.objects.filter(pk=other_log.pk).exists())
+        self.assertTrue(other_alarm_path.exists())
+        self.assertTrue(other_video_path.exists())
+
+    def test_owner_cannot_clean_another_users_camera(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("dashboard:cleanup-data"),
+            data=json.dumps({"kind": "all", "device_id": self.other_device.device_id}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Device.objects.filter(pk=self.other_device.pk).exists())
+
+    def test_cleanup_rejects_unknown_data_kind(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("dashboard:cleanup-data"),
+            data=json.dumps({"kind": "mqtt"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class DashboardVideoRangeTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="video-range-owner", password="Strong-Pass-12345"
+        )
+        self.device = Device.objects.create(
+            device_id="cam-video-range", owner=self.owner, name="Range Camera"
+        )
+        self.media_directory = tempfile.TemporaryDirectory()
+        media_override = override_settings(MEDIA_ROOT=self.media_directory.name)
+        media_override.enable()
+        self.addCleanup(media_override.disable)
+        self.addCleanup(self.media_directory.cleanup)
+
+    def test_archived_video_supports_browser_byte_ranges(self):
+        segment = VideoSegment.objects.create(
+            device=self.device, segment_id="range-segment", duration_seconds=5
+        )
+        segment.file.save("sample.mp4", ContentFile(b"0123456789"), save=True)
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            reverse("dashboard:segment-file", args=[segment.pk]),
+            HTTP_RANGE="bytes=2-5",
+        )
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response["Content-Range"], "bytes 2-5/10")
+        self.assertEqual(response["Accept-Ranges"], "bytes")
+        self.assertEqual(b"".join(response.streaming_content), b"2345")

@@ -179,25 +179,51 @@ class DeviceApiTests(TestCase):
         # a previously valid system-health report.
         self.assertNotIn("system", self.device.current_state)
 
-    def test_heartbeat_preserves_last_valid_system_metrics_when_readings_are_empty(self):
+    def test_heartbeat_merges_partial_system_metrics_without_losing_valid_readings(self):
         self.device.current_state = {
             "system": {
                 "cpu_percent": 23.0,
-                "memory": {"used_percent": 44.0},
+                "temperature_c": 48.0,
+                "memory": {
+                    "total_bytes": 8_000_000,
+                    "used_bytes": 4_480_000,
+                    "available_bytes": 3_520_000,
+                    "used_percent": 56.0,
+                },
             },
         }
         self.device.save(update_fields=["current_state"])
         response = self.client.post(
             reverse("device-heartbeat"),
-            data=json.dumps({"system": {"cpu_percent": None, "memory": {}}}),
+            data=json.dumps({
+                "system": {
+                    "cpu_percent": None,
+                    "temperature_c": 49.0,
+                    "memory": {"total_bytes": 8_100_000},
+                },
+            }),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {self.token}",
             HTTP_X_DEVICE_ID=self.device.device_id,
         )
         self.assertEqual(response.status_code, 200)
         self.device.refresh_from_db()
-        self.assertEqual(self.device.current_state["system"]["cpu_percent"], 23.0)
-        self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 44.0)
+        system = self.device.current_state["system"]
+        self.assertEqual(system["cpu_percent"], 23.0)
+        self.assertEqual(system["temperature_c"], 49.0)
+        self.assertEqual(system["memory"]["total_bytes"], 8_100_000)
+        self.assertEqual(system["memory"]["used_percent"], 56.0)
+
+        empty_response = self.client.post(
+            reverse("device-heartbeat"),
+            data=json.dumps({"system": {"cpu_percent": None, "memory": {}}}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
+        self.assertEqual(empty_response.status_code, 200)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.current_state["system"], system)
 
     def test_device_can_upload_an_mp4_segment_and_retry_it_idempotently(self):
         video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"

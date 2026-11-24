@@ -140,13 +140,23 @@ def _switchable_output_class():
             self._lock = threading.RLock()
             self._streams = []
             self.stop_failed = False
+            self._stopped = False
 
         def start(self):
             super().start()
             with self._lock:
+                self._stopped = False
                 output = self._output
             if output is not None:
-                output.start()
+                try:
+                    output.start()
+                except Exception:
+                    try:
+                        output.stop()
+                    except Exception:
+                        self.stop_failed = True
+                        log.exception("Could not close local MP4 after output startup failed")
+                    raise
 
         def _add_stream(self, encoder_stream, codec_name, **kwargs):
             stream = (encoder_stream, codec_name, dict(kwargs))
@@ -166,12 +176,19 @@ def _switchable_output_class():
                 streams = list(self._streams)
 
             if new_output is not None:
-                new_output.start()
                 try:
+                    new_output.start()
                     for encoder_stream, codec_name, kwargs in streams:
                         new_output._add_stream(encoder_stream, codec_name, **kwargs)
                 except Exception:
-                    new_output.stop()
+                    try:
+                        new_output.stop()
+                    except Exception:
+                        try:
+                            new_output.stop_failed = True
+                        except Exception:
+                            pass
+                        log.exception("Could not close an MP4 output after preparation failed")
                     raise
 
             with self._lock:
@@ -191,7 +208,14 @@ def _switchable_output_class():
                         self._switch_pending = False
                 if not completed:
                     if new_output is not None:
-                        new_output.stop()
+                        try:
+                            new_output.stop()
+                        except Exception:
+                            try:
+                                new_output.stop_failed = True
+                            except Exception:
+                                pass
+                            log.exception("Could not close MP4 output after keyframe switch timed out")
                     raise TimeoutError("Timed out waiting for an H.264 keyframe to change recording state")
 
             # outputframe has stopped referencing the previous output, so it is
@@ -220,13 +244,20 @@ def _switchable_output_class():
                 output.outputframe(frame, keyframe, timestamp, packet, audio)
 
         def stop(self):
-            super().stop()
-            self.stop_failed = False
             with self._lock:
+                if self._stopped:
+                    return
+                self._stopped = True
                 outputs = (self._output, self._pending_output if self._switch_pending else None)
                 self._output = None
                 self._pending_output = None
                 self._switch_pending = False
+            self.stop_failed = False
+            try:
+                super().stop()
+            except Exception:
+                self.stop_failed = True
+                log.exception("Could not stop the switchable Picamera2 output base")
             seen = set()
             for output in outputs:
                 if output is not None and id(output) not in seen:

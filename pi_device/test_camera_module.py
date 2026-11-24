@@ -542,11 +542,12 @@ class CameraPipelineStructureTests(unittest.TestCase):
         camera._last_detections = [{"bbox": [0, 0, 1, 1]}]
         camera._last_detection_at = 1.0
         picam2 = camera.picam2
+        encoder = camera.encoder
 
         module.CameraPipeline.stop(camera)
 
         picam2.stop.assert_called_once()
-        picam2.stop_encoder.assert_called_once_with(camera.encoder)
+        picam2.stop_encoder.assert_called_once_with(encoder)
         picam2.close.assert_called_once()
         camera.local_output.stop.assert_called_once()
         camera.bridge.set_recording_supported.assert_called_once_with(False)

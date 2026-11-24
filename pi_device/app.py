@@ -377,7 +377,7 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             return jsonify({"error": "مقادیر تنظیمات باید JSON باشند."}), 400
         allowed = {
             "video_fps", "video_fps_auto", "video_bitrate", "segment_seconds", "inference_fps", "inference_workers",
-            "camera_backend", "camera_source",
+            "camera_backend", "camera_source", "video_width", "video_height",
             "alert_confidence", "alert_cooldown_seconds", "alert_clear_seconds",
             "local_video_retention_minutes", "upload_queue_retention_hours",
             "upload_queue_max_gb", "local_alarm_retention_days", "local_log_retention_days",

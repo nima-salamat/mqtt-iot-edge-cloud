@@ -392,15 +392,12 @@
       text('camera-source-status', (state.camera_model || state.camera_backend || '—') +
         (state.camera_source ? ' · ' + state.camera_source : ''));
       text('camera-resolution-status', state.camera_resolution || '—');
-      text('camera-max-fps', Number(state.camera_max_fps || 0) > 0
-        ? Number(state.camera_max_fps).toFixed(1) + ' FPS'
-        : 'در حال اندازه‌گیری');
       const picameraBackend = state.camera_backend !== 'opencv';
       text('rtsp-status', state.live_publish_supported ? boolLabel(state.rtsp_connected) : 'نیازمند Picamera2');
       text('rtsp-health', state.live_publish_supported ? boolLabel(state.rtsp_connected) : 'نیازمند Picamera2');
       const capabilityNote = $('camera-capability-note');
       if (capabilityNote) capabilityNote.textContent = picameraBackend
-        ? 'پیش‌نمایش محلی حداکثر ۱۵ FPS تازه‌سازی می‌شود تا پردازش تصویر اصلی به نرخ ضبط فشار نیاورد. ضبط و RTSPS از انکودر H.264 و نرخ هدف مستقل استفاده می‌کنند؛ در حالت دستی ممکن است با افزایش FPS، وضوح استریم خودکار به mode سریع‌تر سنسور کاهش یابد.'
+        ? 'پیش‌نمایش محلی حداکثر ۱۵ FPS تازه‌سازی می‌شود تا پردازش تصویر اصلی به نرخ ضبط فشار نیاورد. ضبط و RTSPS از انکودر H.264 و نرخ هدف مستقل استفاده می‌کنند؛ وضوح انتخابی ثابت می‌ماند و FPS فقط تا سقف modeهای سازگار با همان وضوح قابل تنظیم است.'
         : 'OpenCV: پیش‌نمایش محلی محدود به ۱۵ FPS است و YOLO از جریان دریافتی استفاده می‌کند؛ برای FPS بالاتر فقط modeهای اعلام‌شده توسط درایور قابل استفاده‌اند. ضبط MP4 و RTSPS سخت‌افزاری در این backend پشتیبانی نمی‌شود.';
       text('mqtt-status', boolLabel(mqtt.mqtt_connected));
       text('heartbeat-status', state.last_heartbeat_at ? 'فعال' : 'در انتظار');
@@ -706,15 +703,19 @@
       if (rate > current) resolutionRates.set(mode.resolution, rate);
     }
 
-    const options = [...resolutionRates.entries()]
-      .sort((a, b) => {
-        const left = parseResolution(a[0]);
-        const right = parseResolution(b[0]);
-        return (right.width * right.height) - (left.width * left.height);
-      });
+    const options = [...resolutionRates.keys()]
+      .map(resolution => ({resolution, size: parseResolution(resolution)}))
+      .sort((a, b) =>
+        (b.size.width * b.size.height) - (a.size.width * a.size.height)
+      );
 
     resolutionSelect.replaceChildren();
-    for (const [resolution, maximum] of options) {
+    for (const {resolution} of options) {
+      const compatible = getCompatibleVideoModes(resolution);
+      const maximum = compatible.reduce(
+        (value, mode) => Math.max(value, Number(mode.fps) || 0), 0
+      );
+      if (!maximum) continue;
       const option = document.createElement('option');
       option.value = resolution;
       option.textContent = resolution + ' · حداکثر ' +
@@ -722,10 +723,18 @@
       resolutionSelect.append(option);
     }
 
-    if (selectedValue && !resolutionRates.has(selectedValue)) {
+    if (selectedValue && !Array.from(resolutionSelect.options)
+      .some(option => option.value === selectedValue)) {
+      const compatible = getCompatibleVideoModes(selectedValue);
+      const maximum = compatible.reduce(
+        (value, mode) => Math.max(value, Number(mode.fps) || 0), 0
+      );
       const option = document.createElement('option');
       option.value = selectedValue;
-      option.textContent = selectedValue + ' · در modeهای گزارش‌شده موجود نیست';
+      option.textContent = maximum > 0
+        ? selectedValue + ' · خروجی مقیاس‌شده از mode حسگر · حداکثر ' +
+          maximum.toLocaleString('fa-IR', {maximumFractionDigits: 1}) + ' FPS'
+        : selectedValue + ' · در حسگر فعلی پشتیبانی نمی‌شود';
       resolutionSelect.append(option);
     }
     if (selectedValue) resolutionSelect.value = selectedValue;

@@ -316,6 +316,36 @@ class DeviceApiTests(TestCase):
         self.assertEqual(payload["video_fps"], 0)
         self.assertEqual(payload["inference_fps"], 0)
 
+    def test_dashboard_overview_does_not_truthify_string_booleans_or_fractional_counters(self):
+        self.device.current_state = {
+            "mqtt_connected": "false",
+            "rtsp_connected": "false",
+            "camera_ready": "0",
+            "tracking_active": "false",
+            "tracking_seconds": True,
+            "pending_alerts": 3.7,
+            "pending_video_segments": "NaN",
+            "system": {
+                "cpu_percent": True,
+                "memory": {"used_percent": "Infinity"},
+            },
+        }
+        self.device.save(update_fields=["current_state"])
+        self.client.force_login(self.owner)
+
+        response = self.client.get(reverse("dashboard-overview"))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["devices"][0]
+        self.assertFalse(payload["mqtt_connected"])
+        self.assertFalse(payload["rtsp_connected"])
+        self.assertFalse(payload["camera_ready"])
+        self.assertFalse(payload["tracking_active"])
+        self.assertEqual(payload["tracking_seconds"], 0)
+        self.assertEqual(payload["pending_alerts"], 0)
+        self.assertEqual(payload["pending_video_segments"], 0)
+        self.assertEqual(payload["system"], {})
+
     def test_dashboard_pages_render_with_malformed_cached_device_state(self):
         self.device.current_state = {
             "system": "not-an-object",

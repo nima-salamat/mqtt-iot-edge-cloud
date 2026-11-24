@@ -291,6 +291,8 @@ class DurableUploader:
 
     def _read_queue_json(self, path: Path, queue_name: str):
         """Read one queue JSON object; quarantine permanently malformed files."""
+        if path.is_symlink() or not path.is_file():
+            return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -627,25 +629,31 @@ class DurableUploader:
                 and not path.with_suffix(".open").exists()
                 and not path.with_suffix(".uploaded").exists()
             ]
-            alarms = [
-                path for path in self.alarm_dir.glob("*.json")
-                if path.is_file() and not path.is_symlink()
-                and not path.with_suffix(".published").exists()
-            ]
+            alarms = []
+            alarm_bytes = 0
+            for meta_path in self.alarm_dir.glob("*.json"):
+                if (
+                    meta_path.is_symlink()
+                    or not meta_path.is_file()
+                    or meta_path.with_suffix(".published").exists()
+                ):
+                    continue
+                # The local status endpoint calls queue_snapshot independently
+                # of the upload worker. Validate the same metadata schema here,
+                # otherwise a valid JSON list/string can raise AttributeError
+                # and make the entire local diagnostics API return HTTP 500.
+                item = self._read_queue_json(meta_path, "alarms")
+                if item is None:
+                    continue
+                alarms.append(meta_path)
+                alarm_bytes += self._file_size(meta_path)
+                image_path = self._alarm_snapshot_path(meta_path, item)
+                alarm_bytes += self._file_size(image_path)
+
             logs = [
                 path for path in self.log_dir.glob("*.json")
                 if path.is_file() and not path.is_symlink()
             ]
-
-            alarm_bytes = 0
-            for meta_path in alarms:
-                alarm_bytes += self._file_size(meta_path)
-                try:
-                    item = json.loads(meta_path.read_text(encoding="utf-8"))
-                    image_path = self._alarm_snapshot_path(meta_path, item)
-                    alarm_bytes += self._file_size(image_path)
-                except (OSError, ValueError, TypeError):
-                    continue
 
             def summary(items, size):
                 return {"count": len(items), "bytes": size}
@@ -736,21 +744,43 @@ class DurableUploader:
         local_video_seconds = int(values["local_video_retention_minutes"]) * 60
         queue_seconds = int(values["upload_queue_retention_hours"]) * 3600
         max_bytes = int(values["upload_queue_max_gb"]) * 1024**3
-        videos = sorted(self.video_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
-        total_bytes = sum(p.stat().st_size for p in videos)
-        for path in videos:
+        video_entries = []
+        for path in self.video_dir.glob("*.mp4"):
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                stat_result = path.stat()
+                video_entries.append((stat_result.st_mtime, stat_result.st_size, path))
+            except OSError:
+                log.warning("Could not inspect queued video file %s", path.name, exc_info=True)
+        video_entries.sort(key=lambda item: item[0])
+        total_bytes = sum(size for _mtime, size, _path in video_entries)
+        for modified_at, original_size, path in video_entries:
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                stat_result = path.stat()
+            except OSError:
+                log.warning("Could not stat queued video file %s", path.name, exc_info=True)
+                continue
             if path.with_suffix(".open").exists():
                 continue
-            age = now - path.stat().st_mtime
+            age = now - stat_result.st_mtime
             uploaded = path.with_suffix(".uploaded").exists()
             expired_pending = not uploaded and age > queue_seconds
             over_cap = not uploaded and total_bytes > max_bytes
-            expired_local_copy = uploaded and (local_video_seconds == 0 or age > local_video_seconds)
+            expired_local_copy = uploaded and (
+                local_video_seconds == 0 or age > local_video_seconds
+            )
             if expired_pending or over_cap or expired_local_copy:
-                size = path.stat().st_size
-                path.unlink(missing_ok=True)
-                path.with_suffix(".uploaded").unlink(missing_ok=True)
-                total_bytes -= size
+                size = stat_result.st_size
+                try:
+                    path.unlink(missing_ok=True)
+                    path.with_suffix(".uploaded").unlink(missing_ok=True)
+                except OSError:
+                    log.exception("Could not remove expired queued video %s", path.name)
+                    continue
+                total_bytes = max(0, total_bytes - size)
                 if expired_pending or over_cap:
                     self.bridge.publish_log(
                         "warning", "Pending video removed from the local retry queue",
@@ -758,7 +788,17 @@ class DurableUploader:
                     )
 
         alarm_days = int(values["local_alarm_retention_days"])
-        alarm_files = sorted(self.alarm_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        alarm_entries = []
+        for meta_path in self.alarm_dir.glob("*.json"):
+            try:
+                if meta_path.is_symlink() or not meta_path.is_file():
+                    continue
+                alarm_entries.append((meta_path.stat().st_mtime, meta_path))
+            except OSError:
+                log.warning("Could not inspect queued alarm %s", meta_path.name, exc_info=True)
+        alarm_files = [
+            path for _modified_at, path in sorted(alarm_entries, key=lambda item: item[0])
+        ]
         alarm_bytes = 0
         for meta_path in alarm_files:
             if meta_path.with_suffix(".published").exists():
@@ -788,8 +828,13 @@ class DurableUploader:
                 expired_pending = not published and age > queue_seconds
                 over_cap = not published and alarm_bytes > alarm_queue_cap
                 if expired_local or expired_pending or over_cap:
-                    image_size = image_path.stat().st_size if image_path.is_file() else 0
-                    image_path.unlink(missing_ok=True)
+                    image_size = (
+                        image_path.stat().st_size
+                        if image_path.is_file() and not image_path.is_symlink()
+                        else 0
+                    )
+                    if image_path.is_file() and not image_path.is_symlink():
+                        image_path.unlink(missing_ok=True)
                     meta_path.unlink(missing_ok=True)
                     meta_path.with_suffix(".uploaded").unlink(missing_ok=True)
                     meta_path.with_suffix(".published").unlink(missing_ok=True)
@@ -810,5 +855,11 @@ class DurableUploader:
             if now - path.stat().st_mtime > queue_seconds:
                 path.unlink(missing_ok=True)
         for path in self.log_archive_dir.glob("*.json"):
-            if now - path.stat().st_mtime > log_days * 86400:
-                path.unlink(missing_ok=True)
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                expired = now - path.stat().st_mtime > log_days * 86400
+                if expired:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                log.warning("Could not prune archived log %s", path.name, exc_info=True)

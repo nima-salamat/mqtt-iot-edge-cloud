@@ -461,23 +461,34 @@ class CameraPipeline:
         sensor_modes = self._probe_v4l2_modes(raw_source)
         output_width = int(values["video_width"])
         output_height = int(values["video_height"])
+        self.available_video_modes = sensor_modes
+        compatible_modes = [
+            mode for mode in sensor_modes
+            if int(mode.get("size", (0, 0))[0]) >= output_width
+            and int(mode.get("size", (0, 0))[1]) >= output_height
+            and float(mode.get("fps", 0) or 0) > 0
+        ]
+        if sensor_modes and not compatible_modes:
+            supported = ", ".join(
+                sorted({f'{m["size"][0]}x{m["size"][1]}' for m in sensor_modes})
+            )
+            raise RuntimeError(
+                f"Selected resolution {output_width}x{output_height} is not supported. "
+                f"Available resolutions: {supported}"
+            )
         selected_mode, selected_fps = select_sensor_mode(
-            sensor_modes,
+            compatible_modes,
             output_width,
             output_height,
             requested_fps,
             auto=auto_fps,
         )
-        self.available_video_modes = sensor_modes
         self.video_fps_options = sorted({
             round(float(mode["fps"]), 2)
-            for mode in self.available_video_modes
+            for mode in compatible_modes
             if float(mode.get("fps", 0) or 0) > 0
         })
-        selected_size = (
-            tuple(selected_mode["size"])
-            if selected_mode else (output_width, output_height)
-        )
+        selected_size = (output_width, output_height)
         try:
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             if selected_mode and len(str(selected_mode.get("fourcc", ""))) == 4:
@@ -511,7 +522,7 @@ class CameraPipeline:
         )
         reported_rate = float(capture.get(cv2.CAP_PROP_FPS) or 0)
         available_rates = [
-            float(mode["fps"]) for mode in sensor_modes
+            float(mode["fps"]) for mode in compatible_modes
             if float(mode.get("fps", 0) or 0) > 0
         ]
         self.camera_max_fps = max(available_rates, default=max(0.0, reported_rate))
@@ -592,8 +603,24 @@ class CameraPipeline:
                 mode for mode in sensor_modes
                 if float(mode.get("fps", 0) or 0) > 0
             ]
+            compatible_modes = [
+                mode for mode in self.available_video_modes
+                if int(mode.get("size", (0, 0))[0]) >= output_width
+                and int(mode.get("size", (0, 0))[1]) >= output_height
+            ]
+            if self.available_video_modes and not compatible_modes:
+                supported = ", ".join(
+                    sorted({
+                        f'{int(m["size"][0])}x{int(m["size"][1])}'
+                        for m in self.available_video_modes
+                    })
+                )
+                raise RuntimeError(
+                    f"Selected resolution {output_width}x{output_height} is not supported. "
+                    f"Available resolutions: {supported}"
+                )
             selected_mode, selected_fps = select_sensor_mode(
-                sensor_modes,
+                compatible_modes,
                 output_width,
                 output_height,
                 requested_fps,
@@ -601,7 +628,7 @@ class CameraPipeline:
             )
             self.video_fps_options = sorted({
                 round(float(mode["fps"]), 2)
-                for mode in self.available_video_modes
+                for mode in compatible_modes
                 if float(mode.get("fps", 0) or 0) > 0
             })
             if selected_mode:
@@ -611,17 +638,14 @@ class CameraPipeline:
                 }
             available_rates = [
                 float(mode.get("fps", 0) or 0)
-                for mode in self.available_video_modes
+                for mode in compatible_modes
             ]
             self.camera_max_fps = max(available_rates, default=selected_fps)
             self.target_video_fps = selected_fps
+            # Output resolution is explicit and never silently reduced to
+            # satisfy FPS; only a sensor mode compatible with this size can
+            # be selected above.
             self.stream_width, self.stream_height = output_width, output_height
-            if selected_mode:
-                sensor_width, sensor_height = (
-                    int(selected_mode["size"][0]), int(selected_mode["size"][1])
-                )
-                if sensor_width < output_width or sensor_height < output_height:
-                    self.stream_width, self.stream_height = sensor_width, sensor_height
             if self.camera_max_fps > 0:
                 max_setting = max(1, int(self.camera_max_fps))
                 changes = {}

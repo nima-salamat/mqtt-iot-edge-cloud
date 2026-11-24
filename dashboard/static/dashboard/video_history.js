@@ -609,6 +609,22 @@
     });
   }
 
+  player.addEventListener('seeking', () => {
+    if (seekInProgress || !segments.length || !sourceBuffer) return;
+    const targetTime = Number(player.currentTime) || 0;
+    let insideBufferedRange = false;
+    for (let index = 0; index < player.buffered.length; index++) {
+      if (targetTime >= player.buffered.start(index) - 0.2 &&
+          targetTime <= player.buffered.end(index) + 0.2) {
+        insideBufferedRange = true;
+        break;
+      }
+    }
+    if (!insideBufferedRange) {
+      const shouldResume = !player.paused;
+      resetAndSeek(baseArchiveOffset + targetTime, shouldResume);
+    }
+  });
   player.addEventListener('timeupdate', () => {
     updateTimelinePosition();
     keepBufferAhead();

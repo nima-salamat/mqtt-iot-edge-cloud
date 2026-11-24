@@ -600,6 +600,7 @@ class CameraPipeline:
             self.camera_source = "0"
         picam2 = Picamera2(camera_num=camera_num)
         marker = None
+        segment = None
         local_output = None
         live_output = None
         encoder = None
@@ -717,26 +718,54 @@ class CameraPipeline:
             encoder_started = True
             picam2.start()
         except Exception:
-            if marker:
-                marker.unlink(missing_ok=True)
-            try:
-                if encoder_started:
+            # Do not remove the .open marker until every encoder/output handle
+            # has been finalized. The uploader ignores marked files; removing
+            # it before stopping the encoder could upload a still-growing MP4.
+            cleanup_succeeded = True
+            if encoder_started:
+                try:
                     picam2.stop()
+                except Exception:
+                    cleanup_succeeded = False
+                    log.exception("Could not stop partially-started Picamera2 camera")
+                try:
                     picam2.stop_encoder(encoder)
-            except Exception:
-                log.exception("Could not stop partially-started Picamera2 encoder")
+                except Exception:
+                    cleanup_succeeded = False
+                    log.exception("Could not finalize partially-started Picamera2 encoder")
             try:
                 picam2.close()
             except Exception:
+                cleanup_succeeded = False
                 log.exception("Could not close partially-started Picamera2 instance")
             if live_output:
-                live_output.stop()
+                try:
+                    live_output.stop()
+                except Exception:
+                    cleanup_succeeded = False
+                    log.exception("Could not stop partially-started RTSPS output")
+            if cleanup_succeeded:
+                # A failed startup is not a valid recording. Delete the
+                # incomplete MP4 first, then release its queue-protection marker.
+                if segment:
+                    segment.unlink(missing_ok=True)
+                if marker:
+                    marker.unlink(missing_ok=True)
+            elif marker:
+                log.error(
+                    "Keeping the open marker for incomplete startup segment %s; "
+                    "it will be quarantined on the next camera start",
+                    marker.name,
+                )
             self.picam2 = None
             self.encoder = None
             self.local_output = None
             self.live_output = None
             self._current_segment = None
             self._current_marker = None
+            self._local_recording_attached = False
+            self.recording_enabled = False
+            self._publish_recording_state()
             raise
 
         with self._recording_lock:
@@ -1496,14 +1525,23 @@ class CameraPipeline:
                 log.exception("Could not release OpenCV camera capture")
             self._opencv_capture = None
         stopped_cleanly = True
-        try:
-            if self.picam2:
+        if self.picam2:
+            try:
                 self.picam2.stop()
-                self.picam2.stop_encoder(self.encoder)
+            except Exception:
+                stopped_cleanly = False
+                log.exception("Could not stop Picamera2 camera")
+            try:
+                if self.encoder is not None:
+                    self.picam2.stop_encoder(self.encoder)
+            except Exception:
+                stopped_cleanly = False
+                log.exception("Could not finalize Picamera2 encoder")
+            try:
                 self.picam2.close()
-        except Exception:
-            stopped_cleanly = False
-            log.exception("Could not stop Picamera2 cleanly")
+            except Exception:
+                stopped_cleanly = False
+                log.exception("Could not close Picamera2 instance")
         if stopped_cleanly and self._current_marker:
             # Removing the marker makes a complete, finalized MP4 eligible for
             # retry upload. If close failed, keep it so startup discards it.

@@ -907,6 +907,54 @@ class DashboardVideoRangeTests(TestCase):
         self.assertEqual(response.json()["system"]["temperature_c"], 48.6)
         self.assertEqual(response.json()["system"]["memory"]["used_percent"], 55.0)
 
+    def test_video_feed_sanitizes_legacy_cached_system_and_boolean_state(self):
+        self.device.current_state = {
+            "mqtt_connected": "false",
+            "rtsp_connected": "false",
+            "recording_enabled": "false",
+            "pending_video_segments": 2.5,
+            "last_video_upload_error": ["unsafe"],
+            "system": {
+                "path": "/etc/shadow",
+                "temperature_c": float("nan"),
+                "cpu_percent": True,
+                "memory": {"used_percent": "Infinity"},
+            },
+        }
+        self.device.save(update_fields=["current_state"])
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            reverse("dashboard:device-videos", args=[self.device.device_id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["rtsp_connected"])
+        self.assertIsNone(payload["recording_enabled"])
+        self.assertEqual(payload["pending_video_segments"], 0)
+        self.assertEqual(payload["system"], {})
+        self.assertNotIn("path", payload["system"])
+        self.assertEqual(payload["last_video_upload_error"], "")
+
+    def test_video_feed_tolerates_database_rows_with_missing_media_files(self):
+        segment = VideoSegment.objects.create(
+            device=self.device,
+            segment_id="missing-media",
+            duration_seconds=5,
+        )
+        segment.file.save("missing-media.mp4", ContentFile(b"video"), save=True)
+        stored_name = segment.file.name
+        segment.file.storage.delete(stored_name)
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            reverse("dashboard:device-videos", args=[self.device.device_id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["segments"][0]["size_bytes"], 0)
+
     def test_video_feed_does_not_expose_another_users_camera(self):
         other = User.objects.create_user(username="video-feed-other", password="Strong-Pass-12345")
         other_device = Device.objects.create(

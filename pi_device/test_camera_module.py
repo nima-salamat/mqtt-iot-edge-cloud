@@ -47,6 +47,28 @@ class CameraPipelineStructureTests(unittest.TestCase):
             module.CameraPipeline._draw_boxes.__code__.co_varnames,
         )
 
+    def test_opencv_camera_is_ready_when_it_produces_fresh_frames(self):
+        module = self._load_camera_module()
+        camera = object.__new__(module.CameraPipeline)
+        camera.camera_backend = "opencv"
+        camera._opencv_capture = SimpleNamespace(isOpened=lambda: True)
+        camera.picam2 = None
+        camera._frames_lock = threading.RLock()
+        camera.latest_jpeg = b"jpeg-frame"
+        camera.latest_frame_at = 100.0
+
+        with patch("pi_device.camera.time.time", return_value=101.0):
+            self.assertTrue(camera._is_camera_ready())
+
+        camera.latest_frame_at = 90.0
+        with patch("pi_device.camera.time.time", return_value=101.0):
+            self.assertFalse(camera._is_camera_ready())
+
+        camera.latest_frame_at = 100.0
+        camera._opencv_capture = SimpleNamespace(isOpened=lambda: False)
+        with patch("pi_device.camera.time.time", return_value=101.0):
+            self.assertFalse(camera._is_camera_ready())
+
     def test_bridge_queue_and_worker_metrics_are_throttled_to_once_per_second(self):
         module = self._load_camera_module()
         camera = object.__new__(module.CameraPipeline)

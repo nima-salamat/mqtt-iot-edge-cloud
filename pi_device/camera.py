@@ -995,7 +995,7 @@ class CameraPipeline:
     def _capture_opencv_loop(self):
         last_qr_scan = 0.0
         qr_detector = cv2.QRCodeDetector()
-        preview_interval = 1.0 / 20.0
+        preview_interval = 1.0 / 15.0
         while not self._stop.is_set():
             try:
                 capture = self._opencv_capture
@@ -1030,21 +1030,25 @@ class CameraPipeline:
                     self._latest_bgr_at = now
                     detections = list(self._last_detections)
                     detection_age = now - self._last_detection_at if self._last_detection_at else 999.0
-                preview = preview_source.copy()
-                if detections and detection_age < 1.0:
-                    sx, sy = width / 640.0, height / 360.0
-                    scaled = []
-                    for item in detections:
-                        mapped = dict(item)
-                        x1, y1, x2, y2 = item["bbox"]
-                        mapped["bbox"] = [
-                            int(round(x1 * sx)), int(round(y1 * sy)),
-                            int(round(x2 * sx)), int(round(y2 * sy)),
-                        ]
-                        scaled.append(mapped)
-                    self._draw_boxes(preview, scaled, self._tracking_seconds)
-                if now - self._last_preview_at >= preview_interval:
-                    ok, encoded = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                update_preview = now - self._last_preview_at >= preview_interval
+                if update_preview:
+                    preview = preview_source.copy()
+                    if detections and detection_age < 1.0:
+                        sx, sy = width / 640.0, height / 360.0
+                        scaled = []
+                        for item in detections:
+                            mapped = dict(item)
+                            x1, y1, x2, y2 = item["bbox"]
+                            mapped["bbox"] = [
+                                int(round(x1 * sx)), int(round(y1 * sy)),
+                                int(round(x2 * sx)), int(round(y2 * sy)),
+                            ]
+                            scaled.append(mapped)
+                        self._draw_boxes(preview, scaled, self._tracking_seconds)
+
+                    ok, encoded = cv2.imencode(
+                        ".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 84]
+                    )
                     with self._frames_lock:
                         self.latest_jpeg = encoded.tobytes() if ok else None
                         self.latest_frame_at = time.time()

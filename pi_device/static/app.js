@@ -271,7 +271,7 @@
       const response = await fetchWithTimeout('/api/alarms/cleanup/', {
         method: 'POST',
         headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
-      });
+      }, 30000);
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'پاک‌سازی تشخیص‌ها ناموفق بود.');
       text('queue-action-status', Number(result.removed_count || 0).toLocaleString('fa-IR') +
@@ -493,7 +493,7 @@
       const response = await fetchWithTimeout('/api/disconnect/', {
         method: 'POST',
         headers: {'X-CSRF-Token': csrf, 'Accept': 'application/json'}
-      });
+      }, 25000);
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'قطع اتصال ناموفق بود.');
       text('pairing-state', 'اتصال حساب لغو شد؛ برای اتصال دوباره QR تازه‌ای از پنل وب بساز.');
@@ -606,7 +606,7 @@
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
         body: JSON.stringify({pairing_code: pairingCode})
-      });
+      }, 25000);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'ارسال کد اتصال ناموفق بود.');
       input.value = '';

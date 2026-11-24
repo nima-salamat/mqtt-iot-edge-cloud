@@ -468,7 +468,7 @@ def main() -> None:
                 "Paired credential device_id differs from the local device_id file; "
                 "using the paired device ID and repairing the local identity file."
             )
-            atomic_write_text(device_id_path, device_id + "\\n")
+            atomic_write_text(device_id_path, device_id + "\n")
     else:
         device_id = load_device_id()
 

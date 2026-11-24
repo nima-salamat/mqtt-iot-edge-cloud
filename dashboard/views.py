@@ -1,9 +1,10 @@
 from __future__ import annotations
 import json
+import re
 from datetime import timedelta
 from django.contrib.auth.decorators import login_required
 from django.db.models import Max
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, Http404, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 from django.utils import timezone
@@ -85,7 +86,59 @@ def segment_file(request, segment_id):
         raise Http404
     if not segment.file:
         raise Http404
-    response = FileResponse(segment.file.open("rb"), content_type="video/mp4")
+    file_handle = segment.file.open("rb")
+    size = int(segment.file.size or 0)
+    range_header = request.headers.get("Range", "")
+    if range_header:
+        match = re.fullmatch(r"bytes=(\\d*)-(\\d*)", range_header.strip())
+        if not match or size <= 0:
+            file_handle.close()
+            response = JsonResponse({"error": "invalid_range"}, status=416)
+            response["Content-Range"] = f"bytes */{size}"
+            return response
+
+        first, last = match.groups()
+        if first:
+            start = int(first)
+            end = int(last) if last else size - 1
+        elif last:
+            suffix_length = int(last)
+            start = max(0, size - suffix_length)
+            end = size - 1
+        else:
+            start, end = 0, size - 1
+
+        if start >= size or end < start:
+            file_handle.close()
+            response = JsonResponse({"error": "range_not_satisfiable"}, status=416)
+            response["Content-Range"] = f"bytes */{size}"
+            return response
+
+        end = min(end, size - 1)
+        remaining = end - start + 1
+        file_handle.seek(start)
+
+        def file_chunks():
+            nonlocal remaining
+            try:
+                while remaining > 0:
+                    chunk = file_handle.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+            finally:
+                file_handle.close()
+
+        response = StreamingHttpResponse(
+            file_chunks(), status=206, content_type="video/mp4"
+        )
+        response["Content-Length"] = str(end - start + 1)
+        response["Content-Range"] = f"bytes {start}-{end}/{size}"
+    else:
+        response = FileResponse(file_handle, content_type="video/mp4")
+        response["Content-Length"] = str(size)
+    response["Accept-Ranges"] = "bytes"
     response["Cache-Control"] = "private, no-store"
     response["X-Content-Type-Options"] = "nosniff"
     return response

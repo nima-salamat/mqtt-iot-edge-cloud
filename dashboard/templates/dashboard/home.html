@@ -18,7 +18,7 @@
     {% for device in devices %}
       <article class="device-card" data-device-id="{{ device.device_id }}">
         <a class="device-card-link" href="{% url 'dashboard:device-detail' device.device_id %}">
-        <div class="device-card-top"><div class="camera-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="m9 6 1.5-2h3L15 6"/><circle cx="12" cy="12.5" r="3.5"/></svg></div><span class="state device-status {% if device.is_online %}online{% else %}offline{% endif %}"><i></i>{% if device.is_online %}آنلاین{% else %}آفلاین{% endif %}</span></div>
+        <div class="device-card-top"><div class="camera-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="m9 6 1.5-2h3L15 6"/><circle cx="12" cy="12.5" r="3.5"/></svg></div><span class="state device-status {% if device.is_online_now %}online{% else %}offline{% endif %}"><i></i>{% if device.is_online_now %}آنلاین{% else %}آفلاین{% endif %}</span></div>
         <h3>{{ device.name }}</h3><code>{{ device.device_id }}</code>
         <div class="device-meta"><span>Video FPS</span><b class="video-fps">{{ device.reported_video_fps|floatformat:1 }}</b></div>
         <div class="device-meta"><span>AI FPS</span><b class="ai-fps">{{ device.reported_inference_fps|floatformat:1 }}</b></div>
@@ -202,10 +202,10 @@ async function refreshOverview(){
       if(!card)continue;
       const badge=card.querySelector('.device-status');
       if(badge){
-        badge.classList.toggle('online',!!device.is_online);
-        badge.classList.toggle('offline',!device.is_online);
+        badge.classList.toggle('online',!!device.is_online_now);
+        badge.classList.toggle('offline',!device.is_online_now);
         const dot=document.createElement('i');
-        badge.replaceChildren(dot,document.createTextNode(device.is_online?'آنلاین':'آفلاین'));
+        badge.replaceChildren(dot,document.createTextNode(device.is_online_now?'آنلاین':'آفلاین'));
       }
       const set=(selector,value)=>{const node=card.querySelector(selector);if(node)node.textContent=value;};
       set('.video-fps',Number(device.video_fps||0).toFixed(1));

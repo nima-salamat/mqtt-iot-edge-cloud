@@ -263,7 +263,7 @@ def cleanup_iot_data(kind: str, device_id: str | None = None) -> dict[str, Any]:
 
 def get_video_segments(limit: int = 200, device_id: str | None = None) -> list[dict[str, Any]]:
     """Return a bounded chronological archive for the authenticated operator UI."""
-    limit = max(1, min(int(limit), 1000))
+    limit = max(1, min(int(limit), 2000))
 
     def query():
         from dashboard.models import VideoSegment

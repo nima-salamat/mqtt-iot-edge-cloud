@@ -389,6 +389,39 @@ class QueueManagementTests(unittest.TestCase):
 
         self.uploader._session.post.assert_called_once()
 
+    def test_heartbeat_reports_actual_recording_state_over_saved_preference(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        snapshot = {
+            "video_fps": 25.0,
+            "inference_fps": 5.0,
+            "model_loaded": True,
+            "mqtt_connected": False,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "recording_enabled": False,
+            "pending_alerts": 0,
+            "pending_video_segments": 0,
+            "tracking_active": False,
+            "tracking_seconds": 0.0,
+        }
+        self.uploader.settings_store = SimpleNamespace(
+            get=lambda: {"recording_enabled": True, "segment_seconds": 5}
+        )
+        self.uploader.bridge = SimpleNamespace(
+            snapshot=lambda: snapshot,
+            publish_telemetry=Mock(return_value=False),
+        )
+        response = Mock(status_code=200)
+        response.json.return_value = {}
+        self.uploader._session.post = Mock(return_value=response)
+
+        self.uploader._send_heartbeat()
+
+        payload = self.uploader._session.post.call_args.kwargs["json"]
+        self.assertFalse(payload["recording_enabled"])
+
     def test_https_heartbeat_calibrates_the_pi_clock_from_server_time(self):
         from datetime import datetime, timedelta, timezone
         from types import SimpleNamespace

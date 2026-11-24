@@ -14,9 +14,10 @@ def select_sensor_mode(
 ) -> tuple[dict[str, Any] | None, float]:
     """Choose a sensor mode that meets the output size and requested cadence.
 
-    Auto mode chooses the fastest compatible sensor mode. Manual mode chooses
-    the smallest mode that can sustain the requested FPS, or the fastest
-    compatible mode when the requested cadence is unsupported.
+    Auto mode selects the fastest compatible sensor readout mode while capping
+    the stream/encoder cadence at the requested FPS. Manual mode selects the
+    smallest mode that can sustain the requested FPS, or the fastest compatible
+    mode when the requested cadence is unsupported.
     """
     usable: list[tuple[dict[str, Any], int, int, float]] = []
     for raw in sensor_modes or []:

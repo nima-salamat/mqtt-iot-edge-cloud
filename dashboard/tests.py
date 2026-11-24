@@ -502,6 +502,61 @@ class DeviceApiTests(TestCase):
             self.assertFalse(retry.json()["created"])
             self.assertEqual(VideoSegment.objects.filter(device=self.device, segment_id=segment_id).count(), 1)
 
+    def test_concurrent_video_segment_retry_recovers_winner_and_deletes_losing_file(self):
+        from django.core.files.base import ContentFile
+        from django.db.models.query import QuerySet
+
+        video_bytes = b"\\x00\\x00\\x00\\x18ftypisom\\x00\\x00\\x02\\x00isomiso2"
+        segment_id = "1795533000000-race1234"
+        checksum = hashlib.sha256(video_bytes).hexdigest()
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            winner = VideoSegment.objects.create(
+                device=self.device,
+                segment_id=segment_id,
+                checksum_sha256=checksum,
+                size_bytes=len(video_bytes),
+            )
+            winner.file.save(
+                f"{segment_id}.mp4", ContentFile(video_bytes), save=True
+            )
+            original_first = QuerySet.first
+            initial_lookup_skipped = {"value": False}
+
+            def simulate_lookup_race(queryset):
+                if queryset.model is VideoSegment and not initial_lookup_skipped["value"]:
+                    initial_lookup_skipped["value"] = True
+                    return None
+                return original_first(queryset)
+
+            data = {
+                "segment_id": segment_id,
+                "sha256": checksum,
+                "started_at": timezone.now().isoformat(),
+                "duration_seconds": "5",
+                "file": SimpleUploadedFile(
+                    "retry.mp4", video_bytes, content_type="video/mp4"
+                ),
+            }
+            with patch.object(QuerySet, "first", simulate_lookup_race):
+                response = self.client.post(
+                    reverse("device-upload-segment"),
+                    data=data,
+                    HTTP_AUTHORIZATION=f"Bearer {self.token}",
+                    HTTP_X_DEVICE_ID=self.device.device_id,
+                )
+
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertEqual(response.json()["status"], "already_stored")
+            self.assertEqual(
+                VideoSegment.objects.filter(
+                    device=self.device, segment_id=segment_id
+                ).count(),
+                1,
+            )
+            stored_files = list(Path(media_root).rglob("*.mp4"))
+            self.assertEqual(len(stored_files), 1)
+            self.assertEqual(stored_files[0].read_bytes(), video_bytes)
+
     def test_video_segment_id_cannot_be_reused_for_different_content(self):
         original = b"original-segment"
         segment_id = "1795533000000-conflict"

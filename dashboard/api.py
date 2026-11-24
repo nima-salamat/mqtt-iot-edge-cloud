@@ -361,9 +361,12 @@ def heartbeat(request):
 @device_required
 @require_POST
 def upload_alarm(request):
+    raw_payload = request.POST.get("payload", "{}")
+    if not isinstance(raw_payload, str) or len(raw_payload.encode("utf-8")) > 64 * 1024:
+        return JsonResponse({"error": "alarm_metadata_too_large"}, status=413)
     try:
-        payload = json.loads(request.POST.get("payload", "{}"))
-    except json.JSONDecodeError:
+        payload = json.loads(raw_payload)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return JsonResponse({"error": "invalid_payload"}, status=400)
     if not isinstance(payload, dict):
         return JsonResponse({"error": "invalid_payload"}, status=400)
@@ -505,7 +508,13 @@ def device_log(request):
         return JsonResponse({"error": "device_log_payload_too_large"}, status=413)
     if payload is None:
         return JsonResponse({"error": "invalid_json_object"}, status=400)
-    event_id = str(payload.get("event_id", "")).strip()[:64]
+    raw_event_id = payload.get("event_id", "")
+    if raw_event_id and (
+        not isinstance(raw_event_id, str)
+        or not re.fullmatch(r"[a-fA-F0-9]{32}", raw_event_id)
+    ):
+        return JsonResponse({"error": "invalid_event_id"}, status=400)
+    event_id = raw_event_id.strip()
     defaults = {
         "level": payload.get("level", "info") if payload.get("level") in {"debug", "info", "warning", "error"} else "info",
         "category": str(payload.get("category", "device"))[:64],

@@ -166,9 +166,21 @@ def pair_device(request):
     device.kind = Device.RASPBERRY_PI
     device.api_token_hash = make_password(api_token)
     device.stream_path = device_id
-    device.is_online = True
-    device.last_seen = now
-    device.last_heartbeat = now
+    # Pairing provisions credentials; it is not a device heartbeat. Clear any
+    # previous session's liveness and runtime flags until the Pi reports with
+    # the newly issued token and signing key.
+    device.is_online = False
+    device.last_seen = None
+    device.last_heartbeat = None
+    device.reported_video_fps = 0
+    device.reported_inference_fps = 0
+    device.model_loaded = False
+    device.current_state = {
+        "mqtt_connected": False,
+        "rtsp_connected": False,
+        "camera_ready": False,
+        "connection_state": "pairing",
+    }
     device.save()
     pairing.device_id = device_id
     pairing.consumed_at = now

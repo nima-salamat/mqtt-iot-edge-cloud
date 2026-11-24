@@ -88,15 +88,28 @@ def _apply_telemetry(device, payload, now):
         logger.warning("Ignoring malformed MQTT telemetry booleans from %s", device.device_id)
         return False
 
-    for field in ("pending_alerts", "pending_video_segments"):
-        if field in payload:
-            value = _bounded_float(payload[field], 0, 1_000_000, default=-1)
-            if value < 0 or not value.is_integer():
-                logger.warning(
-                    "Ignoring malformed MQTT telemetry counter %s from %s",
-                    field, device.device_id,
-                )
-                return False
+    numeric_ranges = {
+        "video_fps": (0, 120),
+        "inference_fps": (0, 60),
+        "pending_alerts": (0, 1_000_000),
+        "pending_video_segments": (0, 1_000_000),
+        "tracking_seconds": (0, 86400),
+    }
+    for field, (minimum, maximum) in numeric_ranges.items():
+        if field not in payload:
+            continue
+        value = _bounded_float(
+            payload[field], minimum, maximum, default=None
+        )
+        if value is None or (
+            field in {"pending_alerts", "pending_video_segments"}
+            and not value.is_integer()
+        ):
+            logger.warning(
+                "Ignoring malformed MQTT telemetry metric %s from %s",
+                field, device.device_id,
+            )
+            return False
 
     reported_at = _parse_datetime(payload.get("reported_at"))
     if not _fresh_timestamp(reported_at, now=now):
@@ -141,6 +154,7 @@ def _apply_telemetry(device, payload, now):
 
     state.update({
         "mqtt_connected": True,
+        "mqtt_status": "online",
         "mqtt_command_subscription_ready": (
             payload.get("mqtt_command_subscription_ready") is True
         ),
@@ -180,20 +194,38 @@ def _apply_telemetry(device, payload, now):
 
 def _apply_status(device, payload, now):
     status = payload.get("status")
+    source = payload.get("source")
     if status not in {"online", "offline"}:
         return False
-    if status == "online" and not _fresh_timestamp(payload.get("reported_at"), now=now):
+    if source not in {"device", "last-will"}:
+        return False
+    if status == "online" and (
+        source != "device" or not _fresh_timestamp(payload.get("reported_at"), now=now)
+    ):
+        return False
+    if status == "offline" and source == "device" and not _fresh_timestamp(
+        payload.get("reported_at"), now=now
+    ):
+        # The graceful-disconnect status has a server-clock timestamp. A
+        # delayed/replayed packet must not disconnect a newer MQTT session.
         return False
 
     state = device.current_state if isinstance(device.current_state, dict) else {}
-    if status == "offline" and payload.get("source") == "last-will":
+    if status == "offline" and source == "last-will":
         last_telemetry = _parse_datetime(state.get("last_mqtt_telemetry_at"))
-        if last_telemetry is not None and last_telemetry >= now - timedelta(seconds=15):
-            # Broker Last Will delivery can race a reconnect. A just-received
-            # telemetry packet proves the current connection is already alive;
-            # let the next failed publish/HTTPS fallback establish a real loss.
+        last_status = _parse_datetime(state.get("last_mqtt_status_at"))
+        if (
+            last_telemetry is not None
+            and last_telemetry >= now - timedelta(seconds=15)
+        ) or (
+            state.get("mqtt_status") == "online"
+            and last_status is not None
+            and last_status >= now - timedelta(seconds=15)
+        ):
+            # Broker Last Will delivery can race a reconnect. A recent telemetry
+            # packet or online status from the new connection takes precedence.
             logger.info(
-                "Ignoring delayed MQTT Last Will for %s after fresh telemetry",
+                "Ignoring delayed MQTT Last Will for %s after fresh online traffic",
                 device.device_id,
             )
             return False

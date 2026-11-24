@@ -446,10 +446,6 @@ def dashboard_overview(request):
                     if isinstance(device.current_state, dict)
                     and isinstance(device.current_state.get("system"), dict) else {}
                 ),
-                "system": (
-                    device.current_state.get("system", {})
-                    if isinstance(device.current_state.get("system"), dict) else {}
-                ),
             }
             for device in devices
         ],

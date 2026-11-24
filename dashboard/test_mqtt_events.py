@@ -77,11 +77,11 @@ class DeviceMqttEventTests(TestCase):
         self.assertTrue(self.device.current_state["last_device_reported_at"])
         self.assertFalse(self.device.telemetry.exists())
 
-    def test_signed_telemetry_with_pi_clock_skew_updates_dashboard_health(self):
+    def test_signed_telemetry_with_calibrated_clock_updates_dashboard_health(self):
         payload = {
             "device_id": self.device.device_id,
-            # Simulate a Pi clock several minutes behind the Django server.
-            "reported_at": (timezone.now() - timedelta(minutes=5)).isoformat(),
+            # Pi rewrites MQTT reported_at from the authenticated HTTPS server-time calibration.
+            "reported_at": timezone.now().isoformat(),
             "video_fps": 18.0,
             "inference_fps": 4.0,
             "system": {
@@ -109,6 +109,20 @@ class DeviceMqttEventTests(TestCase):
         )
         self.assertEqual(device["system"]["cpu_percent"], 46.5)
         self.assertEqual(device["system"]["memory"]["used_percent"], 40.0)
+
+    def test_stale_queued_mqtt_telemetry_cannot_resurrect_an_offline_device(self):
+        stale_payload = {
+            "device_id": self.device.device_id,
+            "reported_at": (timezone.now() - timedelta(minutes=5)).isoformat(),
+            "video_fps": 18.0,
+            "system": {"cpu_percent": 99.0},
+        }
+
+        self.assertFalse(self.send("telemetry", stale_payload))
+        self.device.refresh_from_db()
+        self.assertFalse(self.device.is_online)
+        self.assertIsNone(self.device.last_heartbeat)
+        self.assertNotIn("system", self.device.current_state)
 
     def test_partial_signed_system_sample_preserves_previous_cpu_and_ram_values(self):
         self.device.current_state = {

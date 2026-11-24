@@ -6,6 +6,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import os
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -76,7 +77,7 @@ def encrypt_mqtt_command(command: dict, signing_key: str) -> dict:
 
     envelope = {key: command[key] for key in required}
     envelope["encryption"] = "aes-256-gcm-v1"
-    nonce = __import__("os").urandom(12)
+    nonce = os.urandom(12)
     plaintext = json.dumps(
         {
             "command_type": command["command_type"],

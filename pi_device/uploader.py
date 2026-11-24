@@ -321,10 +321,21 @@ class DurableUploader:
         # installation receives its per-device signing key over HTTPS, or
         # whenever MQTT is disconnected, retain the authenticated HTTPS fallback.
         publish_telemetry = getattr(self.bridge, "publish_telemetry", None)
-        if callable(publish_telemetry) and publish_telemetry(payload):
-            self._last_heartbeat_monotonic = time.monotonic()
-            self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
-            return
+        if callable(publish_telemetry):
+            if publish_telemetry(payload):
+                self._last_heartbeat_monotonic = time.monotonic()
+                self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
+                return
+            bridge_state = self.bridge.snapshot() if self.bridge is not None else {}
+            mqtt_reason = (
+                bridge_state.get("last_error", "")
+                if isinstance(bridge_state, dict) else ""
+            )
+            log.warning(
+                "Signed MQTT heartbeat was not acknowledged; using authenticated HTTPS fallback. "
+                "Reason: %s",
+                mqtt_reason or "MQTT publisher is unavailable or not connected.",
+            )
 
         response = self._session.post(
             f"{self.api_base}/api/device/heartbeat/",

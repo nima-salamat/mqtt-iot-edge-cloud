@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from .models import Alarm, Device, DeviceLog, RetentionPolicy, VideoSegment
 from .device_auth import revoke_device_access
+from .services import cleanup_iot_data
 
 
 def _visible_devices(user):
@@ -88,6 +89,34 @@ def segment_file(request, segment_id):
     response["Cache-Control"] = "private, no-store"
     response["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+@login_required
+@require_POST
+def cleanup_data(request):
+    """Remove stored evidence belonging only to the signed-in account."""
+    try:
+        payload = json.loads(request.body or b"{}")
+        if not isinstance(payload, dict):
+            raise ValueError
+        kind = str(payload.get("kind", ""))
+        if kind not in {"alarms", "videos", "logs", "all"}:
+            raise ValueError
+        device_id = str(payload.get("device_id", "")).strip()
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({"error": "درخواست پاک‌سازی معتبر نیست."}, status=400)
+
+    devices = _visible_devices(request.user)
+    if device_id:
+        devices = devices.filter(device_id=device_id)
+        if not devices.exists():
+            raise Http404
+
+    try:
+        result = cleanup_iot_data(kind, devices)
+    except OSError:
+        return JsonResponse({"error": "حذف فایل‌های ذخیره‌شده کامل نشد؛ لاگ سرور را بررسی کن."}, status=500)
+    return JsonResponse({"status": "cleaned", "kind": kind, **result})
 
 
 @login_required

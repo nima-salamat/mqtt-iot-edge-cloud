@@ -428,7 +428,15 @@ def alarm_image(request, alarm_id):
         raise Http404
     if not alarm.snapshot:
         raise Http404
-    response = FileResponse(alarm.snapshot.open("rb"), content_type="image/jpeg")
+    try:
+        image_handle = alarm.snapshot.open("rb")
+    except FileNotFoundError:
+        logger.info("Alarm snapshot is missing from storage: alarm_id=%s", alarm.pk)
+        raise Http404
+    except (NotImplementedError, OSError, ValueError):
+        logger.exception("Could not open alarm snapshot: alarm_id=%s", alarm.pk)
+        return JsonResponse({"error": "تصویر هشدار فعلاً از فضای ذخیره‌سازی قابل دریافت نیست."}, status=503)
+    response = FileResponse(image_handle, content_type="image/jpeg")
     response["Cache-Control"] = "private, no-store"
     response["X-Content-Type-Options"] = "nosniff"
     return response
@@ -441,8 +449,20 @@ def segment_file(request, segment_id):
         raise Http404
     if not segment.file:
         raise Http404
-    file_handle = segment.file.open("rb")
-    size = int(segment.file.size or 0)
+    try:
+        file_handle = segment.file.open("rb")
+    except FileNotFoundError:
+        logger.info("Video segment file is missing from storage: segment_id=%s", segment.segment_id)
+        raise Http404
+    except (NotImplementedError, OSError, ValueError):
+        logger.exception("Could not open video segment: segment_id=%s", segment.segment_id)
+        return JsonResponse({"error": "فایل ویدئو فعلاً از فضای ذخیره‌سازی قابل دریافت نیست."}, status=503)
+    try:
+        size = int(segment.file.size or 0)
+    except (NotImplementedError, OSError, TypeError, ValueError):
+        file_handle.close()
+        logger.exception("Could not determine video segment size: segment_id=%s", segment.segment_id)
+        return JsonResponse({"error": "اندازه فایل ویدئو از فضای ذخیره‌سازی قابل خواندن نیست."}, status=503)
     range_header = request.headers.get("Range", "")
     if range_header:
         match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())

@@ -408,7 +408,7 @@ class DeviceApiTests(TestCase):
                 self.assertEqual(response.status_code, 403)
 
     def test_mediamtx_auth_refuses_public_host_even_with_valid_device_token(self):
-        with override_settings(ALLOWED_HOSTS=["localhost", "127.0.0.1", "api", "server.echonode.website"]):
+        with override_settings(ALLOWED_HOSTS=["*"]):
             response = self.client.post(
                 reverse("mediamtx-auth"),
                 data=json.dumps({

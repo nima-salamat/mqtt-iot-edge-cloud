@@ -29,10 +29,10 @@
         <div class="device-meta"><span>ویدئوی ارسال‌نشده</span><b class="pending-videos">{{ device.current_state.pending_video_segments|default:0 }}</b></div>
         {% with system=device.current_state.system %}
         <div class="device-health-grid">
-          <div class="device-health-item" data-health="temperature"><span>دمای Pi</span><b class="health-temperature">{% if system.temperature_c != None %}{{ system.temperature_c }}°C{% else %}—{% endif %}</b></div>
-          <div class="device-health-item" data-health="cpu"><span>CPU</span><b class="health-cpu">{% if system.cpu_percent != None %}{{ system.cpu_percent }}٪{% else %}—{% endif %}</b></div>
-          <div class="device-health-item" data-health="memory"><span>RAM</span><b class="health-memory">{% if system.memory.used_percent != None %}{{ system.memory.used_percent }}٪{% else %}—{% endif %}</b></div>
-          <div class="device-health-item" data-health="storage"><span>فضای دیسک</span><b class="health-storage">{% if system.storage.used_percent != None %}{{ system.storage.used_percent }}٪{% else %}—{% endif %}</b></div>
+          <div class="device-health-item" data-health="temperature"><span>دمای Pi</span><b class="health-temperature">{% if system.temperature_c or system.temperature_c == 0 %}{{ system.temperature_c }}°C{% else %}—{% endif %}</b></div>
+          <div class="device-health-item" data-health="cpu"><span>CPU</span><b class="health-cpu">{% if system.cpu_percent or system.cpu_percent == 0 %}{{ system.cpu_percent }}٪{% else %}—{% endif %}</b></div>
+          <div class="device-health-item" data-health="memory"><span>RAM</span><b class="health-memory">{% if system.memory.used_percent or system.memory.used_percent == 0 %}{{ system.memory.used_percent }}٪{% else %}—{% endif %}</b></div>
+          <div class="device-health-item" data-health="storage"><span>فضای دیسک</span><b class="health-storage">{% if system.storage.used_percent or system.storage.used_percent == 0 %}{{ system.storage.used_percent }}٪{% else %}—{% endif %}</b></div>
         </div>
         {% endwith %}
         <div class="device-footer"><span>آخرین ارتباط: <time class="last-heartbeat">{{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"هنوز دریافت نشده" }}</time></span><b>مشاهده دستگاه ←</b></div>

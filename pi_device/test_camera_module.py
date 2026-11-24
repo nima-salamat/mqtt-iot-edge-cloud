@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
 import sys
+import tempfile
 import types
 import unittest
 from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -61,6 +65,84 @@ class CameraPipelineStructureTests(unittest.TestCase):
         self.assertEqual(camera.bridge.set_metrics.call_count, 2)
         self.assertEqual(camera._pending_alarm_count.call_count, 2)
         self.assertEqual(camera._pending_video_count.call_count, 2)
+
+    def test_pairing_credentials_are_written_atomically_with_private_permissions(self):
+        module = self._load_camera_module()
+        camera = object.__new__(module.CameraPipeline)
+        camera.device_id = "cam-pair-test-01"
+        camera.uploader = SimpleNamespace(
+            state_provider=lambda: {},
+            credentials_revoked=True,
+        )
+        camera.bridge = MagicMock()
+        camera.live_output = None
+        camera._pair_status = "submitting"
+        camera._pair_lock = __import__("threading").RLock()
+        camera._pair_in_progress = True
+
+        credentials = {
+            "device_id": camera.device_id,
+            "api_token": "paired-api-token",
+            "mqtt_signing_key": "a" * 64,
+            "stream_path": camera.device_id,
+        }
+        response = MagicMock()
+        response.json.return_value = credentials
+        response.raise_for_status.return_value = None
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "DEVICE_CREDENTIALS_PATH": str(Path(directory) / "device.json"),
+            "API_BASE_URL": "https://example.invalid",
+        }), patch("requests.post", return_value=response):
+            camera._pair_request("one-time-pairing-code")
+            credential_path = Path(directory) / "device.json"
+            stored = json.loads(credential_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(stored, credentials)
+            self.assertEqual(credential_path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(camera._pair_status, "paired")
+            self.assertFalse(camera.uploader.credentials_revoked)
+            camera.bridge.set_signing_key.assert_called_once_with("a" * 64)
+
+    def test_pairing_credentials_refuse_symlink_destination(self):
+        module = self._load_camera_module()
+        camera = object.__new__(module.CameraPipeline)
+        camera.device_id = "cam-pair-test-02"
+        camera.uploader = SimpleNamespace(
+            state_provider=lambda: {},
+            credentials_revoked=True,
+        )
+        camera.bridge = MagicMock()
+        camera.live_output = None
+        camera._pair_status = "submitting"
+        camera._pair_lock = __import__("threading").RLock()
+        camera._pair_in_progress = True
+
+        credentials = {
+            "device_id": camera.device_id,
+            "api_token": "paired-api-token",
+            "mqtt_signing_key": "b" * 64,
+        }
+        response = MagicMock()
+        response.json.return_value = credentials
+        response.raise_for_status.return_value = None
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            protected = root / "protected.json"
+            protected.write_text("keep-this-file", encoding="utf-8")
+            target = root / "device.json"
+            target.symlink_to(protected)
+            with patch.dict(os.environ, {
+                "DEVICE_CREDENTIALS_PATH": str(target),
+                "API_BASE_URL": "https://example.invalid",
+            }), patch("requests.post", return_value=response):
+                camera._pair_request("one-time-pairing-code")
+
+            self.assertEqual(protected.read_text(encoding="utf-8"), "keep-this-file")
+            self.assertTrue(target.is_symlink())
+            self.assertTrue(camera._pair_status.startswith("failed:"))
+            camera.bridge.set_signing_key.assert_not_called()
 
     def test_tracking_duration_is_finalized_after_detection_grace_period(self):
         module = self._load_camera_module()

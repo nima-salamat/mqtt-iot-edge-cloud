@@ -386,6 +386,173 @@ class CameraPipelineStructureTests(unittest.TestCase):
             switchable.stop()
             self.assertTrue(switchable.stop_failed)
 
+    def test_switchable_output_closes_child_when_base_stop_raises(self):
+        module = self._load_camera_module()
+        package = types.ModuleType("picamera2")
+        package.__path__ = []
+        outputs_module = types.ModuleType("picamera2.outputs")
+
+        class BaseOutput:
+            def __init__(self):
+                self.base_stopped = False
+
+            def stop(self):
+                self.base_stopped = True
+                raise OSError("simulated base output stop failure")
+
+        outputs_module.Output = BaseOutput
+
+        class ChildOutput:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        with patch.dict(sys.modules, {
+            "picamera2": package,
+            "picamera2.outputs": outputs_module,
+        }):
+            output_class = module._switchable_output_class()
+            child = ChildOutput()
+            switchable = output_class(child)
+            switchable.stop()
+
+            self.assertTrue(switchable.stop_failed)
+            self.assertTrue(switchable.base_stopped)
+            self.assertTrue(child.stopped)
+
+    def test_switchable_output_closes_new_muxer_when_stream_setup_fails(self):
+        module = self._load_camera_module()
+        package = types.ModuleType("picamera2")
+        package.__path__ = []
+        outputs_module = types.ModuleType("picamera2.outputs")
+
+        class BaseOutput:
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        outputs_module.Output = BaseOutput
+
+        class BrokenOutput:
+            def __init__(self):
+                self.started = False
+                self.stopped = False
+
+            def start(self):
+                self.started = True
+
+            def _add_stream(self, *args, **kwargs):
+                raise RuntimeError("simulated codec setup failure")
+
+            def stop(self):
+                self.stopped = True
+
+        with patch.dict(sys.modules, {
+            "picamera2": package,
+            "picamera2.outputs": outputs_module,
+        }):
+            output_class = module._switchable_output_class()
+            switchable = output_class()
+            switchable._streams = [(object(), "h264", {})]
+            broken = BrokenOutput()
+
+            with self.assertRaisesRegex(RuntimeError, "codec setup failure"):
+                switchable.switch_output(broken)
+
+            self.assertTrue(broken.started)
+            self.assertTrue(broken.stopped)
+
+    def test_failed_recording_resume_keeps_incomplete_mp4_marker(self):
+        module = self._load_camera_module()
+        package = types.ModuleType("picamera2")
+        package.__path__ = []
+        outputs_module = types.ModuleType("picamera2.outputs")
+        outputs_module.PyavOutput = MagicMock()
+        camera = object.__new__(module.CameraPipeline)
+        camera.camera_backend = "picamera2"
+        camera._recording_lock = threading.RLock()
+        camera.picam2 = object()
+        camera.local_output = SimpleNamespace(
+            switch_output=MagicMock(side_effect=TimeoutError("no keyframe"))
+        )
+        camera.recording_enabled = False
+        camera._local_recording_attached = False
+        camera.settings_store = SimpleNamespace(update=MagicMock())
+        camera.bridge = SimpleNamespace(set_recording_enabled=MagicMock())
+        camera._publish_recording_state = lambda: camera.bridge.set_recording_enabled(
+            bool(camera.picam2 is not None and camera._local_recording_attached and camera.recording_enabled)
+        )
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, {
+            "picamera2": package,
+            "picamera2.outputs": outputs_module,
+        }):
+            expected_segment = Path(directory) / "failed-resume.mp4"
+            camera._segment_path = lambda: expected_segment
+
+            with self.assertRaisesRegex(TimeoutError, "no keyframe"):
+                module.CameraPipeline.set_recording_enabled(camera, True)
+
+            self.assertTrue(expected_segment.with_suffix(".open").exists())
+            camera.local_output.switch_output.assert_called_once()
+            self.assertFalse(camera.recording_enabled)
+
+    def test_camera_stop_continues_cleanup_when_rtsps_output_fails(self):
+        module = self._load_camera_module()
+        camera = object.__new__(module.CameraPipeline)
+        camera._stop = threading.Event()
+        camera._threads = []
+        camera.inference_pool = None
+        camera._inflight_frames = {}
+        camera._recording_lock = threading.RLock()
+        camera.live_output = SimpleNamespace(
+            stop=MagicMock(side_effect=OSError("simulated RTSPS stop failure"))
+        )
+        camera._opencv_capture = None
+        camera.picam2 = MagicMock()
+        camera.encoder = object()
+        camera.local_output = SimpleNamespace(
+            stop_failed=False,
+            stop=MagicMock(),
+        )
+        camera._current_marker = None
+        camera._current_segment = None
+        camera._local_recording_attached = False
+        camera.recording_enabled = True
+        camera._tracking_seconds = 0.0
+        camera.inference_fps = 5.0
+        camera.inference_latency_ms = 10.0
+        camera.bridge = SimpleNamespace(
+            set_tracking=MagicMock(),
+            set_recording_supported=MagicMock(),
+            set_recording_enabled=MagicMock(),
+            model_loaded=True,
+        )
+        camera._publish_recording_state = lambda: camera.bridge.set_recording_enabled(
+            bool(camera.picam2 is not None and camera._local_recording_attached and camera.recording_enabled)
+        )
+        camera._frames_lock = threading.RLock()
+        camera.latest_jpeg = b"frame"
+        camera.latest_frame_at = 1.0
+        camera._latest_bgr = object()
+        camera._last_detections = [{"bbox": [0, 0, 1, 1]}]
+        camera._last_detection_at = 1.0
+
+        module.CameraPipeline.stop(camera)
+
+        camera.picam2.stop.assert_called_once()
+        camera.picam2.stop_encoder.assert_called_once_with(camera.encoder)
+        camera.picam2.close.assert_called_once()
+        camera.local_output.stop.assert_called_once()
+        camera.bridge.set_recording_supported.assert_called_once_with(False)
+        self.assertIsNone(camera.picam2)
+        self.assertIsNone(camera.live_output)
+        self.assertIsNone(camera.latest_jpeg)
+
     def test_tracking_duration_is_finalized_after_detection_grace_period(self):
         module = self._load_camera_module()
         camera = object.__new__(module.CameraPipeline)

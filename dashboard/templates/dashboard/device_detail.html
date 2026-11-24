@@ -7,7 +7,7 @@
 <section class="hero compact">
   <div><span class="eyebrow">CAMERA DEVICE</span><h1>{{ device.name }}</h1><p><code>{{ device.device_id }}</code></p></div>
   <div class="hero-actions">
-    <span class="state {% if device.api_token_hash and device.is_online %}online{% else %}offline{% endif %}" id="device-connection-state"><i></i>{% if device.api_token_hash and device.is_online %}آنلاین{% elif device.api_token_hash %}آفلاین{% else %}اتصال لغو شده{% endif %}</span>
+    <span class="state {% if device.api_token_hash and device.is_online_now %}online{% else %}offline{% endif %}" id="device-connection-state"><i></i>{% if device.api_token_hash and device.is_online_now %}آنلاین{% elif device.api_token_hash %}آفلاین{% else %}اتصال لغو شده{% endif %}</span>
     <span class="muted">آخرین Heartbeat: {{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"—" }}</span>
     {% if device.api_token_hash %}<button class="btn danger" id="disconnect-camera" type="button" data-url="{% url 'dashboard:device-disconnect' device.device_id %}">قطع اتصال دوربین</button>{% endif %}
   </div>
@@ -32,7 +32,7 @@
     </div>
     <button class="btn primary" type="button" id="remote-recording-toggle"
             data-enabled="{% if device.current_state.recording_enabled == True %}false{% else %}true{% endif %}"
-            {% if not device.api_token_hash or not device.is_online or not device.current_state.mqtt_connected %}disabled{% endif %}>
+            {% if not device.api_token_hash or not device.is_online_now or not device.current_state.mqtt_connected %}disabled{% endif %}>
       {% if device.current_state.recording_enabled == True %}توقف ضبط از راه دور{% else %}شروع ضبط از راه دور{% endif %}
     </button>
   </div>

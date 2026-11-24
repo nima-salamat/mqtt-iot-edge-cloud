@@ -60,6 +60,34 @@ class VideoBitrateMigrationTests(unittest.TestCase):
             self.assertIn("camera_backend", restart_required)
             self.assertIn("camera_source", restart_required)
 
+    def test_camera_resolution_is_persisted_and_requires_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            settings = SettingsStore(str(path))
+
+            updated, restart_required = settings.update({
+                "video_width": 1920,
+                "video_height": 1080,
+            })
+
+            self.assertEqual(updated["video_width"], 1920)
+            self.assertEqual(updated["video_height"], 1080)
+            self.assertIn("video_width", restart_required)
+            self.assertIn("video_height", restart_required)
+            reloaded = SettingsStore(str(path))
+            self.assertEqual(reloaded.get()["video_width"], 1920)
+            self.assertEqual(reloaded.get()["video_height"], 1080)
+
+    def test_camera_resolution_values_are_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = SettingsStore(str(Path(directory) / "settings.json"))
+            updated, _ = settings.update({
+                "video_width": 99999,
+                "video_height": 1,
+            })
+            self.assertEqual(updated["video_width"], 4608)
+            self.assertEqual(updated["video_height"], 120)
+
     def test_recording_pause_is_persisted_without_restarting_camera(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"

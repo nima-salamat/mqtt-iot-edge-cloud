@@ -145,6 +145,7 @@ class DeviceApiTests(TestCase):
                 "inference_fps": 4.9,
                 "model_loaded": True,
                 "mqtt_connected": False,
+                "mqtt_command_subscription_ready": True,
                 "rtsp_connected": True,
                 "camera_ready": True,
                 "pending_alerts": 2,
@@ -171,6 +172,7 @@ class DeviceApiTests(TestCase):
         self.assertAlmostEqual(self.device.reported_video_fps, 29.8)
         self.assertAlmostEqual(self.device.reported_inference_fps, 4.9)
         self.assertTrue(self.device.current_state["rtsp_connected"])
+        self.assertTrue(self.device.current_state["mqtt_command_subscription_ready"])
         self.assertEqual(self.device.current_state["pending_alerts"], 2)
         self.assertTrue(self.device.current_state["recording_enabled"])
         self.assertEqual(

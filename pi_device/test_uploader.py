@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,8 +33,11 @@ class QueueManagementTests(unittest.TestCase):
         meta.write_text(
             json.dumps({
                 "alert_id": alert_id,
+                "device_id": self.uploader.device_id,
                 "image": image.name,
                 "event": "person_detected",
+                "confidence": 0.91,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
                 "bbox": [],
             }),
             encoding="utf-8",
@@ -494,6 +498,31 @@ class QueueManagementTests(unittest.TestCase):
         bridge.set_signing_key.assert_called_once_with(signing_key)
 
 
+
+    def test_alarm_with_non_finite_confidence_is_quarantined_before_upload(self):
+        alert_id = "9" * 32
+        metadata = self.uploader.alarm_dir / f"{alert_id}.json"
+        snapshot = self.uploader.alarm_dir / f"{alert_id}.jpg"
+        metadata.write_text(json.dumps({
+            "alert_id": alert_id,
+            "device_id": self.uploader.device_id,
+            "image": snapshot.name,
+            "event": "person_detected",
+            "confidence": float("nan"),
+            "detected_at": datetime.now(timezone.utc).isoformat(),
+            "bbox": [],
+        }), encoding="utf-8")
+        snapshot.write_bytes(b"jpeg-data")
+        self.uploader._session.post = __import__("unittest.mock").mock.Mock()
+
+        self.uploader._upload_alarms()
+
+        quarantine = self.uploader.quarantine_dir / "alarms"
+        self.assertFalse(metadata.exists())
+        self.assertFalse(snapshot.exists())
+        self.assertTrue((quarantine / metadata.name).exists())
+        self.assertTrue((quarantine / snapshot.name).exists())
+        self.uploader._session.post.assert_not_called()
 
     def test_empty_alarm_metadata_is_quarantined_with_snapshot_and_markers(self):
         from unittest.mock import Mock

@@ -408,17 +408,18 @@ class DeviceApiTests(TestCase):
                 self.assertEqual(response.status_code, 403)
 
     def test_mediamtx_auth_refuses_public_host_even_with_valid_device_token(self):
-        response = self.client.post(
-            reverse("mediamtx-auth"),
-            data=json.dumps({
-                "user": self.device.device_id,
-                "password": self.token,
-                "action": "publish",
-                "path": self.device.stream_path,
-            }),
-            content_type="application/json",
-            HTTP_HOST="server.echonode.website",
-        )
+        with override_settings(ALLOWED_HOSTS=["localhost", "127.0.0.1", "api", "server.echonode.website"]):
+            response = self.client.post(
+                reverse("mediamtx-auth"),
+                data=json.dumps({
+                    "user": self.device.device_id,
+                    "password": self.token,
+                    "action": "publish",
+                    "path": self.device.stream_path,
+                }),
+                content_type="application/json",
+                HTTP_HOST="server.echonode.website",
+            )
         self.assertEqual(response.status_code, 404)
 
     def test_mediamtx_publish_auth_accepts_internal_compose_service_host(self):

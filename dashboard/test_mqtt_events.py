@@ -463,6 +463,11 @@ class RemoteDeviceCommandApiTests(TestCase):
             decrypt_mqtt_command(encrypted_payload, device_mqtt_signing_key(self.device)),
             {"command_type": "recording.set", "payload": {"enabled": False}},
         )
+        from pi_device.mqtt_protocol import decrypt_mqtt_command as decrypt_on_pi
+        self.assertEqual(
+            decrypt_on_pi(encrypted_payload, device_mqtt_signing_key(self.device)),
+            {"command_type": "recording.set", "payload": {"enabled": False}},
+        )
         with self.assertRaises(ValueError):
             decrypt_mqtt_command(encrypted_payload, device_mqtt_signing_key(
                 Device.objects.create(
@@ -476,6 +481,31 @@ class RemoteDeviceCommandApiTests(TestCase):
 
 
     @patch("dashboard.views.publish_mqtt_command", return_value=True)
+    def test_server_and_pi_mqtt_command_crypto_formats_are_interoperable(self):
+        from pi_device.mqtt_protocol import (
+            decrypt_mqtt_command as decrypt_on_pi,
+            encrypt_mqtt_command as encrypt_on_pi,
+        )
+
+        key = device_mqtt_signing_key(self.device)
+        command = {
+            "device_id": self.device.device_id,
+            "command_id": "c" * 32,
+            "command_type": "recording.set",
+            "payload": {"enabled": True},
+            "issued_at": timezone.now().isoformat(),
+            "expires_at": (timezone.now() + timedelta(seconds=45)).isoformat(),
+        }
+
+        server_envelope = encrypt_mqtt_command(command, key)
+        pi_envelope = encrypt_on_pi(command, key)
+        expected = {
+            "command_type": "recording.set",
+            "payload": {"enabled": True},
+        }
+        self.assertEqual(decrypt_on_pi(server_envelope, key), expected)
+        self.assertEqual(decrypt_mqtt_command(pi_envelope, key), expected)
+
     def test_encrypted_command_ciphertext_is_unique_for_each_publication(self, publish):
         self.client.force_login(self.owner)
         url = reverse("dashboard:device-command", args=[self.device.device_id])

@@ -352,17 +352,41 @@ class DurableUploader:
         # This endpoint applies metrics directly in Django and is the recovery
         # path when an MQTT message is broker-acknowledged but rejected by the
         # application (for example because of device clock skew).
+        request_started_at = datetime.now(timezone.utc)
         response = self._session.post(
             f"{self.api_base}/api/device/heartbeat/",
             headers=self._headers(),
             json=payload,
             timeout=(5, 15),
         )
+        response_received_at = datetime.now(timezone.utc)
         self._check_response(response)
         try:
             response_payload = response.json()
         except (ValueError, AttributeError):
             response_payload = {}
+        # The Django response carries its authoritative UTC clock. Estimate
+        # network delay symmetrically and calibrate the Pi clock for short-lived
+        # MQTT commands without changing the OS clock.
+        server_time_value = (
+            response_payload.get("server_time", "")
+            if isinstance(response_payload, dict) else ""
+        )
+        if server_time_value:
+            try:
+                server_time = datetime.fromisoformat(
+                    str(server_time_value).replace("Z", "+00:00")
+                )
+                if server_time.tzinfo is None:
+                    server_time = server_time.replace(tzinfo=timezone.utc)
+                round_trip = response_received_at - request_started_at
+                local_midpoint = request_started_at + round_trip / 2
+                offset_seconds = (server_time - local_midpoint).total_seconds()
+                set_time_offset = getattr(self.bridge, "set_server_time_offset", None)
+                if callable(set_time_offset):
+                    set_time_offset(offset_seconds)
+            except (TypeError, ValueError, OverflowError):
+                log.warning("Ignoring invalid server_time in heartbeat response")
         signing_key = (
             response_payload.get("mqtt_signing_key", "")
             if isinstance(response_payload, dict) else ""

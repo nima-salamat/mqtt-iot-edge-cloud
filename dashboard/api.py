@@ -389,16 +389,21 @@ def upload_segment(request):
 @require_POST
 def device_log(request):
     payload = _json_body(request)
-    event_id = str(payload.get("event_id", ""))[:64]
-    if event_id and DeviceLog.objects.filter(device=request.iot_device, event_id=event_id).exists():
-        return JsonResponse({"status": "already_stored"})
-    DeviceLog.objects.create(
-        device=request.iot_device, event_id=event_id,
-        level=payload.get("level", "info") if payload.get("level") in {"debug", "info", "warning", "error"} else "info",
-        category=str(payload.get("category", "device"))[:64],
-        message=str(payload.get("message", "Device log"))[:500],
-        details=payload.get("details") if isinstance(payload.get("details"), dict) else {},
-    )
+    event_id = str(payload.get("event_id", "")).strip()[:64]
+    defaults = {
+        "level": payload.get("level", "info") if payload.get("level") in {"debug", "info", "warning", "error"} else "info",
+        "category": str(payload.get("category", "device"))[:64],
+        "message": str(payload.get("message", "Device log"))[:500],
+        "details": payload.get("details") if isinstance(payload.get("details"), dict) else {},
+    }
+    if event_id:
+        _record, created = DeviceLog.objects.get_or_create(
+            device=request.iot_device,
+            event_id=event_id,
+            defaults=defaults,
+        )
+        return JsonResponse({"status": "stored" if created else "already_stored"})
+    DeviceLog.objects.create(device=request.iot_device, **defaults)
     return JsonResponse({"status": "stored"})
 
 

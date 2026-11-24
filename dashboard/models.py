@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import timedelta
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -30,6 +31,15 @@ class Device(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.device_id})"
+
+    @property
+    def is_online_now(self):
+        """Use a recent server-received heartbeat as authoritative liveness."""
+        return bool(
+            self.api_token_hash
+            and self.last_heartbeat
+            and self.last_heartbeat >= timezone.now() - timedelta(seconds=50)
+        )
 
 
 class Telemetry(models.Model):

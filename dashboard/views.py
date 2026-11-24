@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import math
 import re
 import shutil
 import subprocess
@@ -22,6 +23,21 @@ from .mqtt_security import device_mqtt_signing_key, sign_mqtt_payload
 from .mqtt_commands import publish_mqtt_command
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_state_number(value, default=0.0, minimum=0.0, maximum=1_000_000.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(number) or number < minimum or number > maximum:
+        return default
+    return number
+
+
+def _safe_state_count(value, default=0, maximum=1_000_000):
+    number = _safe_state_number(value, default=float(default), minimum=0, maximum=maximum)
+    return int(number)
 
 
 def _visible_devices(user):
@@ -425,84 +441,31 @@ def acknowledge_alarm(request, alarm_id):
 @login_required
 def dashboard_overview(request):
     devices = list(_visible_devices(request.user).order_by("name", "device_id"))
-    return JsonResponse({
-        "devices": [
-            {
-                "device_id": device.device_id,
-                "name": device.name,
-                "is_online": device.is_online_now,
-                "is_paired": bool(device.api_token_hash),
-                "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
-                "video_fps": round(device.reported_video_fps, 1),
-                "inference_fps": round(device.reported_inference_fps, 1),
-                "model_loaded": device.model_loaded,
-                "mqtt_connected": bool(device.current_state.get("mqtt_connected", False)),
-                "camera_ready": bool(device.current_state.get("camera_ready", False)),
-                "rtsp_connected": bool(device.current_state.get("rtsp_connected", False)),
-                "tracking_active": bool(device.current_state.get("tracking_active", False)),
-                "tracking_seconds": round(float(device.current_state.get("tracking_seconds", 0) or 0), 1),
-                "pending_alerts": int(device.current_state.get("pending_alerts", 0) or 0),
-                "pending_video_segments": int(device.current_state.get("pending_video_segments", 0) or 0),
-                "system": (
-                    device.current_state.get("system", {})
-                    if isinstance(device.current_state, dict)
-                    and isinstance(device.current_state.get("system"), dict) else {}
-                ),
-            }
-            for device in devices
-        ],
-    })
-
-
-@login_required
-def dashboard_alerts(request):
-    """Return only newly-created alerts for the signed-in user's devices."""
-    try:
-        after = int(request.GET.get("after", "0"))
-        if after < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        return JsonResponse({"error": "invalid_alert_cursor"}, status=400)
-
-    visible_devices = _visible_devices(request.user)
-    device_id = request.GET.get("device_id", "").strip()
-    if device_id:
-        get_object_or_404(visible_devices, device_id=device_id)
-        queryset = Alarm.objects.filter(device_id=device_id)
-    else:
-        queryset = Alarm.objects.filter(device__in=visible_devices)
-
-    batch = list(
-        queryset.filter(pk__gt=after)
-        .select_related("device")
-        .order_by("pk")[:51]
-    )
-    has_more = len(batch) > 50
-    batch = batch[:50]
-    alerts = []
-    for alarm in batch:
-        alerts.append({
-            "id": alarm.pk,
-            "device_id": alarm.device_id,
-            "device_name": alarm.device.name,
-            "confidence": round(alarm.confidence, 3),
-            "detected_at": alarm.detected_at.isoformat(),
-            "acknowledged": alarm.acknowledged,
-            "bbox": alarm.bbox if isinstance(alarm.bbox, list) else [],
-            "has_snapshot": bool(alarm.snapshot),
-            "image_url": reverse("dashboard:alarm-image", args=[alarm.pk]) if alarm.snapshot else None,
-            "device_url": reverse("dashboard:device-detail", args=[alarm.device_id]),
+    payload_devices = []
+    for device in devices:
+        state = device.current_state if isinstance(device.current_state, dict) else {}
+        system = state.get("system")
+        payload_devices.append({
+            "device_id": device.device_id,
+            "name": device.name,
+            "is_online": device.is_online_now,
+            "is_paired": bool(device.api_token_hash),
+            "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
+            "video_fps": _safe_state_number(device.reported_video_fps, maximum=120),
+            "inference_fps": _safe_state_number(device.reported_inference_fps, maximum=60),
+            "model_loaded": bool(device.model_loaded),
+            "mqtt_connected": bool(state.get("mqtt_connected", False)),
+            "camera_ready": bool(state.get("camera_ready", False)),
+            "rtsp_connected": bool(state.get("rtsp_connected", False)),
+            "tracking_active": bool(state.get("tracking_active", False)),
+            "tracking_seconds": round(_safe_state_number(
+                state.get("tracking_seconds"), maximum=86400
+            ), 1),
+            "pending_alerts": _safe_state_count(state.get("pending_alerts")),
+            "pending_video_segments": _safe_state_count(state.get("pending_video_segments")),
+            "system": system if isinstance(system, dict) else {},
         })
-
-    return JsonResponse({
-        "alerts": alerts,
-        "next_cursor": alerts[-1]["id"] if alerts else after,
-        "has_more": has_more,
-    })
-
-
-def health(request):
-    return JsonResponse({"status": "ok", "service": "iot-alarm-api"})
+    return JsonResponse({"devices": payload_devices})
 
 
 @login_required

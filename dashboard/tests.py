@@ -433,6 +433,40 @@ class DeviceApiTests(TestCase):
             self.assertFalse(retry.json()["created"])
             self.assertEqual(VideoSegment.objects.filter(device=self.device, segment_id=segment_id).count(), 1)
 
+    def test_video_segment_id_cannot_be_reused_for_different_content(self):
+        original = b"original-segment"
+        segment_id = "1795533000000-conflict"
+        VideoSegment.objects.create(
+            device=self.device,
+            segment_id=segment_id,
+            checksum_sha256=hashlib.sha256(original).hexdigest(),
+            size_bytes=len(original),
+        )
+        replacement = b"replacement-segment"
+        response = self.client.post(
+            reverse("device-upload-segment"),
+            data={
+                "segment_id": segment_id,
+                "sha256": hashlib.sha256(replacement).hexdigest(),
+                "started_at": timezone.now().isoformat(),
+                "duration_seconds": "5",
+                "file": SimpleUploadedFile(
+                    "replacement.mp4", replacement, content_type="video/mp4"
+                ),
+            },
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "segment_id_conflict")
+
+    def test_device_future_timestamps_are_clamped_to_server_time(self):
+        from dashboard.api import _parse_time
+
+        future = timezone.now() + timedelta(days=10)
+        parsed = _parse_time(future.isoformat())
+        self.assertLessEqual(parsed, timezone.now() + timedelta(minutes=5, seconds=1))
+
     def test_mediamtx_auth_denies_malformed_or_non_object_json(self):
         for body in (json.dumps([]), b"\\xff"):
             with self.subTest(body=body):

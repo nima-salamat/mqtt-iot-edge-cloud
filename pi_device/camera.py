@@ -118,8 +118,13 @@ class ReconnectingRtspOutput:
         self._stop.set()
         self._wake.set()
         if self._thread:
-            # split_output can be waiting for a keyframe; it is a daemon thread.
+            # split_output can be waiting for a keyframe. The camera keeps
+            # producing frames during this join; if it still cannot stop,
+            # retain this worker reference so the supervisor can retry teardown.
             self._thread.join(timeout=4)
+            if self._thread.is_alive():
+                self.error = "RTSPS reconnect worker did not stop before camera teardown"
+                raise TimeoutError(self.error)
         # The encoder owns this SplittableOutput and closes its active child
         # when Picamera2 stops the encoder. Do not stop it while frames are
         # still being delivered.
@@ -399,10 +404,17 @@ class CameraPipeline:
         return marker
 
     def is_running(self):
-        """Whether the selected camera backend currently owns an open device."""
+        """Whether the camera or a resource awaiting teardown is still active."""
         if self.picam2 is not None:
             return True
-        return bool(self._opencv_capture is not None and self._opencv_capture.isOpened())
+        if self._opencv_capture is not None:
+            try:
+                if self._opencv_capture.isOpened():
+                    return True
+            except Exception:
+                log.debug("Could not inspect OpenCV camera state", exc_info=True)
+        rtsp_thread = getattr(self.live_output, "_thread", None)
+        return bool(rtsp_thread is not None and rtsp_thread.is_alive())
 
     def _reset_frame_state(self):
         self._stop.clear()
@@ -1609,10 +1621,15 @@ class CameraPipeline:
         # rotation. Otherwise a late keyframe callback can swap an MP4 writer
         # while the camera is being torn down.
         with self._recording_lock:
+            rtsp_stopped = self.live_output is None
             if self.live_output:
                 try:
                     self.live_output.stop()
+                    rtsp_stopped = True
                 except Exception:
+                    # Do not drop a live reconnect worker. is_running() keeps
+                    # the supervisor from opening another camera pipeline while
+                    # this worker still owns an RTSP split operation.
                     log.exception("Could not stop RTSPS output cleanly")
 
             if self._opencv_capture is not None:
@@ -1667,7 +1684,8 @@ class CameraPipeline:
             self.picam2 = None
             self.encoder = None
             self.local_output = None
-            self.live_output = None
+            if rtsp_stopped:
+                self.live_output = None
             self.recording_enabled = False
             self._current_segment = None
             self._current_marker = None

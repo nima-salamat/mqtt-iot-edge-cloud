@@ -253,6 +253,34 @@ class CameraPipelineStructureTests(unittest.TestCase):
 
             self.assertEqual(settings.get()["video_width"], 1280)
 
+    def test_opencv_capture_is_released_when_requested_sensor_mode_is_unsupported(self):
+        module = self._load_camera_module()
+        camera = object.__new__(module.CameraPipeline)
+        camera._reset_frame_state = MagicMock()
+        capture = SimpleNamespace(
+            isOpened=lambda: True,
+            release=MagicMock(),
+        )
+        module.cv2.VideoCapture = MagicMock(return_value=capture)
+        module.cv2.CAP_V4L2 = 200
+
+        with patch.object(
+            module.CameraPipeline,
+            "_probe_v4l2_modes",
+            return_value=[{"size": (640, 480), "fps": 30.0, "fourcc": "MJPG"}],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not supported"):
+                camera._start_opencv({
+                    "camera_source": "0",
+                    "video_width": 1920,
+                    "video_height": 1080,
+                    "video_fps": 30,
+                    "video_fps_auto": True,
+                })
+
+        capture.release.assert_called_once_with()
+        self.assertFalse(hasattr(camera, "_opencv_capture"))
+
     def test_opencv_camera_is_ready_when_it_produces_fresh_frames(self):
         module = self._load_camera_module()
         camera = object.__new__(module.CameraPipeline)

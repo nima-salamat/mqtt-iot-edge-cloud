@@ -47,6 +47,69 @@ class CameraPipelineStructureTests(unittest.TestCase):
             module.CameraPipeline._draw_boxes.__code__.co_varnames,
         )
 
+    def test_local_alarm_list_skips_corrupt_non_object_metadata(self):
+        module = self._load_camera_module()
+        from pi_device.app import create_local_app
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "PI_DATA_DIR": directory,
+            "FLASK_SECRET_KEY": "unit-test-flask-secret",
+        }):
+            alarm_dir = Path(directory) / "alarms"
+            alarm_dir.mkdir(parents=True)
+            (alarm_dir / f'{"a" * 32}.json').write_text("[]", encoding="utf-8")
+            (alarm_dir / f'{"b" * 32}.json').write_text("{broken-json", encoding="utf-8")
+
+            camera = SimpleNamespace(device_id="cam-local-test-01")
+            app = create_local_app(
+                camera,
+                SimpleNamespace(get=lambda: {}),
+                MagicMock(),
+                SimpleNamespace(),
+            )
+            client = app.test_client()
+            with client.session_transaction() as session:
+                session["authenticated"] = True
+                session["csrf_token"] = "csrf-test"
+
+            response = client.get("/api/alarms/")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json(), {"alarms": []})
+
+    def test_local_settings_reject_boolean_and_fractional_camera_resolutions(self):
+        module = self._load_camera_module()
+        from pi_device.app import create_local_app
+        from pi_device.settings_store import SettingsStore
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "PI_DATA_DIR": directory,
+            "FLASK_SECRET_KEY": "unit-test-flask-secret",
+        }):
+            settings = SettingsStore(str(Path(directory) / "settings.json"))
+            camera = SimpleNamespace(device_id="cam-local-test-02", available_video_modes=[])
+            app = create_local_app(
+                camera,
+                settings,
+                MagicMock(),
+                SimpleNamespace(),
+            )
+            client = app.test_client()
+            with client.session_transaction() as session:
+                session["authenticated"] = True
+                session["csrf_token"] = "csrf-test"
+
+            for value in (True, 1920.5, 0, -720):
+                with self.subTest(value=value):
+                    response = client.post(
+                        "/api/settings/",
+                        json={"video_width": value},
+                        headers={"X-CSRF-Token": "csrf-test"},
+                    )
+                    self.assertEqual(response.status_code, 400)
+
+            self.assertEqual(settings.get()["video_width"], 1280)
+
     def test_opencv_camera_is_ready_when_it_produces_fresh_frames(self):
         module = self._load_camera_module()
         camera = object.__new__(module.CameraPipeline)

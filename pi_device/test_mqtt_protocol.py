@@ -134,6 +134,91 @@ class MqttBridgePublishTests(unittest.TestCase):
 
         handler.assert_called_once_with("recording.set", {"enabled": False})
 
+    def test_qos1_redelivery_executes_command_once_and_replays_cached_ack(self):
+        import json
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        now = self.bridge._server_now()
+        command_id = "a" * 32
+        envelope = encrypt_mqtt_command({
+            "device_id": self.bridge.device_id,
+            "command_id": command_id,
+            "command_type": "recording.set",
+            "payload": {"enabled": False},
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=45)).isoformat(),
+        }, "a" * 64)
+        handler = Mock(return_value={"recording_enabled": False})
+        ack = Mock()
+        self.bridge.set_command_handler(handler)
+        self.bridge._send_command_ack = ack
+        message = SimpleNamespace(
+            topic=self.bridge.command_topic,
+            payload=json.dumps(envelope).encode("utf-8"),
+        )
+
+        class ImmediateThread:
+            def __init__(self, target, args, **kwargs):
+                self.target, self.args = target, args
+
+            def start(self):
+                self.target(*self.args)
+
+        with patch("pi_device.bridge.threading.Thread", ImmediateThread):
+            self.bridge._on_message(self.bridge.client, None, message)
+            self.bridge._on_message(self.bridge.client, None, message)
+
+        handler.assert_called_once_with("recording.set", {"enabled": False})
+        self.assertEqual(ack.call_count, 2)
+        self.assertEqual(
+            ack.call_args_list[0].args,
+            (command_id, "applied", {"recording_enabled": False}),
+        )
+        self.assertEqual(ack.call_args_list[1].args, ack.call_args_list[0].args)
+
+    def test_qos1_redelivery_while_command_is_inflight_does_not_start_second_worker(self):
+        import json
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        now = self.bridge._server_now()
+        command_id = "b" * 32
+        envelope = encrypt_mqtt_command({
+            "device_id": self.bridge.device_id,
+            "command_id": command_id,
+            "command_type": "recording.set",
+            "payload": {"enabled": True},
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=45)).isoformat(),
+        }, "a" * 64)
+        message = SimpleNamespace(
+            topic=self.bridge.command_topic,
+            payload=json.dumps(envelope).encode("utf-8"),
+        )
+        workers = []
+
+        class DeferredThread:
+            def __init__(self, target, args, **kwargs):
+                self.target, self.args = target, args
+
+            def start(self):
+                workers.append((self.target, self.args))
+
+        handler = Mock(return_value={"recording_enabled": True})
+        self.bridge.set_command_handler(handler)
+        with patch("pi_device.bridge.threading.Thread", DeferredThread):
+            self.bridge._on_message(self.bridge.client, None, message)
+            self.bridge._on_message(self.bridge.client, None, message)
+
+        self.assertEqual(len(workers), 1)
+        self.assertIn(command_id, self.bridge._command_inflight)
+        workers[0][0](*workers[0][1])
+        handler.assert_called_once_with("recording.set", {"enabled": True})
+        self.assertNotIn(command_id, self.bridge._command_inflight)
+
     def test_aes_gcm_command_round_trip_and_device_isolation(self):
         command = {
             "device_id": self.bridge.device_id,

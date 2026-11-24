@@ -46,6 +46,8 @@ def _strict_json_object(request):
 
 
 def _finite_number(value, minimum=0, maximum=1_000_000_000_000):
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
@@ -225,11 +227,11 @@ def heartbeat(request):
     now = timezone.now()
     try:
         raw_metrics = {
-            "video_fps": payload.get("video_fps", 0) or 0,
-            "inference_fps": payload.get("inference_fps", 0) or 0,
-            "pending_alerts": payload.get("pending_alerts", 0) or 0,
-            "pending_video_segments": payload.get("pending_video_segments", 0) or 0,
-            "tracking_seconds": payload.get("tracking_seconds", 0) or 0,
+            "video_fps": payload.get("video_fps", 0),
+            "inference_fps": payload.get("inference_fps", 0),
+            "pending_alerts": payload.get("pending_alerts", 0),
+            "pending_video_segments": payload.get("pending_video_segments", 0),
+            "tracking_seconds": payload.get("tracking_seconds", 0),
         }
         if any(isinstance(value, bool) for value in raw_metrics.values()):
             raise ValueError("boolean device metric")
@@ -328,7 +330,7 @@ def upload_alarm(request):
             snapshot.seek(0)
         except Exception:
             return JsonResponse({"error": "snapshot_is_not_a_valid_jpeg"}, status=400)
-    confidence = _finite_number(payload.get("confidence", 0) or 0, 0, 1)
+    confidence = _finite_number(payload.get("confidence", 0), 0, 1)
     if confidence is None:
         return JsonResponse({"error": "invalid_confidence"}, status=400)
     raw_boxes = payload.get("bbox", [])

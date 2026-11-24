@@ -214,6 +214,13 @@ def pair_device(request):
     # Devices owned by another account are rejected by the ownership check above.
     if device is None:
         device = Device(device_id=device_id, kind=Device.RASPBERRY_PI)
+    else:
+        # Token rotation invalidates the old device API session. Revoke existing
+        # viewer grants at the same time so a previous browser token cannot keep
+        # reading this camera for the remainder of its ten-minute TTL.
+        StreamGrant.objects.filter(
+            device=device, revoked_at__isnull=True
+        ).update(revoked_at=now)
     api_token = secrets.token_urlsafe(48)
     device.owner = pairing.owner
     device.name = name

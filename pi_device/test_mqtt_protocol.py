@@ -74,6 +74,58 @@ class MqttBridgePublishTests(unittest.TestCase):
             call.loop_start(),
         ])
 
+    def test_server_time_offset_is_bounded_and_applied(self):
+        from datetime import datetime, timezone
+
+        self.assertFalse(self.bridge.set_server_time_offset(25 * 60 * 60))
+        before = datetime.now(timezone.utc)
+        self.assertTrue(self.bridge.set_server_time_offset(300))
+        after = datetime.now(timezone.utc)
+        server_now = self.bridge._server_now()
+        self.assertAlmostEqual((server_now - after).total_seconds(), 300, delta=1)
+        self.assertAlmostEqual(
+            self.bridge.snapshot()["mqtt_server_time_offset_seconds"], 300
+        )
+
+    def test_signed_command_is_accepted_when_pi_clock_is_five_minutes_behind(self):
+        import json
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from pi_device.mqtt_protocol import sign_payload
+
+        local_now = datetime.now(timezone.utc)
+        issued_at = local_now + timedelta(minutes=5)
+        command_id = "c" * 32
+        payload = sign_payload({
+            "device_id": self.bridge.device_id,
+            "command_id": command_id,
+            "command_type": "recording.set",
+            "payload": {"enabled": False},
+            "issued_at": issued_at.isoformat(),
+            "expires_at": (issued_at + timedelta(seconds=45)).isoformat(),
+        }, "a" * 64)
+        handler = Mock(return_value={"recording_enabled": False})
+        self.bridge.set_command_handler(handler)
+        self.bridge.set_server_time_offset(300)
+        message = SimpleNamespace(
+            topic=self.bridge.command_topic,
+            payload=json.dumps(payload).encode("utf-8"),
+        )
+
+        class ImmediateThread:
+            def __init__(self, target, args, **kwargs):
+                self.target = target
+                self.args = args
+
+            def start(self):
+                self.target(*self.args)
+
+        with patch("pi_device.bridge.threading.Thread", ImmediateThread):
+            self.bridge._on_message(self.bridge.client, None, message)
+
+        handler.assert_called_once_with("recording.set", {"enabled": False})
+
     def test_publish_requires_connected_broker(self):
         self.bridge.client.is_connected.return_value = False
 

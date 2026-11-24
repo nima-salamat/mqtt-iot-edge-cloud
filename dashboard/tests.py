@@ -195,6 +195,8 @@ class DeviceApiTests(TestCase):
             b"{not-json",
             json.dumps([]),
             json.dumps({"mqtt_connected": "false"}),
+            json.dumps({"mqtt_command_subscription_ready": "yes"}),
+            json.dumps({"recording_supported": "false"}),
             json.dumps({"video_fps": False}),
         )
         for body in invalid_bodies:

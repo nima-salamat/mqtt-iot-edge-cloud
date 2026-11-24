@@ -442,7 +442,7 @@ class DeviceApiTests(TestCase):
             checksum_sha256=hashlib.sha256(original).hexdigest(),
             size_bytes=len(original),
         )
-        replacement = b"replacement-segment"
+        replacement = b"\\x00\\x00\\x00\\x18ftypiso2\\x00\\x00\\x02\\x00isomiso2"
         response = self.client.post(
             reverse("device-upload-segment"),
             data={

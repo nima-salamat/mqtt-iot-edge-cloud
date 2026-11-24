@@ -745,6 +745,9 @@ class CameraPipeline:
                 except Exception:
                     cleanup_succeeded = False
                     log.exception("Could not finalize partially-started Picamera2 encoder")
+                if getattr(local_output, "stop_failed", False):
+                    cleanup_succeeded = False
+                    log.error("A local MP4 output did not finalize during failed camera startup")
             try:
                 picam2.close()
             except Exception:
@@ -1553,6 +1556,9 @@ class CameraPipeline:
             try:
                 if self.encoder is not None:
                     self.picam2.stop_encoder(self.encoder)
+                if getattr(self.local_output, "stop_failed", False):
+                    stopped_cleanly = False
+                    log.error("A local MP4 output did not finalize during camera shutdown")
             except Exception:
                 stopped_cleanly = False
                 log.exception("Could not finalize Picamera2 encoder")

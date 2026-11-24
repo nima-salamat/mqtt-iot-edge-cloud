@@ -8,6 +8,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from .atomic_files import atomic_write_json
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -132,13 +134,7 @@ class SettingsStore:
             self._save_locked()
 
     def _save_locked(self) -> None:
-        temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(self._value, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.chmod(temporary, 0o600)
-        temporary.replace(self.path)
+        atomic_write_json(self.path, self._value, indent=2, mode=0o600)
 
     def get(self) -> dict[str, Any]:
         with self._lock:

@@ -31,3 +31,32 @@
 .btn.danger:hover:not(:disabled){background:#55323e;border-color:#9b5c6a}
 .device-meta .tracking-duration{font-variant-numeric:tabular-nums;direction:ltr;unicode-bidi:isolate}
 #tracking-duration{font-variant-numeric:tabular-nums;direction:ltr;unicode-bidi:isolate}
+
+
+/* Bounded historical media, cleanup actions and compact log panes. */
+.cleanup-toolbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:15px;border:1px solid #293f54;border-radius:14px;background:#111f30}
+.cleanup-toolbar .btn{font-size:10px}
+.cleanup-status{min-height:22px;margin-top:8px}
+.video-history-panel{display:grid;gap:12px;padding:15px;border:1px solid #263d52;border-radius:15px;background:linear-gradient(145deg,#0c1928,#101f30)}
+.video-history-panel>video{display:block;width:100%;height:clamp(220px,42vw,520px);max-height:520px;min-height:200px;object-fit:contain;background:#02070d;border:1px solid #2b4155;border-radius:12px}
+.video-history-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.video-history-controls .muted{margin-inline-start:auto}
+.video-segment-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:8px;max-height:218px;overflow:auto;padding:2px 3px 2px 0}
+.video-segment-option{display:grid;gap:4px;min-width:0;text-align:right;padding:10px 12px;border:1px solid #2b4358;border-radius:10px;background:#101f30;color:#d9e7ef;cursor:pointer;font:inherit}
+.video-segment-option span{font-size:11px;font-variant-numeric:tabular-nums}
+.video-segment-option small{font-size:9px;color:#8ba4b7}
+.video-segment-option:hover,.video-segment-option.active{border-color:#63cdbc;background:#14333b}
+.table-link-button{border:0;background:transparent;color:#85dfd1;font:600 10px Vazirmatn,sans-serif;cursor:pointer;padding:4px}
+.table-link-button:hover{text-decoration:underline}
+.log-table-wrap{max-height:340px;overflow:auto;overscroll-behavior:contain}
+.log-table-wrap table thead th{position:sticky;top:0;z-index:2}
+.log-table-wrap td:last-child{white-space:normal;min-width:220px;max-width:620px;line-height:1.8;overflow-wrap:anywhere}
+@media(max-width:700px){
+  .cleanup-toolbar{display:grid;grid-template-columns:1fr}
+  .cleanup-toolbar .btn{width:100%}
+  .video-history-panel{padding:10px}
+  .video-history-controls{display:grid;grid-template-columns:1fr 1fr}
+  .video-history-controls .muted{grid-column:1/-1;margin:0}
+  .video-segment-list{grid-template-columns:1fr;max-height:190px}
+  .log-table-wrap{max-height:280px}
+}

@@ -244,6 +244,8 @@ class CameraPipeline:
         self.camera_source = str(settings_store.get().get("camera_source", "0"))
         self.camera_model = ""
         self.camera_resolution = ""
+        self.stream_width = int(settings_store.get().get("video_width", 1280))
+        self.stream_height = int(settings_store.get().get("video_height", 720))
         self.camera_max_fps = 0.0
         self.target_video_fps = float(settings_store.get().get("video_fps", 30))
         self.available_video_modes = []
@@ -459,18 +461,14 @@ class CameraPipeline:
         sensor_modes = self._probe_v4l2_modes(raw_source)
         output_width = int(values["video_width"])
         output_height = int(values["video_height"])
-        compatible_modes = [
-            mode for mode in sensor_modes
-            if int(mode["size"][0]) >= output_width and int(mode["size"][1]) >= output_height
-        ]
         selected_mode, selected_fps = select_sensor_mode(
-            compatible_modes or sensor_modes,
+            sensor_modes,
             output_width,
             output_height,
             requested_fps,
             auto=auto_fps,
         )
-        self.available_video_modes = compatible_modes or sensor_modes
+        self.available_video_modes = sensor_modes
         self.video_fps_options = sorted({
             round(float(mode["fps"]), 2)
             for mode in self.available_video_modes
@@ -512,11 +510,11 @@ class CameraPipeline:
             else f"OpenCV device {raw_source}"
         )
         reported_rate = float(capture.get(cv2.CAP_PROP_FPS) or 0)
-        compatible_rates = [
-            float(mode["fps"]) for mode in (compatible_modes or sensor_modes)
+        available_rates = [
+            float(mode["fps"]) for mode in sensor_modes
             if float(mode.get("fps", 0) or 0) > 0
         ]
-        self.camera_max_fps = max(compatible_rates, default=max(0.0, reported_rate))
+        self.camera_max_fps = max(available_rates, default=max(0.0, reported_rate))
         self.target_video_fps = (
             selected_fps if selected_mode
             else (reported_rate if auto_fps else requested_fps)
@@ -533,7 +531,9 @@ class CameraPipeline:
                 values, _ = self.settings_store.update(changes)
         if self.camera_max_fps <= 0 and self.target_video_fps > 0:
             self.camera_max_fps = self.target_video_fps
-        self.camera_resolution = f"{int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or selected_size[0])}x{int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or selected_size[1])}"
+        self.stream_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or selected_size[0])
+        self.stream_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or selected_size[1])
+        self.camera_resolution = f"{self.stream_width}x{self.stream_height}"
         self._threads = [
             threading.Thread(target=self._capture_loop, name="camera-capture-preview", daemon=True),
         ]
@@ -588,20 +588,17 @@ class CameraPipeline:
             sensor_modes = list(picam2.sensor_modes or [])
             output_width = int(values["video_width"])
             output_height = int(values["video_height"])
-            compatible_modes = [
+            self.available_video_modes = [
                 mode for mode in sensor_modes
-                if int(mode.get("size", (0, 0))[0]) >= output_width
-                and int(mode.get("size", (0, 0))[1]) >= output_height
-                and float(mode.get("fps", 0) or 0) > 0
+                if float(mode.get("fps", 0) or 0) > 0
             ]
             selected_mode, selected_fps = select_sensor_mode(
-                compatible_modes or sensor_modes,
+                sensor_modes,
                 output_width,
                 output_height,
                 requested_fps,
                 auto=auto_fps,
             )
-            self.available_video_modes = compatible_modes or sensor_modes
             self.video_fps_options = sorted({
                 round(float(mode["fps"]), 2)
                 for mode in self.available_video_modes
@@ -612,12 +609,19 @@ class CameraPipeline:
                     "output_size": tuple(selected_mode["size"]),
                     "bit_depth": int(selected_mode["bit_depth"]),
                 }
-            compatible_rates = [
+            available_rates = [
                 float(mode.get("fps", 0) or 0)
                 for mode in self.available_video_modes
             ]
-            self.camera_max_fps = max(compatible_rates, default=selected_fps)
+            self.camera_max_fps = max(available_rates, default=selected_fps)
             self.target_video_fps = selected_fps
+            self.stream_width, self.stream_height = output_width, output_height
+            if selected_mode:
+                sensor_width, sensor_height = (
+                    int(selected_mode["size"][0]), int(selected_mode["size"][1])
+                )
+                if sensor_width < output_width or sensor_height < output_height:
+                    self.stream_width, self.stream_height = sensor_width, sensor_height
             if self.camera_max_fps > 0:
                 max_setting = max(1, int(self.camera_max_fps))
                 changes = {}
@@ -631,7 +635,7 @@ class CameraPipeline:
             effective_fps = max(1.0, float(self.target_video_fps or requested_fps))
             frame_duration = max(1, int(round(1_000_000 / effective_fps)))
             config_options = {
-                "main": {"size": (output_width, output_height), "format": "YUV420"},
+                "main": {"size": (self.stream_width, self.stream_height), "format": "YUV420"},
                 "lores": {"size": (640, 360), "format": "YUV420"},
                 "controls": {"FrameDurationLimits": (frame_duration, frame_duration)},
                 "buffer_count": 8,
@@ -649,7 +653,7 @@ class CameraPipeline:
                     self.camera_model = f"Picamera2 camera {camera_num}"
             except Exception:
                 self.camera_model = f"Picamera2 camera {camera_num}"
-            self.camera_resolution = f"{output_width}x{output_height}"
+            self.camera_resolution = f"{self.stream_width}x{self.stream_height}"
 
             segment = None
             first_segment = None
@@ -920,7 +924,7 @@ class CameraPipeline:
         # useful, but refresh it independently at 15 FPS.
         preview_interval = 1.0 / 15.0
         values = self.settings_store.get()
-        main_width, main_height = int(values["video_width"]), int(values["video_height"])
+        main_width, main_height = self.stream_width, self.stream_height
         while not self._stop.is_set():
             try:
                 request = self.picam2.capture_request()
@@ -1368,6 +1372,15 @@ class CameraPipeline:
             "camera_resolution": self.camera_resolution,
             "camera_max_fps": round(self.camera_max_fps, 2),
             "video_fps_options": self.video_fps_options,
+            "video_modes": [
+                {
+                    "resolution": f"{int(mode.get('size', (0, 0))[0])}x{int(mode.get('size', (0, 0))[1])}",
+                    "fps": round(float(mode.get("fps", 0) or 0), 2),
+                    "fourcc": str(mode.get("fourcc", "")),
+                }
+                for mode in self.available_video_modes
+                if mode.get("size") and float(mode.get("fps", 0) or 0) > 0
+            ],
             "video_fps_auto": bool(values.get("video_fps_auto", True)),
             "target_video_fps": round(self.target_video_fps or values["video_fps"], 2),
             "recording_supported": self.camera_backend == "picamera2",

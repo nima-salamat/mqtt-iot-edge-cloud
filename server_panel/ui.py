@@ -17,6 +17,7 @@ from .repository import (
     get_logs,
     get_snapshot,
     get_video_preview,
+    get_video_segments,
 )
 
 
@@ -354,7 +355,7 @@ def _render_archive_cleanup() -> None:
         return
 
     alarms = get_alarms(limit=500)
-    videos = snapshot["latest_segments"]
+    videos = get_video_segments(limit=200)
     left, right = st.columns(2)
     with left:
         _section("پیش‌نمایش هشدار", "IMAGE EVIDENCE")
@@ -397,7 +398,7 @@ def _render_archive_cleanup() -> None:
             if preview and preview.get("video"):
                 st.video(preview["video"])
             elif preview:
-                st.warning("این قطعه برای پیش‌نمایش در پنل اپراتور بیش از ۴۸ مگابایت است.")
+                st.warning("این قطعه از سقف ۱۶۰ مگابایت پیش‌نمایش عبور کرده یا فایل آن خوانده نشد.")
         else:
             st.info("هنوز ویدئویی روی سرور ذخیره نشده است.")
 

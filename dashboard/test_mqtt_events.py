@@ -192,7 +192,10 @@ class DeviceMqttEventTests(TestCase):
         self.device.is_online = True
         self.device.last_seen = timezone.now()
         self.device.last_heartbeat = timezone.now()
-        self.device.current_state = {"mqtt_connected": True}
+        self.device.current_state = {
+            "mqtt_connected": True,
+            "mqtt_command_subscription_ready": True,
+        }
         self.device.save()
         self.assertTrue(self.send("status", {
             "device_id": self.device.device_id,
@@ -201,6 +204,7 @@ class DeviceMqttEventTests(TestCase):
         }))
         self.device.refresh_from_db()
         self.assertFalse(self.device.current_state["mqtt_connected"])
+        self.assertFalse(self.device.current_state["mqtt_command_subscription_ready"])
         self.assertTrue(self.device.is_online)
 
     def test_signed_command_ack_updates_command_and_recording_state(self):

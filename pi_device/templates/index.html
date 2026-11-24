@@ -114,7 +114,7 @@
         <div><span>اتصال زنده RTSPS</span><b id="rtsp-health">در حال بررسی</b></div>
         <div><span>مدل و منبع دوربین</span><b id="camera-source-status">در حال بررسی</b></div>
         <div><span>وضوح پیش‌نمایش</span><b id="camera-resolution-status">در حال بررسی</b></div>
-        <div><span>FPS قابل‌دریافت / اعلام‌شده</span><b id="camera-max-fps">در حال بررسی</b></div>
+        <div><span>حداکثر FPS در تمام modeهای سنسور</span><b id="camera-max-fps">در حال بررسی</b></div>
         <div><span>Heartbeat سرور</span><b id="heartbeat-status">در انتظار</b></div>
         <div class="tracking-status-item"><span>مدت رهگیری پیوسته</span><b id="tracking-duration">—</b><small id="tracking-duration-note">رهگیری فعالی ثبت نشده است</small></div>
         <div><span>تصاویر هشدار در صف</span><b id="pending-alarms">0</b></div>
@@ -231,7 +231,7 @@
             <datalist id="camera-fps-options"></datalist>
             <label>نرخ فریم در حالت دستی
               <input name="video_fps" type="number" min="1" max="1000" step="1" list="camera-fps-options" inputmode="numeric" required value="{{ settings.video_fps }}">
-              <small>حد بالای قابل انتخاب با توجه به قابلیت واقعی دوربین تعیین می‌شود؛ نرخ دریافتی هم جداگانه اندازه‌گیری می‌شود.</small>
+              <small>حالت‌های سنسور در وضوح‌های مختلف در پیشنهادها نمایش داده می‌شوند. اگر FPS بالاتر فقط در وضوح کوچک‌تر ممکن باشد، وضوح استریم پس از راه‌اندازی مجدد به همان mode تغییر می‌کند.</small>
             </label>
             <label>بیت‌ریت H.264 (بیت بر ثانیه)
               <input name="video_bitrate" type="number" min="500000" max="8000000" step="100000" inputmode="numeric" required value="{{ settings.video_bitrate }}">

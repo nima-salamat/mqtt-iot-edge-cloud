@@ -59,6 +59,21 @@ class MqttBridgePublishTests(unittest.TestCase):
         self.env_patcher.stop()
         self.temp_dir.cleanup()
 
+    def test_signing_key_refresh_restarts_network_loop_in_order(self):
+        from unittest.mock import call
+
+        self.bridge._started = True
+        self.bridge.client.reset_mock()
+
+        self.bridge._reconnect_for_will()
+
+        self.assertEqual(self.bridge.client.mock_calls, [
+            call.disconnect(),
+            call.loop_stop(),
+            call.connect_async("localhost", 1883, keepalive=45),
+            call.loop_start(),
+        ])
+
     def test_publish_requires_connected_broker(self):
         self.bridge.client.is_connected.return_value = False
 

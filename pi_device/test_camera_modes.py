@@ -54,6 +54,11 @@ class SensorModeSelectionTests(unittest.TestCase):
         self.assertIsNone(mode)
         self.assertEqual(fps, 30)
 
+    def test_unsupported_resolution_does_not_fall_back_to_a_smaller_mode(self):
+        mode, fps = select_sensor_mode(self.MODES, 3840, 2160, 30, auto=False)
+        self.assertIsNone(mode)
+        self.assertEqual(fps, 30)
+
     def test_parse_v4l2_discrete_formats_and_frame_rates(self):
         output = """
         [0]: 'MJPG' (Motion-JPEG, compressed)

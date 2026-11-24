@@ -13,6 +13,7 @@
   const deviceId = panel.dataset.deviceId;
   let busy = false;
   let canControl = false;
+  let connectivityRefreshInFlight = false;
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
 
   async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -35,6 +36,8 @@
   }
 
   async function refreshConnectivity() {
+    if (connectivityRefreshInFlight) return;
+    connectivityRefreshInFlight = true;
     try {
       const response = await fetchWithTimeout(
         '/api/dashboard/overview/', {cache: 'no-store'}, 6000
@@ -92,6 +95,8 @@
         button.disabled = true;
         status.textContent = 'وضعیت دوربین از سرور دریافت نشد؛ برای جلوگیری از ارسال فرمان روی وضعیت قدیمی، کنترل موقتاً غیرفعال شد.';
       }
+    } finally {
+      connectivityRefreshInFlight = false;
     }
   }
 

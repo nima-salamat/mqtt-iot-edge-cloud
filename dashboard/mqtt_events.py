@@ -305,6 +305,12 @@ def _apply_command_ack(device, payload, now):
 
 def process_mqtt_message(topic, raw_payload, qos=0):
     """Validate topic/device/HMAC, then update the appropriate authoritative state."""
+    if isinstance(raw_payload, bytes) and len(raw_payload) > 256 * 1024:
+        logger.warning("Ignoring oversized MQTT message on %s (%d bytes)", topic, len(raw_payload))
+        return False
+    if isinstance(raw_payload, str) and len(raw_payload.encode("utf-8")) > 256 * 1024:
+        logger.warning("Ignoring oversized MQTT text message on %s", topic)
+        return False
     device_id, event_type = _topic_device_and_event(topic)
     if not device_id:
         return False

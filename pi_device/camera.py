@@ -1522,6 +1522,7 @@ class CameraPipeline:
         self._current_segment = None
         self._current_marker = None
         self._local_recording_attached = False
+        self.recording_enabled = False
         self._publish_recording_state()
         with self._frames_lock:
             self.latest_jpeg = None

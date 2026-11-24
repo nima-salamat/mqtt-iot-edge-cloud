@@ -14,10 +14,10 @@ def select_sensor_mode(
 ) -> tuple[dict[str, Any] | None, float]:
     """Choose a sensor mode that meets the output size and requested cadence.
 
-    Auto mode selects the fastest compatible sensor readout mode while capping
-    the stream/encoder cadence at the requested FPS. Manual mode selects the
-    smallest mode that can sustain the requested FPS, or the fastest compatible
-    mode when the requested cadence is unsupported.
+    Auto mode preserves the requested output resolution and caps cadence to
+    its fastest compatible sensor mode. Manual mode first looks for a mode at
+    that resolution; when none can sustain the requested FPS, it can select a
+    lower-resolution sensor mode so the requested cadence is actually possible.
     """
     usable: list[tuple[dict[str, Any], int, int, float]] = []
     for raw in sensor_modes or []:
@@ -34,10 +34,11 @@ def select_sensor_mode(
     if not usable:
         return None, max(1.0, float(requested_fps or 30.0))
 
-    compatible = [
+    resolution_compatible = [
         item for item in usable
         if item[1] >= int(width) and item[2] >= int(height)
-    ] or usable
+    ]
+    compatible = resolution_compatible or usable
 
     target = max(1.0, float(requested_fps))
     if auto:
@@ -53,8 +54,10 @@ def select_sensor_mode(
         # but it must not silently raise the requested stream/encoder cadence.
         return selected[0], min(target, selected[3])
 
-    supporting = [item for item in compatible if item[3] >= target]
+    supporting = [item for item in resolution_compatible if item[3] >= target]
     if supporting:
+        # Prefer the smallest sensor readout that preserves the requested
+        # output resolution and can sustain the target cadence.
         selected = min(
             supporting,
             key=lambda item: (
@@ -64,6 +67,22 @@ def select_sensor_mode(
                     2 if item[0].get("fourcc") in {"MJPG", "H264", "AVC1"}
                     else 1
                 ),
+            ),
+        )
+        return selected[0], target
+
+    # The requested rate may only exist in a smaller sensor mode (for example
+    # VGA@120 while 720p is limited to 30). Pick the largest such mode to keep
+    # as much image detail as the requested FPS allows. The caller must use
+    # this selected mode's dimensions for its main video stream.
+    supporting_any = [item for item in usable if item[3] >= target]
+    if supporting_any:
+        selected = max(
+            supporting_any,
+            key=lambda item: (
+                item[1] * item[2],
+                item[3],
+                2 if item[0].get("fourcc") in {"MJPG", "H264", "AVC1"} else 1,
             ),
         )
         return selected[0], target

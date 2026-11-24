@@ -689,6 +689,51 @@ class CameraPipelineStructureTests(unittest.TestCase):
         self.assertTrue(camera.is_running())
         self.assertIsNone(camera.latest_jpeg)
 
+    def test_camera_stop_retains_live_capture_worker_and_blocks_restart(self):
+        module = self._load_camera_module()
+        camera = object.__new__(module.CameraPipeline)
+        worker = SimpleNamespace(
+            name="stuck-camera-capture",
+            join=MagicMock(),
+            is_alive=lambda: True,
+        )
+        camera._stop = threading.Event()
+        camera._threads = [worker]
+        camera.inference_pool = None
+        camera._inflight_frames = {}
+        camera._recording_lock = threading.RLock()
+        camera.live_output = None
+        camera._opencv_capture = None
+        camera.picam2 = None
+        camera.encoder = None
+        camera.local_output = None
+        camera._current_marker = None
+        camera._current_segment = None
+        camera._local_recording_attached = False
+        camera.recording_enabled = False
+        camera._tracking_seconds = 0.0
+        camera.inference_fps = 0.0
+        camera.inference_latency_ms = 0.0
+        camera.bridge = SimpleNamespace(
+            set_tracking=MagicMock(),
+            set_recording_supported=MagicMock(),
+            set_recording_enabled=MagicMock(),
+            model_loaded=False,
+        )
+        camera._publish_recording_state = lambda: None
+        camera._frames_lock = threading.RLock()
+        camera.latest_jpeg = None
+        camera.latest_frame_at = 0.0
+        camera._latest_bgr = None
+        camera._last_detections = []
+        camera._last_detection_at = 0.0
+
+        module.CameraPipeline.stop(camera)
+
+        worker.join.assert_called_once_with(timeout=14)
+        self.assertEqual(camera._threads, [worker])
+        self.assertTrue(camera.is_running())
+
     def test_rtsps_stop_timeout_is_reported_so_supervisor_can_retry(self):
         module = self._load_camera_module()
         output = object.__new__(module.ReconnectingRtspOutput)

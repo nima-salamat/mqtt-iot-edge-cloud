@@ -113,16 +113,26 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
 
     def _login_attempts_for(client_ip: str):
         now = time.monotonic()
-        attempts = login_failures.setdefault(client_ip, deque())
-        while attempts and now - attempts[0] > login_window_seconds:
-            attempts.popleft()
-        # Bound memory if untrusted clients rotate source addresses.
-        if len(login_failures) > 1024:
+        # Bound memory if untrusted clients rotate source addresses. Prune
+        # before returning the requested address's deque, otherwise removing
+        # that entry here could leave the caller appending to a detached deque.
+        if len(login_failures) >= 1024 and client_ip not in login_failures:
             for address, values in list(login_failures.items()):
                 while values and now - values[0] > login_window_seconds:
                     values.popleft()
                 if not values:
                     login_failures.pop(address, None)
+            if len(login_failures) >= 1024:
+                oldest_address = min(
+                    login_failures,
+                    key=lambda address: login_failures[address][0]
+                    if login_failures[address] else float("-inf"),
+                )
+                login_failures.pop(oldest_address, None)
+
+        attempts = login_failures.setdefault(client_ip, deque())
+        while attempts and now - attempts[0] > login_window_seconds:
+            attempts.popleft()
         return attempts
 
     def authenticated(view):

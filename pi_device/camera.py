@@ -1447,12 +1447,19 @@ class CameraPipeline:
                 self._pair_in_progress = False
 
     def _is_camera_ready(self):
+        if self.camera_backend == "opencv":
+            camera_open = bool(
+                self._opencv_capture is not None
+                and self._opencv_capture.isOpened()
+            )
+        else:
+            camera_open = self.picam2 is not None
         with self._frames_lock:
             return bool(
-                self.picam2 is not None
+                camera_open
                 and self.latest_jpeg is not None
                 and self.latest_frame_at
-                and time.time() - self.latest_frame_at < 2.5
+                and 0 <= time.time() - self.latest_frame_at < 2.5
             )
 
     def snapshot(self):

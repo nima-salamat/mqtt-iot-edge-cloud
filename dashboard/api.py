@@ -34,6 +34,17 @@ def _json_body(request):
         return {}
 
 
+def _strict_json_object(request):
+    """Parse a non-empty JSON object without silently turning malformed bodies into {}."""
+    if not request.body:
+        return None
+    try:
+        value = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _finite_number(value, minimum=0, maximum=1_000_000_000_000):
     try:
         number = float(value)
@@ -207,7 +218,9 @@ def disconnect_device(request):
 @device_required
 @require_POST
 def heartbeat(request):
-    payload = _json_body(request)
+    payload = _strict_json_object(request)
+    if payload is None:
+        return JsonResponse({"error": "invalid_json_object"}, status=400)
     device = request.iot_device
     now = timezone.now()
     try:
@@ -235,6 +248,13 @@ def heartbeat(request):
         pending_video_segments = int(videos_value)
     except (TypeError, ValueError, OverflowError):
         return JsonResponse({"error": "invalid_device_metrics"}, status=400)
+    for field in (
+        "model_loaded", "mqtt_connected", "rtsp_connected",
+        "camera_ready", "tracking_active", "recording_enabled",
+    ):
+        if field in payload and type(payload[field]) is not bool:
+            return JsonResponse({"error": "invalid_device_metrics"}, status=400)
+
     device.is_online = True
     device.last_seen = device.last_heartbeat = now
     device.reported_video_fps = video_fps
@@ -395,7 +415,9 @@ def upload_segment(request):
 @device_required
 @require_POST
 def device_log(request):
-    payload = _json_body(request)
+    payload = _strict_json_object(request)
+    if payload is None:
+        return JsonResponse({"error": "invalid_json_object"}, status=400)
     event_id = str(payload.get("event_id", "")).strip()[:64]
     defaults = {
         "level": payload.get("level", "info") if payload.get("level") in {"debug", "info", "warning", "error"} else "info",

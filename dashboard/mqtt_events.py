@@ -164,6 +164,9 @@ def _apply_status(device, payload, now):
 
     state = device.current_state if isinstance(device.current_state, dict) else {}
     state["mqtt_connected"] = status == "online"
+    # A transport status event is not an MQTT SUBACK. Require fresh telemetry
+    # from the current connection before enabling remote command controls.
+    state["mqtt_command_subscription_ready"] = False
     state["mqtt_status"] = status
     state["last_mqtt_status_at"] = now.isoformat()
     state["connection_state"] = "online" if status == "online" else "mqtt-disconnected"

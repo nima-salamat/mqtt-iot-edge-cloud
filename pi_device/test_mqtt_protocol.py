@@ -158,6 +158,39 @@ class MqttBridgePublishTests(unittest.TestCase):
         self.assertGreaterEqual(reported_at, before + __import__("datetime").timedelta(seconds=299))
         self.assertLessEqual(reported_at, after + __import__("datetime").timedelta(seconds=301))
 
+    def test_rejected_command_ack_is_dispatched_off_the_mqtt_callback_thread(self):
+        import json
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from pi_device.mqtt_protocol import sign_payload
+
+        now = self.bridge._server_now()
+        command_id = "d" * 32
+        payload = sign_payload({
+            "device_id": self.bridge.device_id,
+            "command_id": command_id,
+            "command_type": "recording.set",
+            "payload": {"enabled": False},
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=3)).isoformat(),
+        }, "a" * 64)
+        message = SimpleNamespace(
+            topic=self.bridge.command_topic,
+            payload=json.dumps(payload).encode("utf-8"),
+        )
+
+        with patch("pi_device.bridge.threading.Thread") as thread_factory:
+            self.bridge._on_message(self.bridge.client, None, message)
+
+        thread_factory.assert_called_once()
+        args = thread_factory.call_args.kwargs
+        self.assertEqual(args["target"], self.bridge._send_command_ack)
+        self.assertEqual(args["args"], (
+            command_id, "failed", {"error": "invalid_command_expiry"}
+        ))
+        thread_factory.return_value.start.assert_called_once()
+
     def test_publish_requires_connected_broker(self):
         self.bridge.client.is_connected.return_value = False
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -187,6 +188,58 @@ class DurableUploader:
             raise ValueError(f"Invalid or unsafe local alarm metadata: {meta_path.name}")
         return self.alarm_dir / f"{alert_id}.jpg"
 
+    def _validate_alarm_metadata(self, meta_path: Path, payload: dict) -> None:
+        """Reject malformed detections before they can retry forever against Django."""
+        alert_id = meta_path.stem
+        if (
+            payload.get("alert_id") != alert_id
+            or payload.get("device_id") != self.device_id
+            or payload.get("event") != "person_detected"
+        ):
+            raise ValueError("Alarm identity or event type is invalid")
+
+        def finite_number(value, minimum, maximum):
+            if isinstance(value, bool):
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            if not math.isfinite(number) or number < minimum or number > maximum:
+                return None
+            return number
+
+        confidence = finite_number(payload.get("confidence"), 0, 1)
+        if confidence is None:
+            raise ValueError("Alarm confidence must be finite and between 0 and 1")
+
+        detected_at = payload.get("detected_at")
+        if not isinstance(detected_at, str):
+            raise ValueError("Alarm detected_at timestamp is missing")
+        try:
+            datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Alarm detected_at timestamp is invalid") from exc
+
+        boxes = payload.get("bbox")
+        if not isinstance(boxes, list) or len(boxes) > 100:
+            raise ValueError("Alarm bounding boxes must be a list with at most 100 entries")
+        for index, box in enumerate(boxes):
+            if not isinstance(box, dict):
+                raise ValueError(f"Alarm bounding box {index} is not an object")
+            values = {
+                key: finite_number(box.get(key), 0, 1)
+                for key in ("x1", "y1", "x2", "y2")
+            }
+            box_confidence = finite_number(box.get("confidence", confidence), 0, 1)
+            if (
+                any(value is None for value in values.values())
+                or box_confidence is None
+                or values["x2"] <= values["x1"]
+                or values["y2"] <= values["y1"]
+            ):
+                raise ValueError(f"Alarm bounding box {index} contains invalid coordinates")
+
     def _quarantine_queue_file(self, path: Path, queue_name: str, reason: Exception) -> bool:
         """Move an unreadable queue item (and alarm companions) out of the retry loop."""
         if path.is_symlink() or not path.is_file():
@@ -253,6 +306,7 @@ class DurableUploader:
         if queue_name == "alarms":
             try:
                 self._alarm_snapshot_path(path, payload)
+                self._validate_alarm_metadata(path, payload)
             except ValueError as exc:
                 self._quarantine_queue_file(path, queue_name, exc)
                 return None

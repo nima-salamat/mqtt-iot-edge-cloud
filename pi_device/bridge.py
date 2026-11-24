@@ -378,7 +378,7 @@ class RaspberryPiMqttBridge:
             {
                 "device_id": self.device_id,
                 "status": status,
-                "reported_at": utc_now(),
+                "reported_at": self._server_now().isoformat(),
                 "source": "device",
             },
             retain=True,
@@ -388,7 +388,10 @@ class RaspberryPiMqttBridge:
     def publish_telemetry(self, payload):
         message = dict(payload or {})
         message["device_id"] = self.device_id
-        message.setdefault("reported_at", utc_now())
+        # Use the calibrated server clock rather than the Pi RTC. This lets
+        # Django apply a tight freshness window and prevents old broker-queued
+        # telemetry from reviving a disconnected device.
+        message["reported_at"] = self._server_now().isoformat()
         return self._publish_signed(self.telemetry_topic, message, retain=False)
 
     def publish_alarm(self, payload):

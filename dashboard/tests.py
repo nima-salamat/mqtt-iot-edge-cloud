@@ -956,6 +956,20 @@ class DashboardCleanupTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertTrue(Device.objects.filter(pk=self.other_device.pk).exists())
 
+    @patch("dashboard.views.cleanup_iot_data", side_effect=OSError("storage unavailable"))
+    def test_cleanup_reports_storage_outage_as_retryable_service_error(self, cleanup):
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            reverse("dashboard:cleanup-data"),
+            data=json.dumps({"kind": "videos", "device_id": self.device.device_id}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("تلاش دوباره", response.json()["error"])
+        self.assertTrue(cleanup.called)
+
     def test_cleanup_rejects_unknown_data_kind(self):
         self.client.force_login(self.owner)
         response = self.client.post(

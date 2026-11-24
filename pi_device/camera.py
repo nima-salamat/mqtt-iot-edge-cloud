@@ -539,6 +539,7 @@ class CameraPipeline:
         self.recording_enabled = False
         self._local_recording_attached = False
         self.bridge.set_recording_enabled(False)
+        self.bridge.set_recording_supported(False)
         self.camera_backend = "opencv"
         self.camera_source = raw_source
         self.camera_model = (
@@ -789,6 +790,7 @@ class CameraPipeline:
             self.local_output = local_output
             self.live_output = live_output
             self.camera_backend = "picamera2"
+            self.bridge.set_recording_supported(True)
             self._opencv_capture = None
             self._current_segment = segment
             self._current_marker = marker
@@ -1598,6 +1600,7 @@ class CameraPipeline:
         self._current_marker = None
         self._local_recording_attached = False
         self.recording_enabled = False
+        self.bridge.set_recording_supported(False)
         self._publish_recording_state()
         with self._frames_lock:
             self.latest_jpeg = None

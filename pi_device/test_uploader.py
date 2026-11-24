@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from pi_device.uploader import DurableUploader
 
@@ -513,7 +513,7 @@ class QueueManagementTests(unittest.TestCase):
             "bbox": [],
         }), encoding="utf-8")
         snapshot.write_bytes(b"jpeg-data")
-        self.uploader._session.post = __import__("unittest.mock").mock.Mock()
+        self.uploader._session.post = Mock()
 
         self.uploader._upload_alarms()
 

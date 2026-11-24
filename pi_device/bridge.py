@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -54,6 +55,8 @@ class RaspberryPiMqttBridge:
         self._signing_key = ""
         self._server_time_offset_seconds = None
         self._command_handler = None
+        self._command_inflight = set()
+        self._command_results = OrderedDict()
         self._started = False
         self._restart_after_pair = False
         self._command_subscription_ready = False
@@ -438,6 +441,19 @@ class RaspberryPiMqttBridge:
             command_id = str(payload.get("command_id", ""))
             if not re.fullmatch(r"[a-fA-F0-9]{32}", command_id):
                 return
+
+            # QoS 1 may redeliver the same PUBLISH. Do not start a second
+            # recording worker for an ID already executing or completed.
+            with self._lock:
+                cached_result = self._command_results.get(command_id)
+                command_inflight = command_id in self._command_inflight
+            if cached_result is not None:
+                self._send_command_ack_async(command_id, cached_result[0], cached_result[1])
+                return
+            if command_inflight:
+                log.info("Ignoring duplicate in-flight MQTT command %s", command_id)
+                return
+
             issued_at = datetime.fromisoformat(
                 str(payload.get("issued_at", "")).replace("Z", "+00:00")
             )
@@ -471,26 +487,52 @@ class RaspberryPiMqttBridge:
                 return
             command_type = decrypted["command_type"]
             command_payload = decrypted["payload"]
-            threading.Thread(
-                target=self._execute_command,
-                args=(command_id, command_type, command_payload),
-                name=f"mqtt-command-{command_id[:8]}",
-                daemon=True,
-            ).start()
+            with self._lock:
+                cached_result = self._command_results.get(command_id)
+                if cached_result is not None:
+                    self._send_command_ack_async(
+                        command_id, cached_result[0], cached_result[1]
+                    )
+                    return
+                if command_id in self._command_inflight:
+                    return
+                self._command_inflight.add(command_id)
+            try:
+                threading.Thread(
+                    target=self._execute_command,
+                    args=(command_id, command_type, command_payload),
+                    name=f"mqtt-command-{command_id[:8]}",
+                    daemon=True,
+                ).start()
+            except Exception:
+                with self._lock:
+                    self._command_inflight.discard(command_id)
+                raise
         except Exception:
             log.exception("Could not parse or dispatch MQTT command")
 
     def _execute_command(self, command_id, command_type, payload):
+        status = "applied"
         try:
             if not callable(self._command_handler):
                 raise RuntimeError("No remote command handler is available.")
             result = self._command_handler(command_type, payload)
             if not isinstance(result, dict):
                 result = {"result": str(result or "")[:200]}
-            self._send_command_ack(command_id, "applied", result)
         except Exception as exc:
             log.exception("Remote MQTT command %s failed", command_id)
-            self._send_command_ack(command_id, "failed", {"error": str(exc)[:300]})
+            status = "failed"
+            result = {"error": str(exc)[:300]}
+
+        # Cache the terminal result before publishing the ACK. A broker
+        # redelivery can then replay this ACK without repeating the side effect.
+        with self._lock:
+            self._command_inflight.discard(command_id)
+            self._command_results[command_id] = (status, result)
+            self._command_results.move_to_end(command_id)
+            while len(self._command_results) > 256:
+                self._command_results.popitem(last=False)
+        self._send_command_ack(command_id, status, result)
 
     def _send_command_ack_async(self, command_id, status, result):
         """Publish a rejection outside Paho's network callback thread."""

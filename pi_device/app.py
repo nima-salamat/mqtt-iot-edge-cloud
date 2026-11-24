@@ -383,6 +383,36 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             "upload_queue_max_gb", "local_alarm_retention_days", "local_log_retention_days",
         }
         clean = {key: value for key, value in payload.items() if key in allowed}
+
+        # The active camera mode list is authoritative. Reject an unsupported
+        # resolution before persisting it, unless the same request changes
+        # camera backend/source (those capabilities are only known after restart).
+        source_changed = "camera_backend" in clean or "camera_source" in clean
+        if not source_changed and camera.available_video_modes and (
+            "video_width" in clean or "video_height" in clean
+        ):
+            current = settings_store.get()
+            width = int(clean.get("video_width", current["video_width"]))
+            height = int(clean.get("video_height", current["video_height"]))
+            compatible_modes = [
+                mode for mode in camera.available_video_modes
+                if int(mode.get("size", (0, 0))[0]) >= width
+                and int(mode.get("size", (0, 0))[1]) >= height
+                and float(mode.get("fps", 0) or 0) > 0
+            ]
+            if not compatible_modes:
+                resolutions = sorted({
+                    f'{int(mode["size"][0])}x{int(mode["size"][1])}'
+                    for mode in camera.available_video_modes
+                    if mode.get("size")
+                })
+                return jsonify({
+                    "error": (
+                        f"وضوح {width}×{height} توسط دوربین فعال پشتیبانی نمی‌شود. "
+                        "یکی از وضوح‌های زیر را انتخاب کن: " + "، ".join(resolutions)
+                    )
+                }), 400
+
         values, restart_required = settings_store.update(clean)
         return jsonify({
             "status": "saved",

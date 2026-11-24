@@ -324,22 +324,7 @@ def _render_devices() -> None:
             for row in segments
         ])
         st.dataframe(frame, width="stretch", hide_index=True, height=300)
-        segment_choices = [row for row in segments if row.get("id")]
-        if segment_choices:
-            selected_segment_id = st.selectbox(
-                "انتخاب ویدئو برای پخش",
-                [row["id"] for row in segment_choices],
-                format_func=lambda value: next(
-                    f'{_fmt_time(item["started_at"])} · {item["device_name"]} · {item["duration_seconds"]}s'
-                    for item in segment_choices if item["id"] == value
-                ),
-                key="device_video_preview",
-            )
-            preview = get_video_preview(selected_segment_id)
-            if preview and preview.get("video"):
-                st.video(preview["video"])
-            elif preview and preview.get("size_bytes", 0) > 48 * 1024 * 1024:
-                st.warning("این ویدئو از ۴۸ مگابایت بزرگ‌تر است؛ برای پخش آن از آرشیو صفحه دستگاه در Django استفاده کن.")
+        st.caption("برای پیش‌نمایش و پخش بدون توقف آرشیو، از بخش «آرشیو و پاک‌سازی» استفاده کن.")
     else:
         st.caption("هنوز ویدئویی از دستگاه‌ها روی سرور دریافت نشده است.")
 
@@ -571,7 +556,12 @@ def render_application() -> None:
             st.session_state.pop("panel_username", None)
             st.rerun()
 
-    _render_live_page(page)
+    if page == "آرشیو و پاک‌سازی":
+        # Do not put a video player inside the 10-second live fragment: a
+        # periodic rerun would keep reloading the selected video and interrupt playback.
+        _render_archive_cleanup()
+    else:
+        _render_live_page(page)
 
 
 @st.fragment(run_every="10s")
@@ -586,8 +576,6 @@ def _render_live_page(page: str) -> None:
         _render_alarms()
     elif page == "دستگاه‌ها و سلامت":
         _render_devices()
-    elif page == "آرشیو و پاک‌سازی":
-        _render_archive_cleanup()
     elif page == "لاگ‌های سیستم":
         _render_logs()
     else:

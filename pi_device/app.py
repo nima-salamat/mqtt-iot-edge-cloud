@@ -60,13 +60,47 @@ def load_credentials() -> dict:
         return {}
 
 
+def _load_local_flask_secret() -> str:
+    """Load a strong configured key or persist a random private key for Flask sessions."""
+    configured = os.getenv("FLASK_SECRET_KEY", "").strip()
+    if configured and not configured.startswith("REPLACE_"):
+        if len(configured) < 32:
+            raise RuntimeError("FLASK_SECRET_KEY must contain at least 32 characters.")
+        return configured
+
+    data_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot")).expanduser()
+    secret_path = Path(
+        os.getenv("LOCAL_WEB_SECRET_PATH", str(data_dir / "local-web-secret"))
+    ).expanduser()
+    if secret_path.is_symlink():
+        raise RuntimeError("Refusing to use a symlink as the local Flask session secret.")
+    try:
+        secret = ""
+        if secret_path.exists():
+            if not secret_path.is_file():
+                raise RuntimeError("The local Flask session secret path is not a regular file.")
+            secret = secret_path.read_text(encoding="utf-8").strip()
+        if len(secret) < 32:
+            secret = secrets.token_urlsafe(48)
+            atomic_write_text(secret_path, secret + "\n", mode=0o600)
+        # Existing secrets created by an earlier release are tightened too.
+        os.chmod(secret_path, 0o600)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not securely load the local Flask session secret at {secret_path}"
+        ) from exc
+    return secret
+
+
 def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
     flask_app = Flask(__name__, template_folder="templates", static_folder="static")
-    flask_app.secret_key = os.getenv("FLASK_SECRET_KEY", "")
+    # Never run Flask with an empty/default signing key: that makes client-side
+    # session cookies forgeable and bypasses the local portal login.
+    flask_app.secret_key = _load_local_flask_secret()
     flask_app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Strict",
-        SESSION_COOKIE_SECURE=False,
+        SESSION_COOKIE_SECURE=os.getenv("LOCAL_WEB_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes"},
         MAX_CONTENT_LENGTH=1024 * 1024,
     )
     local_password = os.getenv("LOCAL_WEB_PASSWORD", "")

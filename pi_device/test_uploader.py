@@ -160,6 +160,8 @@ class QueueManagementTests(unittest.TestCase):
 
         path = self.uploader.video_dir / "1234567890000-failed.mp4"
         path.write_bytes(b"recorded-video")
+        import time
+        os.utime(path, (time.time() - 3, time.time() - 3))
         self.uploader.settings_store = SimpleNamespace(
             get=lambda: {"recording_enabled": True, "segment_seconds": 5}
         )

@@ -888,20 +888,23 @@ class CameraPipeline:
         qr_detector = cv2.QRCodeDetector()
         if _zbar_decode is None:
             log.warning("pyzbar/libzbar is unavailable; QR scanning will fall back to OpenCV")
-        preview_interval = 1.0 / 20.0
+        # A full-resolution BGR conversion plus JPEG encoding on every source
+        # frame starves the capture loop on a Pi 4. Keep the high-res preview
+        # useful, but refresh it independently at 15 FPS.
+        preview_interval = 1.0 / 15.0
         values = self.settings_store.get()
         main_width, main_height = int(values["video_width"]), int(values["video_height"])
         while not self._stop.is_set():
             try:
                 request = self.picam2.capture_request()
                 try:
-                    main_yuv = request.make_array("main")
                     lores_yuv = request.make_array("lores")
+                    now = time.monotonic()
+                    update_preview = now - self._last_preview_at >= preview_interval
+                    main_yuv = request.make_array("main") if update_preview else None
                 finally:
                     request.release()
-                preview_source = self._i420_to_bgr(main_yuv, main_width, main_height, "main")
                 frame = self._i420_to_bgr(lores_yuv, 640, 360, "lores")
-                now = time.monotonic()
                 self.camera_error = ""
 
                 if self._pair_requested_until and now >= self._pair_requested_until:
@@ -921,28 +924,33 @@ class CameraPipeline:
                     detections = list(self._last_detections)
                     detection_age = now - self._last_detection_at if self._last_detection_at else 999.0
 
-                preview = preview_source.copy()
-                if detections and detection_age < 1.0:
-                    sx, sy = preview.shape[1] / 640.0, preview.shape[0] / 360.0
-                    scaled = []
-                    for item in detections:
-                        mapped = dict(item)
-                        x1, y1, x2, y2 = item["bbox"]
-                        mapped["bbox"] = [
-                            int(round(x1 * sx)), int(round(y1 * sy)),
-                            int(round(x2 * sx)), int(round(y2 * sy)),
-                        ]
-                        scaled.append(mapped)
-                    self._draw_boxes(preview, scaled, self._tracking_seconds)
+                if update_preview:
+                    # The main stream is only read/converted when a new MJPEG
+                    # preview frame is due; H.264 recording/live publishing is
+                    # driven separately by the camera encoder at target FPS.
+                    preview = self._i420_to_bgr(main_yuv, main_width, main_height, "main")
+                    if detections and detection_age < 1.0:
+                        sx, sy = preview.shape[1] / 640.0, preview.shape[0] / 360.0
+                        scaled = []
+                        for item in detections:
+                            mapped = dict(item)
+                            x1, y1, x2, y2 = item["bbox"]
+                            mapped["bbox"] = [
+                                int(round(x1 * sx)), int(round(y1 * sy)),
+                                int(round(x2 * sx)), int(round(y2 * sy)),
+                            ]
+                            scaled.append(mapped)
+                        self._draw_boxes(preview, scaled, self._tracking_seconds)
 
-                if now - self._last_preview_at >= preview_interval:
-                    ok, encoded = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                    ok, encoded = cv2.imencode(
+                        ".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 84]
+                    )
                     with self._frames_lock:
                         self.latest_jpeg = encoded.tobytes() if ok else None
                         self.latest_frame_at = time.time()
                     self._last_preview_at = now
 
-                self.camera_resolution = f"{preview.shape[1]}x{preview.shape[0]}"
+                self.camera_resolution = f"{main_width}x{main_height}"
                 self._frame_count += 1
                 if now - self._fps_started >= 2.0:
                     elapsed = now - self._fps_started
@@ -1198,15 +1206,6 @@ class CameraPipeline:
             if tracking_seconds > 0:
                 label += f" · {tracking_seconds:.1f}s"
             cv2.putText(frame, label,
-                        (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.48, (40, 220, 120), 1, cv2.LINE_AA)
-
-    @staticmethod
-    def _draw_boxes(frame, detections):
-        for item in detections:
-            x1, y1, x2, y2 = item["bbox"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 220, 120), 2)
-            cv2.putText(frame, f"PERSON {item['confidence']:.2f}",
                         (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX,
                         0.48, (40, 220, 120), 1, cv2.LINE_AA)
 

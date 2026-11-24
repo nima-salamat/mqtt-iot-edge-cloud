@@ -318,6 +318,13 @@
           : (seconds>0?'آخرین رهگیری · '+seconds.toLocaleString('fa-IR',{maximumFractionDigits:1})+' ثانیه':'—');
       }
       const badge=document.getElementById('device-connection-state');
+      if(badge && device.is_paired){
+        const online=!!device.is_online;
+        badge.classList.toggle('online',online);
+        badge.classList.toggle('offline',!online);
+        const dot=document.createElement('i');
+        badge.replaceChildren(dot,document.createTextNode(online?'آنلاین':'آفلاین'));
+      }
       if(!device.is_paired){
         if(peer || sessionUrl)await stopStream();
         start.disabled=true;

@@ -211,12 +211,29 @@ def heartbeat(request):
     device = request.iot_device
     now = timezone.now()
     try:
-        video_fps = max(0.0, min(120.0, float(payload.get("video_fps") or 0)))
-        inference_fps = max(0.0, min(60.0, float(payload.get("inference_fps") or 0)))
-        pending_alerts = max(0, int(payload.get("pending_alerts") or 0))
-        pending_video_segments = max(0, int(payload.get("pending_video_segments") or 0))
-        tracking_seconds = max(0.0, min(86400.0, float(payload.get("tracking_seconds") or 0)))
-    except (TypeError, ValueError):
+        raw_metrics = {
+            "video_fps": payload.get("video_fps", 0) or 0,
+            "inference_fps": payload.get("inference_fps", 0) or 0,
+            "pending_alerts": payload.get("pending_alerts", 0) or 0,
+            "pending_video_segments": payload.get("pending_video_segments", 0) or 0,
+            "tracking_seconds": payload.get("tracking_seconds", 0) or 0,
+        }
+        if any(isinstance(value, bool) for value in raw_metrics.values()):
+            raise ValueError("boolean device metric")
+        video_fps = _finite_number(raw_metrics["video_fps"], 0, 120)
+        inference_fps = _finite_number(raw_metrics["inference_fps"], 0, 60)
+        alerts_value = _finite_number(raw_metrics["pending_alerts"], 0, 1_000_000)
+        videos_value = _finite_number(raw_metrics["pending_video_segments"], 0, 1_000_000)
+        tracking_seconds = _finite_number(raw_metrics["tracking_seconds"], 0, 86400)
+        if any(value is None for value in (
+            video_fps, inference_fps, alerts_value, videos_value, tracking_seconds
+        )):
+            raise ValueError("non-finite or out-of-range device metric")
+        if not alerts_value.is_integer() or not videos_value.is_integer():
+            raise ValueError("queue counters must be integers")
+        pending_alerts = int(alerts_value)
+        pending_video_segments = int(videos_value)
+    except (TypeError, ValueError, OverflowError):
         return JsonResponse({"error": "invalid_device_metrics"}, status=400)
     device.is_online = True
     device.last_seen = device.last_heartbeat = now

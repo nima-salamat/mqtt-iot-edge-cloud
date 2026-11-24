@@ -24,7 +24,7 @@ jobs:
       - name: Compile Python modules
         run: python -m compileall -q dashboard iotlab server_panel pi_device streamlit_app.py manage.py
       - name: Test Raspberry Pi queues, camera settings and adaptive inference
-        run: python -m unittest pi_device.test_uploader pi_device.test_settings_store pi_device.test_inference_pool pi_device.test_system_stats pi_device.test_camera_modes pi_device.test_camera_module -v
+        run: python -m unittest pi_device.test_uploader pi_device.test_mqtt_protocol pi_device.test_settings_store pi_device.test_inference_pool pi_device.test_system_stats pi_device.test_camera_modes pi_device.test_camera_module -v
       - name: Validate Raspberry Pi browser script
         run: node --check pi_device/static/app.js
       - name: Validate dashboard browser scripts
@@ -32,6 +32,7 @@ jobs:
           node --check dashboard/static/dashboard/live_alerts.js
           node --check dashboard/static/dashboard/cleanup.js
           node --check dashboard/static/dashboard/video_history.js
+          node --check dashboard/static/dashboard/device_commands.js
       - name: Validate deployment scripts
         run: |
           bash -n scripts/load_compose_env.sh

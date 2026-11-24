@@ -1,9 +1,18 @@
-# Camera MQTT credentials may publish alarm notifications only.
-# Device snapshots, heartbeat, logs and MP4 segments use per-device HTTPS auth.
+# Edge devices publish signed events. The shared broker username currently grants
+# wildcard topic-level access; per-device HMAC authenticates each event but does
+# not hide command contents from another connected camera.
 user camera-edge
 topic write iotlab/devices/+/alarms
+topic write iotlab/devices/+/telemetry
+topic write iotlab/devices/+/status
+topic read iotlab/devices/+/commands
+topic write iotlab/devices/+/command-acks
 
-# Django listener and operator panel can read notifications and broker metrics.
+# Django consumes signed device events and publishes signed remote commands.
 user django-server
 topic read iotlab/devices/+/alarms
+topic read iotlab/devices/+/telemetry
+topic read iotlab/devices/+/status
+topic write iotlab/devices/+/commands
+topic read iotlab/devices/+/command-acks
 topic read $SYS/#

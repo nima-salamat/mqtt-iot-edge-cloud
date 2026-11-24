@@ -1,22 +1,31 @@
-"""MQTT alarm publisher and local durable event logger."""
+"""Authenticated MQTT event and remote-command bridge for a Raspberry Pi."""
 from __future__ import annotations
+
 import json
 import logging
 import os
+import re
 import threading
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
+from .mqtt_protocol import sign_payload, verify_payload
+
 log = logging.getLogger(__name__)
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
+
 class RaspberryPiMqttBridge:
-    """MQTT carries alarm notifications; authoritative data travels over device-authenticated HTTPS."""
+    """MQTT transports small, signed events and commands; media remains off MQTT."""
+
     def __init__(self, device_id):
         self.device_id = device_id
         self.host = os.getenv("MQTT_HOST", "server.echonode.website")
@@ -38,13 +47,22 @@ class RaspberryPiMqttBridge:
         self.tracking_active = False
         self.tracking_seconds = 0.0
         self._lock = threading.RLock()
+        self._signing_key = ""
+        self._command_handler = None
+        self._started = False
         self.topic_root = f"{self.prefix}/devices/{device_id}"
         self.alarm_topic = f"{self.topic_root}/alarms"
+        self.telemetry_topic = f"{self.topic_root}/telemetry"
+        self.status_topic = f"{self.topic_root}/status"
+        self.command_topic = f"{self.topic_root}/commands"
+        self.command_ack_topic = f"{self.topic_root}/command-acks"
         self.log_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot")) / "logs"
         self.log_dir.mkdir(parents=True, exist_ok=True)
+
         self.client = mqtt.Client(
             callback_api_version=CallbackAPIVersion.VERSION2,
-            client_id=f"alarm-{device_id}",
+            client_id=f"camera-{device_id}",
+            clean_session=False,
             protocol=mqtt.MQTTv311,
             transport="websockets",
         )
@@ -56,52 +74,133 @@ class RaspberryPiMqttBridge:
             self.client.username_pw_set(self.username, self.password)
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
+
+    def set_signing_key(self, signing_key):
+        signing_key = str(signing_key or "")
+        if signing_key and not re.fullmatch(r"[a-fA-F0-9]{64}", signing_key):
+            log.error("Refusing an invalid per-device MQTT signing key")
+            return False
+        with self._lock:
+            changed = signing_key != self._signing_key
+            self._signing_key = signing_key.lower()
+            connected = self.connected
+        if changed and self._signing_key:
+            self._configure_will()
+            # The Will is transmitted as part of CONNECT. Reconnect once after
+            # key bootstrap so an already-paired Pi also receives a signed LWT.
+            if connected and self._started:
+                threading.Thread(
+                    target=self._reconnect_for_will,
+                    name="mqtt-will-refresh",
+                    daemon=True,
+                ).start()
+        return True
+
+    def _signed(self, payload):
+        with self._lock:
+            key = self._signing_key
+        if not key:
+            return None
+        try:
+            return sign_payload(payload, key)
+        except (TypeError, ValueError):
+            log.exception("Could not sign MQTT message")
+            return None
+
+    def _configure_will(self):
+        payload = self._signed({
+            "device_id": self.device_id,
+            "status": "offline",
+            "source": "last-will",
+        })
+        if payload is None:
+            return
+        try:
+            self.client.will_set(
+                self.status_topic,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                qos=1,
+                retain=True,
+            )
+        except Exception:
+            log.exception("Could not configure the MQTT Last Will")
+
+    def set_command_handler(self, handler):
+        self._command_handler = handler
 
     def start(self):
         if not self.password:
-            self.last_error = "MQTT_PASSWORD is empty; MQTT alarm notifications are disabled."
+            self.last_error = "MQTT_PASSWORD is empty; MQTT event delivery is disabled."
             log.error(self.last_error)
             return
+        self._configure_will()
+        self._started = True
         self.client.connect_async(self.host, self.port, keepalive=45)
         self.client.loop_start()
+
+    def _reconnect_for_will(self):
+        try:
+            self.client.disconnect()
+            time.sleep(0.25)
+            self.client.reconnect()
+        except Exception:
+            log.exception("Could not reconnect MQTT after signing-key bootstrap")
 
     def stop(self):
         try:
             if self.client.is_connected():
+                self._publish_status("offline")
                 self.client.disconnect()
         finally:
             self.client.loop_stop()
+            self._started = False
+            with self._lock:
+                self.connected = False
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         with self._lock:
             self.connected = not reason_code.is_failure
             self.last_error = "" if self.connected else f"Broker rejected connection: {reason_code}"
-        if self.connected:
-            log.info("Connected to MQTT alarm channel")
-        else:
+            has_key = bool(self._signing_key)
+        if not self.connected:
             log.error(self.last_error)
+            return
+        log.info("Connected to authenticated MQTT device-event channel")
+        if has_key:
+            try:
+                client.subscribe(self.command_topic, qos=1)
+                self._publish_status("online", wait_for_ack=False)
+            except Exception:
+                log.exception("Could not initialize MQTT command subscription/status")
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties):
         with self._lock:
             self.connected = False
             self.last_error = f"MQTT disconnected: {reason_code}"
-        log.warning("MQTT disconnected; Paho automatic retry remains enabled: %s", reason_code)
+        log.warning("MQTT disconnected; automatic reconnect remains enabled: %s", reason_code)
 
-    def publish_alarm(self, payload):
+    def _publish_signed(self, topic, payload, *, retain=False, timeout=5, wait_for_ack=True):
         if not self.client.is_connected():
+            return False
+        signed = self._signed(payload)
+        if signed is None:
             return False
         try:
             info = self.client.publish(
-                self.alarm_topic,
-                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                topic,
+                json.dumps(signed, ensure_ascii=False, separators=(",", ":")),
                 qos=1,
-                retain=False,
+                retain=retain,
             )
             if info.rc != mqtt.MQTT_ERR_SUCCESS:
                 return False
-            info.wait_for_publish(timeout=5)
-            if not info.is_published():
-                return False
+            # Do not block Paho's network thread from inside on_connect: it
+            # must keep receiving packets to process the PUBACK we would wait for.
+            if wait_for_ack:
+                info.wait_for_publish(timeout=timeout)
+                if not info.is_published():
+                    return False
             with self._lock:
                 self.last_publish_at = utc_now()
                 self.last_error = ""
@@ -109,11 +208,105 @@ class RaspberryPiMqttBridge:
         except Exception as exc:
             with self._lock:
                 self.last_error = str(exc)
-            log.warning("MQTT alarm publish failed: %s", exc)
+            log.warning("MQTT publish failed on %s: %s", topic, exc)
             return False
 
+    def _publish_status(self, status, *, wait_for_ack=True):
+        return self._publish_signed(
+            self.status_topic,
+            {
+                "device_id": self.device_id,
+                "status": status,
+                "reported_at": utc_now(),
+                "source": "device",
+            },
+            retain=True,
+            wait_for_ack=wait_for_ack,
+        )
+
+    def publish_telemetry(self, payload):
+        message = dict(payload or {})
+        message["device_id"] = self.device_id
+        message.setdefault("reported_at", utc_now())
+        return self._publish_signed(self.telemetry_topic, message, retain=False)
+
+    def publish_alarm(self, payload):
+        message = dict(payload or {})
+        message["device_id"] = self.device_id
+        return self._publish_signed(self.alarm_topic, message, retain=False)
+
+    def _on_message(self, client, userdata, message):
+        if message.topic != self.command_topic:
+            return
+        try:
+            payload = json.loads(message.payload.decode("utf-8"))
+            with self._lock:
+                key = self._signing_key
+            if not verify_payload(payload, key):
+                log.warning("Ignoring remote command with an invalid signature")
+                return
+            if payload.get("device_id") != self.device_id:
+                return
+            command_id = str(payload.get("command_id", ""))
+            if not re.fullmatch(r"[a-fA-F0-9]{32}", command_id):
+                return
+            issued_at = datetime.fromisoformat(
+                str(payload.get("issued_at", "")).replace("Z", "+00:00")
+            )
+            expires_at = datetime.fromisoformat(
+                str(payload.get("expires_at", "")).replace("Z", "+00:00")
+            )
+            now = datetime.now(timezone.utc)
+            if issued_at.tzinfo is None:
+                issued_at = issued_at.replace(tzinfo=timezone.utc)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if issued_at > now + timedelta(seconds=30):
+                return
+            if expires_at <= now or expires_at - issued_at > timedelta(minutes=2):
+                self._send_command_ack(command_id, "failed", {"error": "command_expired"})
+                return
+            command_type = str(payload.get("command_type", ""))
+            command_payload = payload.get("payload")
+            if not isinstance(command_payload, dict):
+                self._send_command_ack(command_id, "failed", {"error": "invalid_payload"})
+                return
+            threading.Thread(
+                target=self._execute_command,
+                args=(command_id, command_type, command_payload),
+                name=f"mqtt-command-{command_id[:8]}",
+                daemon=True,
+            ).start()
+        except Exception:
+            log.exception("Could not parse or dispatch MQTT command")
+
+    def _execute_command(self, command_id, command_type, payload):
+        try:
+            if not callable(self._command_handler):
+                raise RuntimeError("No remote command handler is available.")
+            result = self._command_handler(command_type, payload)
+            if not isinstance(result, dict):
+                result = {"result": str(result or "")[:200]}
+            self._send_command_ack(command_id, "applied", result)
+        except Exception as exc:
+            log.exception("Remote MQTT command %s failed", command_id)
+            self._send_command_ack(command_id, "failed", {"error": str(exc)[:300]})
+
+    def _send_command_ack(self, command_id, status, result):
+        self._publish_signed(
+            self.command_ack_topic,
+            {
+                "device_id": self.device_id,
+                "command_id": command_id,
+                "status": status,
+                "result": result if isinstance(result, dict) else {"message": str(result)[:300]},
+                "acknowledged_at": utc_now(),
+            },
+            retain=False,
+        )
+
     def publish_log(self, level, message, details=None):
-        """Persist a local log item; the HTTPS uploader sends it to this device's owner."""
+        """Persist a local log item; HTTPS remains the durable log upload path."""
         record = {
             "event_id": uuid.uuid4().hex,
             "level": level if level in {"debug", "info", "warning", "error"} else "info",

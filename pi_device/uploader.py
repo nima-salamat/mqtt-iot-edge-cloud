@@ -78,6 +78,8 @@ class DurableUploader:
             raise
         self.state_provider = lambda: {}
         self.credentials_revoked = True
+        if self.bridge is not None and hasattr(self.bridge, "set_signing_key"):
+            self.bridge.set_signing_key("")
         self.last_heartbeat_at = ""
         self._last_heartbeat_monotonic = 0.0
 
@@ -242,6 +244,15 @@ class DurableUploader:
             log.debug("Could not collect Raspberry Pi system metrics for heartbeat", exc_info=True)
         if self.last_video_upload_at:
             payload["last_video_upload_at"] = self.last_video_upload_at
+        # MQTT is the primary path for small, frequent telemetry. Until an
+        # installation receives its per-device signing key over HTTPS, or
+        # whenever MQTT is disconnected, retain the authenticated HTTPS fallback.
+        publish_telemetry = getattr(self.bridge, "publish_telemetry", None)
+        if callable(publish_telemetry) and publish_telemetry(payload):
+            self._last_heartbeat_monotonic = time.monotonic()
+            self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
+            return
+
         response = self._session.post(
             f"{self.api_base}/api/device/heartbeat/",
             headers=self._headers(),
@@ -249,8 +260,40 @@ class DurableUploader:
             timeout=(5, 15),
         )
         self._check_response(response)
+        try:
+            response_payload = response.json()
+        except (ValueError, AttributeError):
+            response_payload = {}
+        signing_key = (
+            response_payload.get("mqtt_signing_key", "")
+            if isinstance(response_payload, dict) else ""
+        )
+        if re.fullmatch(r"[a-fA-F0-9]{64}", str(signing_key or "")):
+            self._persist_mqtt_signing_key(signing_key)
         self._last_heartbeat_monotonic = time.monotonic()
         self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
+
+    def _persist_mqtt_signing_key(self, signing_key):
+        """Persist the per-device event key beside the existing mode-0600 credentials."""
+        current = self.state_provider()
+        if not isinstance(current, dict) or not current.get("api_token"):
+            return
+        credentials = dict(current)
+        credentials["mqtt_signing_key"] = str(signing_key).lower()
+        target = Path(os.getenv("DEVICE_CREDENTIALS_PATH", "/var/lib/mqttiot/device.json"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink():
+            raise OSError("Refusing to replace a symlinked device credential file.")
+        temporary = target.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(credentials, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(target)
+        self.state_provider = lambda: credentials
+        if self.bridge is not None and hasattr(self.bridge, "set_signing_key"):
+            self.bridge.set_signing_key(signing_key)
 
     def _upload_alarms(self):
         for meta_path in self._sorted_queue_files(self.alarm_dir, "*.json"):

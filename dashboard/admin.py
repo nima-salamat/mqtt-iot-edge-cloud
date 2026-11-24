@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils import timezone
-from .models import Alarm, Device, DeviceLog, PairingRequest, RetentionPolicy, StreamGrant, Telemetry, VideoSegment
+from .models import Alarm, Device, DeviceCommand, DeviceLog, PairingRequest, RetentionPolicy, StreamGrant, Telemetry, VideoSegment
 
 
 class AlarmInline(admin.TabularInline):
@@ -93,3 +93,15 @@ class StreamGrantAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at", "expires_at")
     exclude = ("token_hash",)
     search_fields = ("user__username", "device__device_id")
+
+
+@admin.register(DeviceCommand)
+class DeviceCommandAdmin(admin.ModelAdmin):
+    list_display = ("command_id", "device", "command_type", "status", "created_at", "expires_at", "acknowledged_at")
+    list_filter = ("command_type", "status", "created_at")
+    search_fields = ("command_id", "device__device_id", "device__owner__username")
+    readonly_fields = (
+        "command_id", "device", "command_type", "payload", "status",
+        "result", "created_at", "expires_at", "published_at", "acknowledged_at",
+    )
+    date_hierarchy = "created_at"

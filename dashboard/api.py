@@ -20,6 +20,7 @@ import qrcode
 from qrcode.image.svg import SvgPathImage
 from .device_auth import device_required, revoke_device_access
 from .models import Alarm, Device, DeviceLog, PairingRequest, StreamGrant, VideoSegment
+from .mqtt_security import device_mqtt_signing_key
 
 DEVICE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}$")
 SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
@@ -157,6 +158,7 @@ def pair_device(request):
         "device_id": device_id, "api_token": api_token,
         "api_base_url": request.build_absolute_uri("/").rstrip("/"),
         "paired_at": now.isoformat(), "stream_path": device.stream_path,
+        "mqtt_signing_key": device_mqtt_signing_key(device),
     }, status=201)
 
 
@@ -218,7 +220,11 @@ def heartbeat(request):
         "is_online", "last_seen", "last_heartbeat", "reported_video_fps",
         "reported_inference_fps", "model_loaded", "current_state", "updated_at",
     ])
-    return JsonResponse({"status": "ok", "server_time": now.isoformat()})
+    return JsonResponse({
+        "status": "ok",
+        "server_time": now.isoformat(),
+        "mqtt_signing_key": device_mqtt_signing_key(device),
+    })
 
 
 @csrf_exempt

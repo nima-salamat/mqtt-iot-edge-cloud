@@ -1358,6 +1358,7 @@ class CameraPipeline:
             temporary.replace(target)
             self.uploader.state_provider = lambda: credentials
             self.uploader.credentials_revoked = False
+            self.bridge.set_signing_key(credentials.get("mqtt_signing_key", ""))
             if self.live_output:
                 self.live_output.credentials_changed()
             self._pair_status = "paired"

@@ -4,7 +4,7 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 from django.utils import timezone
-from dashboard.models import Alarm, Device, DeviceLog, PairingRequest, RetentionPolicy, StreamGrant, VideoSegment
+from dashboard.models import Alarm, Device, DeviceCommand, DeviceLog, PairingRequest, RetentionPolicy, StreamGrant, VideoSegment
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,7 @@ class Command(BaseCommand):
 
         PairingRequest.objects.filter(expires_at__lt=now - timedelta(days=1)).delete()
         StreamGrant.objects.filter(expires_at__lt=now - timedelta(hours=1)).delete()
+        DeviceCommand.objects.filter(created_at__lt=now - timedelta(days=7)).delete()
         logger.info(
             "Retention pass complete: segments=%s snapshots=%s logs=%s",
             removed_segments, removed_images, removed_logs,

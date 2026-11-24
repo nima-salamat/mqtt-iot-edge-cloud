@@ -12,6 +12,35 @@
     {% if device.api_token_hash %}<button class="btn danger" id="disconnect-camera" type="button" data-url="{% url 'dashboard:device-disconnect' device.device_id %}">قطع اتصال دوربین</button>{% endif %}
   </div>
 </section>
+<section class="panel remote-device-controls" id="remote-device-controls"
+         data-device-id="{{ device.device_id }}"
+         data-command-url="{% url 'dashboard:device-command' device.device_id %}">
+  <div class="section-heading">
+    <div>
+      <span class="eyebrow">MQTT · REMOTE CONTROL</span>
+      <h2>کنترل از راه دور دستگاه</h2>
+      <p class="muted">فرمان از طریق MQTT ارسال می‌شود و فقط پس از دریافت تأیید اجرای خود دستگاه، موفق نمایش داده می‌شود.</p>
+    </div>
+    <span class="state {% if device.current_state.mqtt_connected %}online{% else %}offline{% endif %}" id="remote-mqtt-state">
+      <i></i>{% if device.current_state.mqtt_connected %}MQTT متصل{% else %}MQTT قطع{% endif %}
+    </span>
+  </div>
+  <div class="remote-command-row">
+    <div>
+      <b>ضبط محلی MP4 روی Raspberry Pi</b>
+      <small id="remote-recording-description">{% if device.current_state.recording_enabled == True %}ضبط در حال اجرا است.{% elif device.current_state.recording_enabled == False %}ضبط متوقف است.{% else %}وضعیت ضبط هنوز دریافت نشده است.{% endif %}</small>
+    </div>
+    <button class="btn primary" type="button" id="remote-recording-toggle"
+            data-enabled="{% if device.current_state.recording_enabled == True %}false{% else %}true{% endif %}"
+            {% if not device.api_token_hash or not device.is_online or not device.current_state.mqtt_connected %}disabled{% endif %}>
+      {% if device.current_state.recording_enabled == True %}توقف ضبط از راه دور{% else %}شروع ضبط از راه دور{% endif %}
+    </button>
+  </div>
+  <p class="muted remote-command-status" id="remote-command-status" role="status" aria-live="polite">
+    {% if not device.current_state.mqtt_connected %}برای کنترل از راه دور، ابتدا اتصال MQTT دستگاه باید برقرار شود.{% else %}فرمان ضبط با مهلت اعتبار محدود ارسال می‌شود.{% endif %}
+  </p>
+</section>
+
 <div class="detail-grid">
   <section class="panel">
     <div class="section-heading">
@@ -318,4 +347,5 @@
 })();
 </script>
 <script src="{% static 'dashboard/video_history.js' %}?v=20261124-continuous-mse-1" defer></script>
+<script src="{% static 'dashboard/device_commands.js' %}?v=20261124-mqtt-control-1" defer></script>
 {% endblock %}

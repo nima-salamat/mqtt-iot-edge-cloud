@@ -441,9 +441,17 @@ def main() -> None:
     device_id = load_device_id()
     settings_store = SettingsStore()
     bridge = RaspberryPiMqttBridge(device_id)
+    credentials = load_credentials()
+    bridge.set_signing_key(credentials.get("mqtt_signing_key", ""))
     uploader = DurableUploader(device_id, settings_store, bridge, load_credentials)
     camera = CameraPipeline(device_id, settings_store, bridge, uploader)
 
+    def handle_remote_command(command_type, payload):
+        if command_type == "recording.set" and set(payload) == {"enabled"} and type(payload.get("enabled")) is bool:
+            return camera.set_recording_enabled(payload["enabled"])
+        raise ValueError("فرمان MQTT پشتیبانی نمی‌شود یا پارامتر آن معتبر نیست.")
+
+    bridge.set_command_handler(handle_remote_command)
     bridge.start()
     uploader.start()
     # The Pi Camera is required for normal operation. A failed first open is

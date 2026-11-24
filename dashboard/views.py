@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from datetime import timedelta
 from django.contrib.auth.decorators import login_required
@@ -14,9 +15,11 @@ from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from .models import Alarm, Device, DeviceLog, RetentionPolicy, VideoSegment
+from .models import Alarm, Device, DeviceCommand, DeviceLog, RetentionPolicy, VideoSegment
 from .device_auth import revoke_device_access
 from .services import cleanup_iot_data
+from .mqtt_security import device_mqtt_signing_key, sign_mqtt_payload
+from .mqtt_commands import publish_mqtt_command
 
 logger = logging.getLogger(__name__)
 
@@ -435,6 +438,7 @@ def dashboard_overview(request):
                 "video_fps": round(device.reported_video_fps, 1),
                 "inference_fps": round(device.reported_inference_fps, 1),
                 "model_loaded": device.model_loaded,
+                "mqtt_connected": bool(device.current_state.get("mqtt_connected", False)),
                 "camera_ready": bool(device.current_state.get("camera_ready", False)),
                 "rtsp_connected": bool(device.current_state.get("rtsp_connected", False)),
                 "tracking_active": bool(device.current_state.get("tracking_active", False)),
@@ -501,3 +505,99 @@ def dashboard_alerts(request):
 
 def health(request):
     return JsonResponse({"status": "ok", "service": "iot-alarm-api"})
+
+
+@login_required
+@require_POST
+def send_device_command(request, device_id):
+    """Publish the deliberately small, owner-scoped remote command surface."""
+    device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
+    try:
+        payload = json.loads(request.body or b"{}")
+        if not isinstance(payload, dict):
+            raise ValueError
+        command_type = str(payload.get("command_type", ""))
+        command_payload = payload.get("payload")
+        if (
+            command_type != "recording.set"
+            or not isinstance(command_payload, dict)
+            or set(command_payload) != {"enabled"}
+            or type(command_payload.get("enabled")) is not bool
+        ):
+            raise ValueError
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({"error": "فرمان ارسالی معتبر نیست."}, status=400)
+
+    now = timezone.now()
+    if not device.api_token_hash:
+        return JsonResponse({"error": "دوربین Pair نشده است."}, status=409)
+    if (
+        not device.is_online
+        or not device.last_heartbeat
+        or device.last_heartbeat < now - timedelta(seconds=50)
+    ):
+        return JsonResponse({"error": "دوربین آنلاین نیست؛ آخرین Heartbeat قدیمی است."}, status=409)
+    state = device.current_state if isinstance(device.current_state, dict) else {}
+    if not state.get("mqtt_connected"):
+        return JsonResponse({"error": "کانال MQTT دوربین متصل نیست."}, status=503)
+
+    command_id = uuid.uuid4().hex
+    expires_at = now + timedelta(seconds=60)
+    command = DeviceCommand.objects.create(
+        command_id=command_id,
+        device=device,
+        command_type=command_type,
+        payload=command_payload,
+        status="pending",
+        expires_at=expires_at,
+    )
+    try:
+        envelope = sign_mqtt_payload({
+            "device_id": device.device_id,
+            "command_id": command_id,
+            "command_type": command_type,
+            "payload": command_payload,
+            "issued_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+        }, device_mqtt_signing_key(device))
+        publish_mqtt_command(device.device_id, envelope)
+    except Exception as exc:
+        logger.warning("Could not publish remote command %s for %s: %s", command_id, device_id, exc)
+        DeviceCommand.objects.filter(
+            command_id=command_id, status="pending"
+        ).update(status="failed", result={"error": "mqtt_publish_failed"})
+        return JsonResponse({"error": "ارسال فرمان از طریق MQTT ناموفق بود."}, status=503)
+
+    # The device may execute and ACK immediately after broker delivery. Only
+    # transition pending -> published so a fast ACK cannot be overwritten.
+    DeviceCommand.objects.filter(
+        command_id=command_id, status="pending"
+    ).update(status="published", published_at=timezone.now())
+    return JsonResponse({
+        "status": "published",
+        "command_id": command_id,
+        "expires_at": expires_at.isoformat(),
+    }, status=202)
+
+
+@login_required
+def device_command_status(request, device_id, command_id):
+    device = get_object_or_404(_visible_devices(request.user), device_id=device_id)
+    command = get_object_or_404(
+        DeviceCommand,
+        device=device,
+        command_id=command_id,
+    )
+    now = timezone.now()
+    if command.status in {"pending", "published"} and command.expires_at <= now:
+        command.status = "expired"
+        command.save(update_fields=["status"])
+    return JsonResponse({
+        "command_id": command.command_id,
+        "command_type": command.command_type,
+        "status": command.status,
+        "result": command.result,
+        "created_at": command.created_at.isoformat(),
+        "expires_at": command.expires_at.isoformat(),
+        "acknowledged_at": command.acknowledged_at.isoformat() if command.acknowledged_at else None,
+    })

@@ -271,5 +271,72 @@ class QueueManagementTests(unittest.TestCase):
             self.uploader.clear_pending_queue("everything")
 
 
+    def test_heartbeat_uses_signed_mqtt_as_primary_path_when_connected(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        snapshot = {
+            "video_fps": 25.0,
+            "inference_fps": 5.0,
+            "model_loaded": True,
+            "mqtt_connected": True,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "pending_alerts": 0,
+            "pending_video_segments": 0,
+            "tracking_active": False,
+            "tracking_seconds": 0.0,
+        }
+        publisher = Mock(return_value=True)
+        self.uploader.bridge = SimpleNamespace(
+            snapshot=lambda: snapshot,
+            publish_telemetry=publisher,
+        )
+        self.uploader._session.post = Mock()
+
+        self.uploader._send_heartbeat()
+
+        publisher.assert_called_once()
+        self.uploader._session.post.assert_not_called()
+
+    def test_https_heartbeat_bootstraps_and_persists_mqtt_signing_key(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        credentials = {"api_token": "bootstrap-token", "stream_path": "camera-path"}
+        snapshot = {
+            "video_fps": 25.0,
+            "inference_fps": 5.0,
+            "model_loaded": True,
+            "mqtt_connected": False,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "pending_alerts": 0,
+            "pending_video_segments": 0,
+            "tracking_active": False,
+            "tracking_seconds": 0.0,
+        }
+        bridge = SimpleNamespace(
+            snapshot=lambda: snapshot,
+            publish_telemetry=Mock(return_value=False),
+            set_signing_key=Mock(),
+        )
+        self.uploader.bridge = bridge
+        self.uploader.state_provider = lambda: credentials
+        response = Mock(status_code=200)
+        signing_key = "c" * 64
+        response.json.return_value = {"mqtt_signing_key": signing_key}
+        self.uploader._session.post = Mock(return_value=response)
+        credentials_path = Path(self.temp_dir.name) / "device.json"
+
+        with patch.dict(os.environ, {"DEVICE_CREDENTIALS_PATH": str(credentials_path)}):
+            self.uploader._send_heartbeat()
+
+        stored = json.loads(credentials_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["mqtt_signing_key"], signing_key)
+        self.assertEqual(credentials_path.stat().st_mode & 0o777, 0o600)
+        bridge.set_signing_key.assert_called_once_with(signing_key)
+
+
 if __name__ == "__main__":
     unittest.main()

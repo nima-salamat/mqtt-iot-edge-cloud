@@ -133,3 +133,32 @@ class RetentionPolicy(models.Model):
 
     def __str__(self):
         return f"Retention for {self.user}"
+
+
+class DeviceCommand(models.Model):
+    """A short-lived remote command and its signed MQTT acknowledgement."""
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("published", "Published"),
+        ("applied", "Applied"),
+        ("failed", "Failed"),
+        ("expired", "Expired"),
+    ]
+
+    command_id = models.CharField(max_length=32, primary_key=True)
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name="commands")
+    command_type = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="pending")
+    result = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.command_type} -> {self.device.device_id} ({self.status})"

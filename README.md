@@ -46,13 +46,15 @@ Django is the application backend and owns users, device ownership, QR pairing, 
 1. Picamera2 configures the selected output resolution (factory default 1280x720) and a separate 640x360 low-resolution stream for YOLO.
 2. The camera portal enumerates the actual Picamera2 sensor modes or V4L2 webcam modes and shows the supported output resolutions with the maximum compatible sensor cadence for each.
 3. The H.264 encoder uses the requested video FPS, bounded by the fastest sensor mode compatible with the selected resolution; the selected output resolution is never silently changed to satisfy an FPS request.
-3. The local output rotates into short MP4 segments (5 seconds by default). Completed segments form the Pi's upload spool.
-4. A separate RTSPS output publishes the live H.264 stream to MediaMTX over TLS/TCP on port 8322.
-5. MediaMTX exposes browser playback through WebRTC/WHEP. Django first issues a short-lived grant to a signed-in device owner.
-6. Completed MP4 segments upload to Django over HTTPS with a SHA-256 checksum.
-7. A server retention worker removes expired video files and their database records. The default is a rolling 10-minute window for each account.
+4. The local output rotates into short MP4 segments (5 seconds by default). Completed segments form the Pi's upload spool.
+5. A separate RTSPS output publishes the live H.264 stream to MediaMTX over TLS/TCP on port 8322.
+6. MediaMTX exposes live browser playback through WebRTC/WHEP. Django first issues a short-lived grant to a signed-in device owner.
+7. Completed MP4 segments upload to Django over HTTPS with a SHA-256 checksum.
+8. A server retention worker removes expired video files and their database records. The default is a rolling 10-minute window for each account.
 
 Live video and local recording are independent. If the Internet or RTSPS connection drops, the Pi continues recording locally and retries the live connection with exponential backoff. Completed video segments remain in the durable HTTPS outbox and upload after connectivity returns. The system cannot stream frames live while the network is down; the saved segments provide delayed evidence after reconnection.
+
+The Django device page plays the uploaded archive as one continuous H.264 timeline. Seeking starts from the selected recording segment, and the browser requests adjacent MP4 files in short batches. The server uses FFmpeg's concat demuxer with stream-copy to produce fragmented MP4 chunks; the browser appends them through Media Source Extensions without re-encoding or requiring the full archive to download first. Chunk duration is estimated from the recent median byte rate and actual segment length (normally around 10–15 seconds, or a whole-number multiple of the segment length), with a bounded server-side input size. The timeline represents the uploaded segments retained by the server, not the live RTSPS stream.
 
 The factory 30 FPS value is a target, not a performance guarantee. The FPS selector is no longer limited to a fixed 30 FPS ceiling: its available rates and maximum are derived from the active camera's reported modes at the selected resolution. A mode that can reach a higher cadence only at a smaller resolution is offered as a separate resolution choice. Actual encoded capture FPS is measured and reported separately; sensor capability, encoder throughput, system load and the selected mode can all make the measured rate lower than the requested target.
 

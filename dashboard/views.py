@@ -306,6 +306,11 @@ def device_video_chunk(request, device_id):
         )
         .order_by("started_at", "pk")[:24]
     )
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        return JsonResponse({
+            "error": "پردازشگر FFmpeg روی سرور نصب نیست؛ ایمیج api را با نسخه جدید بازسازی کن."
+        }, status=503)
+
     selected = []
     source_bytes = 0
     selected_seconds = 0
@@ -354,10 +359,6 @@ def device_video_chunk(request, device_id):
 
     if not selected:
         return JsonResponse({"error": "برای این بازه فایل ویدئویی ذخیره‌شده‌ای پیدا نشد."}, status=404)
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        return JsonResponse({
-            "error": "پردازشگر FFmpeg روی سرور نصب نیست؛ ایمیج api را با نسخه جدید بازسازی کن."
-        }, status=503)
 
     if video_info is None:
         return JsonResponse({"error": "ویدئوی سازگار برای ساخت چانک پیدا نشد."}, status=415)

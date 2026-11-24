@@ -139,6 +139,7 @@ def _switchable_output_class():
             self._switch_done = threading.Event()
             self._lock = threading.RLock()
             self._streams = []
+            self.stop_failed = False
 
         def start(self):
             super().start()
@@ -195,8 +196,17 @@ def _switchable_output_class():
 
             # outputframe has stopped referencing the previous output, so it is
             # now safe to finalize its MP4 container on this control thread.
+            previous_finalized = True
             if old_output is not None:
-                old_output.stop()
+                try:
+                    old_output.stop()
+                except Exception:
+                    # The new output is already active. Report the old segment
+                    # as unsafe instead of raising into the caller, which could
+                    # otherwise remove the new segment's .open marker.
+                    previous_finalized = False
+                    log.exception("Could not finalize the previous MP4 segment")
+            return previous_finalized
 
         def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
             with self._lock:
@@ -211,6 +221,7 @@ def _switchable_output_class():
 
         def stop(self):
             super().stop()
+            self.stop_failed = False
             with self._lock:
                 outputs = (self._output, self._pending_output if self._switch_pending else None)
                 self._output = None
@@ -223,6 +234,7 @@ def _switchable_output_class():
                     try:
                         output.stop()
                     except Exception:
+                        self.stop_failed = True
                         log.exception("Could not close a local recording output")
 
     return SwitchableOutput
@@ -894,13 +906,20 @@ class CameraPipeline:
                     output.error_callback = lambda error: log.error("MP4 spool output error: %s", error)
                     old_marker = self._current_marker
                     try:
-                        self.local_output.switch_output(output)
+                        previous_finalized = self.local_output.switch_output(output)
                     except Exception:
                         next_marker.unlink(missing_ok=True)
                         raise
-                    # Old output has now closed and is safe for the HTTP uploader to read.
-                    if old_marker:
+                    # Keep a failed-to-finalize old segment marked so the
+                    # uploader never reads a potentially corrupt MP4. The
+                    # newly active segment keeps its own marker until rotation.
+                    if old_marker and previous_finalized:
                         old_marker.unlink(missing_ok=True)
+                    elif old_marker:
+                        log.error(
+                            "Retaining open marker for MP4 segment whose finalization failed: %s",
+                            old_marker.name,
+                        )
                     self._current_segment, self._current_marker = next_path, next_marker
             except Exception:
                 log.exception("Could not rotate local video segment")

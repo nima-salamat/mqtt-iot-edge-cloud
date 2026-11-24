@@ -114,12 +114,90 @@ class CameraPipelineStructureTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "at least 32"):
                 module._load_local_flask_secret()
 
+    def test_local_login_requires_csrf_and_throttles_failed_password_attempts(self):
+        module = self._load_local_app_module()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "PI_DATA_DIR": directory,
+            "FLASK_SECRET_KEY": "unit-test-flask-secret-0123456789abcdef",
+            "LOCAL_WEB_PASSWORD": "correct-local-password",
+        }):
+            app = module.create_local_app(
+                SimpleNamespace(device_id="cam-login-test"),
+                SimpleNamespace(get=lambda: {}),
+                MagicMock(),
+                SimpleNamespace(),
+            )
+            client = app.test_client()
+            login_page = client.get("/login/")
+            self.assertEqual(login_page.status_code, 200)
+            with client.session_transaction() as session:
+                csrf_token = session["csrf_token"]
+
+            csrf_missing = client.post(
+                "/login/", data={"password": "correct-local-password"}
+            )
+            self.assertEqual(csrf_missing.status_code, 403)
+
+            for attempt in range(5):
+                response = client.post(
+                    "/login/",
+                    data={
+                        "password": "wrong-password",
+                        "csrf_token": csrf_token,
+                    },
+                    environ_base={"REMOTE_ADDR": "192.0.2.44"},
+                )
+                self.assertEqual(response.status_code, 401)
+
+            blocked = client.post(
+                "/login/",
+                data={
+                    "password": "correct-local-password",
+                    "csrf_token": csrf_token,
+                },
+                environ_base={"REMOTE_ADDR": "192.0.2.44"},
+            )
+            self.assertEqual(blocked.status_code, 429)
+            self.assertEqual(blocked.headers["Retry-After"], "300")
+
+    def test_local_login_rotates_session_after_valid_credentials(self):
+        module = self._load_local_app_module()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "PI_DATA_DIR": directory,
+            "FLASK_SECRET_KEY": "unit-test-flask-secret-0123456789abcdef",
+            "LOCAL_WEB_PASSWORD": "correct-local-password",
+        }):
+            app = module.create_local_app(
+                SimpleNamespace(device_id="cam-login-test-02"),
+                SimpleNamespace(get=lambda: {}),
+                MagicMock(),
+                SimpleNamespace(),
+            )
+            client = app.test_client()
+            client.get("/login/")
+            with client.session_transaction() as session:
+                csrf_token = session["csrf_token"]
+                old_cookie_token = csrf_token
+
+            response = client.post(
+                "/login/",
+                data={
+                    "password": "correct-local-password",
+                    "csrf_token": csrf_token,
+                },
+            )
+            self.assertEqual(response.status_code, 302)
+            self.assertTrue(response.headers["Location"].endswith("/"))
+            with client.session_transaction() as session:
+                self.assertTrue(session["authenticated"])
+                self.assertNotEqual(session["csrf_token"], old_cookie_token)
+
     def test_local_alarm_list_skips_corrupt_non_object_metadata(self):
         module = self._load_local_app_module()
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "PI_DATA_DIR": directory,
-            "FLASK_SECRET_KEY": "unit-test-flask-secret",
+            "FLASK_SECRET_KEY": "unit-test-flask-secret-0123456789abcdef",
         }):
             alarm_dir = Path(directory) / "alarms"
             alarm_dir.mkdir(parents=True)
@@ -149,7 +227,7 @@ class CameraPipelineStructureTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "PI_DATA_DIR": directory,
-            "FLASK_SECRET_KEY": "unit-test-flask-secret",
+            "FLASK_SECRET_KEY": "unit-test-flask-secret-0123456789abcdef",
         }):
             settings = SettingsStore(str(Path(directory) / "settings.json"))
             camera = SimpleNamespace(device_id="cam-local-test-02", available_video_modes=[])

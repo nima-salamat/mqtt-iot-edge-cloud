@@ -62,6 +62,12 @@ class PairingFlowTests(TestCase):
         }
         device.model_loaded = True
         device.save()
+        old_grant = StreamGrant.objects.create(
+            token_hash=hashlib.sha256(b"old-viewer-token").hexdigest(),
+            user=self.owner,
+            device=device,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
 
         second_qr = self.client.post(reverse("create-pairing")).json()
         second_code = second_qr["qr_payload"].split(":", 1)[1]
@@ -78,6 +84,8 @@ class PairingFlowTests(TestCase):
         new_token = second.json()["api_token"]
         self.assertNotEqual(old_token, new_token)
         device.refresh_from_db()
+        old_grant.refresh_from_db()
+        self.assertIsNotNone(old_grant.revoked_at)
         self.assertFalse(device.is_online)
         self.assertIsNone(device.last_heartbeat)
         self.assertIsNone(device.last_seen)

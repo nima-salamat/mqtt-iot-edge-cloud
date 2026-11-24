@@ -166,6 +166,15 @@ Then run:
     sudo journalctl -u mqtt-iot-pi -f
     hostname -I
 
+### Updating the Raspberry Pi agent
+
+After updating the checkout to the desired Git branch/commit, deploy only the Pi source code (without replacing the Python virtualenv, NCNN model weights, credentials or recordings):
+
+    git pull --ff-only origin main
+    sudo ./scripts/update_pi.sh
+
+The updater synchronizes `pi_device/` from this checkout into `/opt/mqtt-iot-edge-cloud/pi_device/`, compiles the deployed Python modules, and restarts `mqtt-iot-pi`. It preserves `/etc/mqtt-iot-pi.env`, `/var/lib/mqttiot`, the installed virtualenv and model weight files. Review the printed startup logs for the effective credential path, signing-key availability, MQTT command SUBACK and online-status PUBACK.
+
 Open http://PI_IP_ADDRESS:8080 from a trusted browser on the local network. This page displays the camera preview and local camera controls. Do not expose port 8080 directly to the public Internet.
 
 ## Raspberry Pi local storage and AI settings

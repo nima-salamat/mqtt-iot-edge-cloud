@@ -36,10 +36,10 @@
   </section>
 
   <nav class="console-nav" aria-label="بخش‌های پنل دوربین">
-    <a href="#camera-live"><span>◉</span> تصویر زنده</a>
-    <a href="#local-detections"><span>⌖</span> تشخیص‌ها</a>
-    <a href="#device-settings"><span>⚙</span> تنظیمات دستگاه</a>
-    <a href="#device-health"><span>▥</span> سلامت سیستم</a>
+    <a href="#camera-live"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="m9 6 1.5-2h3L15 6"/><circle cx="12" cy="12.5" r="3.5"/></svg></span> تصویر زنده</a>
+    <a href="#local-detections"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 7v7M7 10.5h7"/></svg></span> تشخیص‌ها</a>
+    <a href="#device-settings"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m19 13.5 1.5 1.2-1.5 2.6-1.9-.6-1.5.9-.3 2h-3l-.3-2-1.5-.9-1.9.6-1.5-2.6L6.6 13.5v-3L5.1 9.3l1.5-2.6 1.9.6 1.5-.9.3-2h3l.3 2 1.5.9 1.9-.6 1.5 2.6L19 10.5z"/></svg></span> تنظیمات دستگاه</a>
+    <a href="#device-health"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h17"/><path d="m7 15 3-4 3 2 5-7"/></svg></span> سلامت سیستم</a>
   </nav>
 
   <section class="metric-grid">
@@ -174,17 +174,17 @@
     </div>
     <div class="queue-grid">
       <article class="queue-card">
-        <div class="queue-card-icon">▶</div>
+        <div class="queue-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg></div>
         <div class="queue-card-main"><b>قطعه‌های ویدئو</b><strong id="queue-videos-count">۰</strong><small id="queue-videos-size">۰ بایت</small></div>
         <button class="danger-btn" type="button" data-clear-queue="videos">پاک‌کردن صف ویدئو</button>
       </article>
       <article class="queue-card">
-        <div class="queue-card-icon">◎</div>
+        <div class="queue-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m4 17 5-4 3 2 3-3 5 5"/></svg></div>
         <div class="queue-card-main"><b>هشدارها و تصاویر ارسال‌نشده</b><strong id="queue-alarms-count">۰</strong><small id="queue-alarms-size">۰ بایت</small></div>
         <button class="danger-btn" type="button" data-clear-queue="alarms">پاک‌کردن صف هشدار</button>
       </article>
       <article class="queue-card">
-        <div class="queue-card-icon">≡</div>
+        <div class="queue-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".7"/><circle cx="4" cy="12" r=".7"/><circle cx="4" cy="18" r=".7"/></svg></div>
         <div class="queue-card-main"><b>لاگ‌های ارسال‌نشده</b><strong id="queue-logs-count">۰</strong><small id="queue-logs-size">۰ بایت</small></div>
         <button class="danger-btn" type="button" data-clear-queue="logs">پاک‌کردن صف لاگ</button>
       </article>

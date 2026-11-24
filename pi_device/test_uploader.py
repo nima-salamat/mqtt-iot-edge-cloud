@@ -295,11 +295,96 @@ class QueueManagementTests(unittest.TestCase):
             publish_telemetry=publisher,
         )
         self.uploader._session.post = Mock()
+        # A recent HTTPS heartbeat is still within the application-level
+        # fallback window, so MQTT remains the frequent transport in between.
+        import time
+        self.uploader._last_https_heartbeat_monotonic = time.monotonic()
 
         self.uploader._send_heartbeat()
 
         publisher.assert_called_once()
         self.uploader._session.post.assert_not_called()
+
+    def test_successful_mqtt_publish_still_gets_initial_https_heartbeat(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        snapshot = {
+            "video_fps": 25.0,
+            "inference_fps": 5.0,
+            "model_loaded": True,
+            "mqtt_connected": True,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "pending_alerts": 0,
+            "pending_video_segments": 0,
+            "tracking_active": False,
+            "tracking_seconds": 0.0,
+        }
+        self.uploader.bridge = SimpleNamespace(
+            snapshot=lambda: snapshot,
+            publish_telemetry=Mock(return_value=True),
+        )
+        response = Mock(status_code=200)
+        response.json.return_value = {}
+        self.uploader._session.post = Mock(return_value=response)
+        system = {
+            "cpu_percent": 38.2,
+            "temperature_c": 50.1,
+            "memory": {
+                "total_bytes": 8_000,
+                "used_bytes": 3_000,
+                "available_bytes": 5_000,
+                "used_percent": 37.5,
+            },
+            "storage": {
+                "total_bytes": 20_000,
+                "used_bytes": 8_000,
+                "free_bytes": 12_000,
+                "used_percent": 40.0,
+            },
+        }
+
+        with patch("pi_device.uploader.collect_system_stats", return_value=system):
+            self.uploader._send_heartbeat()
+
+        self.uploader._session.post.assert_called_once()
+        payload = self.uploader._session.post.call_args.kwargs["json"]
+        self.assertEqual(payload["system"]["cpu_percent"], 38.2)
+        self.assertEqual(payload["system"]["memory"]["used_percent"], 37.5)
+        self.assertTrue(self.uploader.last_heartbeat_at)
+
+    def test_periodic_https_fallback_runs_again_after_interval(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import time
+
+        snapshot = {
+            "video_fps": 25.0,
+            "inference_fps": 5.0,
+            "model_loaded": True,
+            "mqtt_connected": True,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "pending_alerts": 0,
+            "pending_video_segments": 0,
+            "tracking_active": False,
+            "tracking_seconds": 0.0,
+        }
+        self.uploader.bridge = SimpleNamespace(
+            snapshot=lambda: snapshot,
+            publish_telemetry=Mock(return_value=True),
+        )
+        self.uploader._last_https_heartbeat_monotonic = (
+            time.monotonic() - self.uploader.HTTPS_HEARTBEAT_INTERVAL_SECONDS - 1
+        )
+        response = Mock(status_code=200)
+        response.json.return_value = {}
+        self.uploader._session.post = Mock(return_value=response)
+
+        self.uploader._send_heartbeat()
+
+        self.uploader._session.post.assert_called_once()
 
     def test_https_heartbeat_bootstraps_and_persists_mqtt_signing_key(self):
         from types import SimpleNamespace

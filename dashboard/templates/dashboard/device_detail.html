@@ -32,6 +32,8 @@
       <div><span>مدت تشخیص پیوسته</span><b id="tracking-duration">{% if device.current_state.tracking_active %}در حال تشخیص · {{ device.current_state.tracking_seconds|default:0|floatformat:1 }} ثانیه{% else %}آخرین رهگیری · {{ device.current_state.tracking_seconds|default:0|floatformat:1 }} ثانیه{% endif %}</b></div>
       <div><span>هشدارهای ارسال‌نشده</span><b>{{ device.current_state.pending_alerts|default:0 }}</b></div>
       <div><span>ویدئوهای ارسال‌نشده</span><b>{{ device.current_state.pending_video_segments|default:0 }}</b></div>
+      <div><span>ضبط MP4 روی Pi</span><b id="recording-state">{% if device.current_state.recording_enabled == True %}فعال{% elif device.current_state.recording_enabled == False %}متوقف{% else %}در انتظار گزارش{% endif %}</b></div>
+      <div><span>آخرین قطعه ذخیره‌شده</span><b id="last-video-upload">{{ device.current_state.last_video_upload_at|default:"—" }}</b></div>
       <div><span>اتصال MQTT</span><b>{% if device.current_state.mqtt_connected %}متصل{% else %}قطع{% endif %}</b></div>
       <div><span>آخرین ارتباط</span><b>{{ device.last_seen|date:"Y-m-d H:i:s"|default:"—" }}</b></div>
     </div>
@@ -73,21 +75,23 @@
 
 <section class="section">
   <div class="section-heading">
-    <div><span class="eyebrow">RECORDED VIDEO</span><h2>آرشیو و پخش ویدئوهای گذشته</h2><p class="muted">قطعه‌ها بر اساس زمان مرتب شده‌اند؛ می‌توانی یک قطعه را انتخاب کنی یا آرشیو موجود را پشت‌سرهم پخش کنی.</p></div>
+    <div><span class="eyebrow">RECORDED VIDEO</span><h2>آرشیو و پخش ویدئوهای گذشته</h2><p class="muted">قطعه‌ها پس از تکمیل و آپلود خودکار در این فهرست ظاهر می‌شوند؛ فهرست هر ۵ ثانیه بدون رفرش صفحه تازه‌سازی می‌شود.</p></div>
     <button class="btn danger" type="button" data-cleanup-kind="videos" data-device-id="{{ device.device_id }}" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">پاک‌سازی ویدئوهای این دوربین</button>
   </div>
-  <div class="video-history-panel">
+  <div class="video-history-panel" id="video-history-panel" data-videos-url="{% url 'dashboard:device-videos' device.device_id %}">
     <video id="recorded-video-player" controls playsinline preload="metadata"></video>
     <div class="video-history-controls">
       <button class="btn primary" id="play-video-history" type="button" {% if not segments %}disabled{% endif %}>پخش پشت‌سرهم آرشیو</button>
       <button class="btn secondary" id="previous-video-segment" type="button" disabled>قطعه قبلی</button>
       <button class="btn secondary" id="next-video-segment" type="button" disabled>قطعه بعدی</button>
       <span id="recorded-video-label" class="muted" aria-live="polite">یک قطعه ویدئو انتخاب کن.</span>
+      <span id="video-history-status" class="muted" aria-live="polite">در انتظار همگام‌سازی آرشیو…</span>
     </div>
     <div class="video-segment-list" id="video-segment-list">
       {% for segment in segments %}
         <button class="video-segment-option" type="button"
           data-video-url="{% url 'dashboard:segment-file' segment.pk %}"
+          data-segment-id="{{ segment.pk }}"
           data-started-at="{{ segment.started_at|date:'c' }}"
           data-duration="{{ segment.duration_seconds }}"
           data-label="{{ segment.started_at|date:'Y-m-d H:i:s' }}">
@@ -95,7 +99,7 @@
           <small>{{ segment.duration_seconds }} ثانیه · {{ segment.size_bytes|filesizeformat }}</small>
         </button>
       {% empty %}
-        <div class="empty-card">هنوز قطعه‌ای از دوربین روی سرور ذخیره نشده است.</div>
+        <div class="empty-card" data-video-empty>در حال بررسی وضعیت ضبط و آرشیو دوربین…</div>
       {% endfor %}
     </div>
   </div>
@@ -281,5 +285,5 @@
   }));
 })();
 </script>
-<script src="{% static 'dashboard/video_history.js' %}" defer></script>
+<script src="{% static 'dashboard/video_history.js' %}?v=20261124-live-archive-1" defer></script>
 {% endblock %}

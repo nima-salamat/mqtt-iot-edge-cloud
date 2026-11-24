@@ -404,7 +404,7 @@ class CameraPipeline:
         return marker
 
     def is_running(self):
-        """Whether the camera or a resource awaiting teardown is still active."""
+        """Whether the camera or any worker still owns resources that block restart."""
         if self.picam2 is not None:
             return True
         if self._opencv_capture is not None:
@@ -413,6 +413,13 @@ class CameraPipeline:
                     return True
             except Exception:
                 log.debug("Could not inspect OpenCV camera state", exc_info=True)
+        if any(thread.is_alive() for thread in getattr(self, "_threads", [])):
+            return True
+        pool = self.inference_pool
+        if pool is not None and any(
+            process.is_alive() for process in getattr(pool, "processes", [])
+        ):
+            return True
         rtsp_thread = getattr(self.live_output, "_thread", None)
         return bool(rtsp_thread is not None and rtsp_thread.is_alive())
 
@@ -1606,20 +1613,10 @@ class CameraPipeline:
 
     def stop(self):
         self._stop.set()
-        for thread in self._threads:
-            thread.join(timeout=5)
-        self._threads = []
-        if self.inference_pool:
-            try:
-                self.inference_pool.stop()
-            except Exception:
-                log.exception("Could not stop YOLO inference workers cleanly")
-            self.inference_pool = None
-        self._inflight_frames.clear()
 
-        # Serialize shutdown with manual pause/resume and periodic segment
-        # rotation. Otherwise a late keyframe callback can swap an MP4 writer
-        # while the camera is being torn down.
+        # Close the hardware producer before joining capture workers. A
+        # capture_request/read may be blocked until the camera is stopped;
+        # joining first can therefore leave a live worker behind a cleared list.
         with self._recording_lock:
             rtsp_stopped = self.live_output is None
             if self.live_output:
@@ -1627,9 +1624,8 @@ class CameraPipeline:
                     self.live_output.stop()
                     rtsp_stopped = True
                 except Exception:
-                    # Do not drop a live reconnect worker. is_running() keeps
-                    # the supervisor from opening another camera pipeline while
-                    # this worker still owns an RTSP split operation.
+                    # Keep this object and its thread reference. is_running()
+                    # prevents a new camera instance while reconnect is active.
                     log.exception("Could not stop RTSPS output cleanly")
 
             if self._opencv_capture is not None:
@@ -1653,9 +1649,6 @@ class CameraPipeline:
                     stopped_cleanly = False
                     log.exception("Could not finalize Picamera2 encoder")
 
-                # Explicitly stop the switchable output even when start_encoder
-                # failed before returning. Its stop method is idempotent, so
-                # this is also a safe fallback after stop_encoder().
                 if self.local_output is not None:
                     try:
                         self.local_output.stop()
@@ -1702,3 +1695,35 @@ class CameraPipeline:
                 self._latest_bgr = None
                 self._last_detections = []
                 self._last_detection_at = 0.0
+
+        # Segment rotation may be waiting for its bounded keyframe timeout.
+        # Join after Picamera2 is stopped so the output can release that wait.
+        remaining_threads = []
+        for thread in getattr(self, "_threads", []):
+            try:
+                if thread is not threading.current_thread():
+                    thread.join(timeout=14)
+            except Exception:
+                log.exception("Could not join camera worker %s", thread.name)
+            if thread.is_alive():
+                remaining_threads.append(thread)
+        self._threads = remaining_threads
+
+        if remaining_threads:
+            names = ", ".join(thread.name for thread in remaining_threads)
+            self.camera_error = f"Camera workers are still stopping: {names}"
+            log.error(
+                "Camera shutdown left worker(s) alive; restart is blocked until they exit: %s",
+                names,
+            )
+        else:
+            if self.inference_pool is not None:
+                pool = self.inference_pool
+                try:
+                    pool.stop()
+                except Exception:
+                    log.exception("Could not stop YOLO inference workers cleanly")
+                else:
+                    self.inference_pool = None
+            with self._frames_lock:
+                self._inflight_frames.clear()

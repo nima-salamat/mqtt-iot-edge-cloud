@@ -50,6 +50,7 @@ class DeviceMqttEventTests(TestCase):
             "model_loaded": True,
             "mqtt_connected": True,
             "mqtt_command_subscription_ready": True,
+            "recording_supported": True,
             "rtsp_connected": True,
             "camera_ready": True,
             "pending_alerts": 1,
@@ -72,6 +73,7 @@ class DeviceMqttEventTests(TestCase):
         self.assertAlmostEqual(self.device.reported_video_fps, 24.5)
         self.assertEqual(self.device.current_state["telemetry_transport"], "mqtt")
         self.assertTrue(self.device.current_state["mqtt_command_subscription_ready"])
+        self.assertTrue(self.device.current_state["recording_supported"])
         self.assertEqual(self.device.current_state["system"]["temperature_c"], 52.0)
         self.assertEqual(self.device.current_state["system"]["cpu_percent"], 30.0)
         self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 40.0)
@@ -263,6 +265,8 @@ class RemoteDeviceCommandApiTests(TestCase):
             current_state={
                 "mqtt_connected": True,
                 "mqtt_command_subscription_ready": True,
+                "camera_ready": True,
+                "recording_supported": True,
                 "recording_enabled": True,
             },
         )
@@ -307,6 +311,35 @@ class RemoteDeviceCommandApiTests(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertFalse(publish.called)
         self.assertIn("اشتراک", response.json()["error"])
+
+    @patch("dashboard.views.publish_mqtt_command", return_value=True)
+    def test_remote_recording_requires_ready_camera_and_supported_backend(self, publish):
+        self.client.force_login(self.owner)
+        for state, expected_text in (
+            ({
+                "mqtt_connected": True,
+                "mqtt_command_subscription_ready": True,
+                "camera_ready": False,
+                "recording_supported": True,
+            }, "فریم تازه"),
+            ({
+                "mqtt_connected": True,
+                "mqtt_command_subscription_ready": True,
+                "camera_ready": True,
+                "recording_supported": False,
+            }, "پشتیبانی"),
+        ):
+            with self.subTest(state=state):
+                self.device.current_state = state
+                self.device.save(update_fields=["current_state"])
+                response = self.client.post(
+                    reverse("dashboard:device-command", args=[self.device.device_id]),
+                    data=json.dumps({"command_type": "recording.set", "payload": {"enabled": False}}),
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 503 if not state["camera_ready"] else 409)
+                self.assertIn(expected_text, response.json()["error"])
+        self.assertFalse(publish.called)
 
     @patch("dashboard.views.publish_mqtt_command", return_value=True)
     def test_owner_can_publish_a_short_lived_signed_recording_command(self, publish):

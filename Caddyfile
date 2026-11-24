@@ -1,6 +1,11 @@
 {$DOMAIN} {
     encode zstd gzip
 
+    @mediamtxAuth path /api/mediamtx/auth*
+    handle @mediamtxAuth {
+        respond 404
+    }
+
     @mqtt path /mqtt*
     handle @mqtt {
         reverse_proxy broker:9001

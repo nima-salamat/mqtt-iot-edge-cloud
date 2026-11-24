@@ -98,7 +98,22 @@
 const addButtons=[document.getElementById('add-device'),document.getElementById('add-device-empty')].filter(Boolean);
 const modal=document.getElementById('pair-modal');
 const csrf=document.querySelector('input[name=csrfmiddlewaretoken]').value;
-function closeModal(){modal.classList.remove('open');modal.setAttribute('aria-hidden','true');}
+async function fetchWithTimeout(url,options={},timeoutMs=8000){
+  const controller=new AbortController();
+  let timedOut=false;
+  const timer=setTimeout(()=>{timedOut=true;controller.abort();},timeoutMs);
+  try{
+    return await fetch(url,{...options,signal:controller.signal});
+  }catch(error){
+    if(timedOut)throw new Error('درخواست به سرور در مهلت تعیین‌شده پاسخ نداد.');
+    throw error;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+let pairingGeneration=0;
+let pairingCheckInFlight=false;
+function closeModal(){modal.classList.remove('open');modal.setAttribute('aria-hidden','true');pairingGeneration++;if(pairingTimer){clearInterval(pairingTimer);pairingTimer=null;}}
 document.getElementById('close-modal').addEventListener('click',closeModal);
 modal.addEventListener('click',e=>{if(e.target===modal)closeModal();});
 document.getElementById('copy-pair-code').addEventListener('click',async()=>{
@@ -122,15 +137,14 @@ document.getElementById('copy-pair-code').addEventListener('click',async()=>{
   }
 });
 let pairingTimer=null;
-function closeModal(){
-  modal.classList.remove('open');
-  modal.setAttribute('aria-hidden','true');
-  if(pairingTimer){clearInterval(pairingTimer);pairingTimer=null;}
-}
 async function createPairing(){
+  const generation=++pairingGeneration;
   for(const button of addButtons)button.disabled=true;
   try{
-    const response=await fetch('/api/pairings/',{method:'POST',headers:{'X-CSRFToken':csrf,'Accept':'application/json'}});
+    const response=await fetchWithTimeout('/api/pairings/',{
+      method:'POST',
+      headers:{'X-CSRFToken':csrf,'Accept':'application/json'}
+    },12000);
     const result=await response.json();if(!response.ok)throw new Error(result.error||'ایجاد کد اتصال ناموفق بود');
     modal.classList.add('open');modal.setAttribute('aria-hidden','false');
     document.getElementById('pair-qr-image').src=result.qr_data_url;
@@ -139,9 +153,16 @@ async function createPairing(){
     const expiry=new Date(result.expires_at).getTime();
     if(pairingTimer)clearInterval(pairingTimer);
     pairingTimer=setInterval(async()=>{
+      if(generation!==pairingGeneration||pairingCheckInFlight)return;
+      pairingCheckInFlight=true;
       try{
-        const check=await fetch('/api/pairings/'+result.pairing_id+'/',{cache:'no-store'});
+        const check=await fetchWithTimeout(
+          '/api/pairings/'+result.pairing_id+'/',
+          {cache:'no-store'},7000
+        );
+        if(!check.ok)throw new Error('وضعیت Pairing از سرور دریافت نشد.');
         const status=await check.json();
+        if(generation!==pairingGeneration)return;
         if(status.status==='paired'){
           clearInterval(pairingTimer);pairingTimer=null;
           document.getElementById('pair-expiry').textContent='اتصال موفق بود؛ دوربین به حساب شما اضافه شد.';
@@ -152,8 +173,10 @@ async function createPairing(){
           document.getElementById('pair-expiry').textContent='مهلت QR به پایان رسید. برای اتصال مجدد کد تازه بساز.';
         }
       }catch(error){console.warn('Pairing status check failed',error);}
+      finally{pairingCheckInFlight=false;}
     },2000);
-  }catch(error){alert(error.message);}finally{for(const button of addButtons)button.disabled=false;}
+  }catch(error){if(generation===pairingGeneration)alert(error.message);}
+  finally{for(const button of addButtons)button.disabled=false;}
 }
 for(const button of addButtons)button.addEventListener('click',createPairing);
 
@@ -167,10 +190,10 @@ function bindDisconnectButton(button){
     if(!approved)return;
     button.disabled=true;
     try{
-      const response=await fetch(button.dataset.disconnectUrl,{
+      const response=await fetchWithTimeout(button.dataset.disconnectUrl,{
         method:'POST',
         headers:{'X-CSRFToken':csrf,'Accept':'application/json'}
-      });
+      },12000);
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'قطع اتصال دوربین ناموفق بود.');
       await refreshOverview();
@@ -184,13 +207,20 @@ document.querySelectorAll('[data-disconnect-device]').forEach(bindDisconnectButt
 document.getElementById('retention-form').addEventListener('submit',async event=>{
   event.preventDefault();
   const data={server_video_minutes:Number(document.getElementById('ret-video').value),alarm_image_days:Number(document.getElementById('ret-images').value),device_log_days:Number(document.getElementById('ret-logs').value)};
-  const response=await fetch('/settings/retention/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':csrf},body:JSON.stringify(data)});
+  const response=await fetchWithTimeout('/settings/retention/',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':csrf},
+    body:JSON.stringify(data)
+  },10000);
   const result=await response.json();if(!response.ok)alert(result.error||'ذخیره ناموفق بود');else alert('سیاست نگهداری ذخیره شد.');
 });
 
+let overviewRefreshInFlight=false;
 async function refreshOverview(){
+  if(overviewRefreshInFlight)return;
+  overviewRefreshInFlight=true;
   try{
-    const response=await fetch('/api/dashboard/overview/',{cache:'no-store'});
+    const response=await fetchWithTimeout('/api/dashboard/overview/',{cache:'no-store'},7000);
     if(!response.ok)return;
     const data=await response.json();
     const devices=data.devices||[];
@@ -261,6 +291,7 @@ async function refreshOverview(){
       }
     }
   }catch(error){console.warn('Dashboard refresh failed',error);}
+  finally{overviewRefreshInFlight=false;}
 }
 setInterval(refreshOverview,15000);
 </script>

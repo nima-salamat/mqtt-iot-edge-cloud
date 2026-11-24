@@ -39,10 +39,18 @@
       const response = await fetchWithTimeout(
         '/api/dashboard/overview/', {cache: 'no-store'}, 6000
       );
-      if (!response.ok) return;
+      if (!response.ok) throw new Error('وضعیت دستگاه از سرور دریافت نشد.');
       const overview = await response.json();
       const device = (overview.devices || []).find(item => item.device_id === deviceId);
-      if (!device) return;
+      if (!device) {
+        canControl = false;
+        if (!busy) {
+          button.disabled = true;
+          status.textContent = 'دوربین در فهرست دستگاه‌های قابل دسترسی پیدا نشد.';
+        }
+        return;
+      }
+
       canControl = !!(
         device.is_paired
         && device.is_online
@@ -52,26 +60,31 @@
         && device.recording_supported
       );
       if (!busy) button.disabled = !canControl;
+
       if (mqttBadge) {
         mqttBadge.classList.toggle('online', !!device.mqtt_connected);
         mqttBadge.classList.toggle('offline', !device.mqtt_connected);
         mqttBadge.replaceChildren(
-          Object.assign(document.createElement('i'), {}),
+          document.createElement('i'),
           document.createTextNode(device.mqtt_connected ? 'MQTT متصل' : 'MQTT قطع')
         );
       }
-      if (!canControl && !busy) {
-        status.textContent = device.is_paired
-          ? 'برای کنترل از راه دور، دوربین و کانال MQTT باید آنلاین باشند.'
-          : 'اتصال دوربین لغو شده است؛ ابتدا آن را دوباره Pair کن.';
-      } else if (canControl && !busy) {
-        status.textContent = 'اتصال MQTT و اشتراک فرمان آماده است.';
-      } else if (device.is_online && device.mqtt_connected && !device.mqtt_command_subscription_ready && !busy) {
-        status.textContent = 'MQTT متصل است، اما اشتراک فرمان هنوز تأیید نشده است.';
-      } else if (device.is_online && device.mqtt_command_subscription_ready && !device.camera_ready && !busy) {
+
+      if (busy) return;
+      if (!device.is_paired) {
+        status.textContent = 'اتصال دوربین لغو شده است؛ ابتدا آن را دوباره Pair کن.';
+      } else if (!device.is_online) {
+        status.textContent = 'آخرین Heartbeat دوربین قدیمی است؛ دستگاه آنلاین نیست.';
+      } else if (!device.mqtt_connected) {
+        status.textContent = 'دوربین آنلاین است، اما کانال MQTT متصل نیست.';
+      } else if (!device.mqtt_command_subscription_ready) {
+        status.textContent = 'MQTT متصل است، اما اشتراک موضوع فرمان هنوز تأیید نشده است.';
+      } else if (!device.camera_ready) {
         status.textContent = 'دوربین هنوز فریم تازه تولید نمی‌کند یا آماده ضبط نیست.';
-      } else if (device.is_online && device.camera_ready && !device.recording_supported && !busy) {
+      } else if (!device.recording_supported) {
         status.textContent = 'backend فعلی دوربین از ضبط MP4 پشتیبانی نمی‌کند؛ Picamera2 لازم است.';
+      } else {
+        status.textContent = 'اتصال MQTT، اشتراک فرمان و encoder دوربین آماده‌اند.';
       }
     } catch (_) {
       canControl = false;

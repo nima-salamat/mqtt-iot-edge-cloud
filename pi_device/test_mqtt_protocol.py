@@ -74,6 +74,12 @@ class MqttBridgePublishTests(unittest.TestCase):
             call.loop_start(),
         ])
 
+    def test_actual_recording_state_is_exposed_in_bridge_snapshot(self):
+        self.bridge.set_recording_enabled(True)
+        self.assertTrue(self.bridge.snapshot()["recording_enabled"])
+        self.bridge.set_recording_enabled(False)
+        self.assertFalse(self.bridge.snapshot()["recording_enabled"])
+
     def test_server_time_offset_is_bounded_and_applied(self):
         from datetime import datetime, timezone
 

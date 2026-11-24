@@ -469,6 +469,57 @@ def dashboard_overview(request):
 
 
 @login_required
+def dashboard_alerts(request):
+    """Return only newly-created alerts for the signed-in user's devices."""
+    try:
+        after = int(request.GET.get("after", "0"))
+        if after < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "invalid_alert_cursor"}, status=400)
+
+    visible_devices = _visible_devices(request.user)
+    device_id = request.GET.get("device_id", "").strip()
+    if device_id:
+        get_object_or_404(visible_devices, device_id=device_id)
+        queryset = Alarm.objects.filter(device_id=device_id)
+    else:
+        queryset = Alarm.objects.filter(device__in=visible_devices)
+
+    batch = list(
+        queryset.filter(pk__gt=after)
+        .select_related("device")
+        .order_by("pk")[:51]
+    )
+    has_more = len(batch) > 50
+    batch = batch[:50]
+    alerts = []
+    for alarm in batch:
+        alerts.append({
+            "id": alarm.pk,
+            "device_id": alarm.device_id,
+            "device_name": alarm.device.name,
+            "confidence": round(_safe_state_number(alarm.confidence, maximum=1), 3),
+            "detected_at": alarm.detected_at.isoformat(),
+            "acknowledged": alarm.acknowledged,
+            "bbox": alarm.bbox if isinstance(alarm.bbox, list) else [],
+            "has_snapshot": bool(alarm.snapshot),
+            "image_url": reverse("dashboard:alarm-image", args=[alarm.pk]) if alarm.snapshot else None,
+            "device_url": reverse("dashboard:device-detail", args=[alarm.device_id]),
+        })
+
+    return JsonResponse({
+        "alerts": alerts,
+        "next_cursor": alerts[-1]["id"] if alerts else after,
+        "has_more": has_more,
+    })
+
+
+def health(request):
+    return JsonResponse({"status": "ok", "service": "iot-alarm-api"})
+
+
+@login_required
 @require_POST
 def send_device_command(request, device_id):
     """Publish the deliberately small, owner-scoped remote command surface."""

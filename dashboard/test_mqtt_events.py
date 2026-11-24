@@ -254,7 +254,11 @@ class RemoteDeviceCommandApiTests(TestCase):
             is_online=True,
             last_seen=timezone.now(),
             last_heartbeat=timezone.now(),
-            current_state={"mqtt_connected": True, "recording_enabled": True},
+            current_state={
+                "mqtt_connected": True,
+                "mqtt_command_subscription_ready": True,
+                "recording_enabled": True,
+            },
         )
 
     @patch("dashboard.views.publish_mqtt_command", return_value=True)
@@ -278,6 +282,25 @@ class RemoteDeviceCommandApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 202)
         self.assertTrue(publish.called)
+
+    @patch("dashboard.views.publish_mqtt_command", return_value=True)
+    def test_remote_command_is_rejected_until_pi_subscribes_to_command_topic(self, publish):
+        self.device.current_state = {
+            "mqtt_connected": True,
+            "mqtt_command_subscription_ready": False,
+        }
+        self.device.save(update_fields=["current_state"])
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            reverse("dashboard:device-command", args=[self.device.device_id]),
+            data=json.dumps({"command_type": "recording.set", "payload": {"enabled": False}}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(publish.called)
+        self.assertIn("اشتراک", response.json()["error"])
 
     @patch("dashboard.views.publish_mqtt_command", return_value=True)
     def test_owner_can_publish_a_short_lived_signed_recording_command(self, publish):

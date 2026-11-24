@@ -132,6 +132,13 @@ class DeviceLog(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device", "event_id"],
+                condition=models.Q(event_id__gt=""),
+                name="unique_device_log_event",
+            ),
+        ]
 
 
 class RetentionPolicy(models.Model):

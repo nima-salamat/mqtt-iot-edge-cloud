@@ -273,8 +273,9 @@ def heartbeat(request):
     except (TypeError, ValueError, OverflowError):
         return JsonResponse({"error": "invalid_device_metrics"}, status=400)
     for field in (
-        "model_loaded", "mqtt_connected", "rtsp_connected",
-        "camera_ready", "tracking_active", "recording_enabled",
+        "model_loaded", "mqtt_connected", "mqtt_command_subscription_ready",
+        "recording_supported", "rtsp_connected", "camera_ready",
+        "tracking_active", "recording_enabled",
     ):
         if field in payload and type(payload[field]) is not bool:
             return JsonResponse({"error": "invalid_device_metrics"}, status=400)

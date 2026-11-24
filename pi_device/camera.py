@@ -785,6 +785,15 @@ class CameraPipeline:
             except Exception:
                 cleanup_succeeded = False
                 log.exception("Could not close partially-started Picamera2 instance")
+            if local_output is not None:
+                try:
+                    local_output.stop()
+                except Exception:
+                    cleanup_succeeded = False
+                    log.exception("Could not close local MP4 output after camera startup failure")
+                if getattr(local_output, "stop_failed", False):
+                    cleanup_succeeded = False
+                    log.error("Local MP4 output reports an incomplete close after startup failure")
             if live_output:
                 try:
                     live_output.stop()
@@ -872,7 +881,13 @@ class CameraPipeline:
                 try:
                     self.local_output.switch_output(output)
                 except Exception:
-                    next_marker.unlink(missing_ok=True)
+                    # The new muxer may have created a partial MP4 before
+                    # failing. Keep its .open marker so the uploader cannot
+                    # mistake that file for a finalized recording.
+                    log.error(
+                        "Retaining incomplete MP4 marker after recording resume failed: %s",
+                        next_marker.name,
+                    )
                     self.recording_enabled = self._local_recording_attached
                     self.settings_store.update({
                         "recording_enabled": self._local_recording_attached
@@ -939,7 +954,7 @@ class CameraPipeline:
                 continue
             try:
                 with self._recording_lock:
-                    if not self.recording_enabled or self.local_output is None:
+                    if self._stop.is_set() or not self.recording_enabled or self.local_output is None:
                         continue
                     next_path = self._segment_path()
                     next_marker = self._mark_open(next_path)
@@ -949,7 +964,13 @@ class CameraPipeline:
                     try:
                         previous_finalized = self.local_output.switch_output(output)
                     except Exception:
-                        next_marker.unlink(missing_ok=True)
+                        # Leave this failed segment protected. A later camera
+                        # restart quarantines stale .open files after all writer
+                        # handles have been closed.
+                        log.error(
+                            "Retaining incomplete MP4 marker after segment rotation failed: %s",
+                            next_marker.name,
+                        )
                         raise
                     # Keep a failed-to-finalize old segment marked so the
                     # uploader never reads a potentially corrupt MP4. The
@@ -1583,59 +1604,83 @@ class CameraPipeline:
                 log.exception("Could not stop YOLO inference workers cleanly")
             self.inference_pool = None
         self._inflight_frames.clear()
-        if self.live_output:
-            self.live_output.stop()
-        if self._opencv_capture is not None:
-            try:
-                self._opencv_capture.release()
-            except Exception:
-                log.exception("Could not release OpenCV camera capture")
-            self._opencv_capture = None
-        stopped_cleanly = True
-        if self.picam2:
-            try:
-                self.picam2.stop()
-            except Exception:
-                stopped_cleanly = False
-                log.exception("Could not stop Picamera2 camera")
-            try:
-                if self.encoder is not None:
-                    self.picam2.stop_encoder(self.encoder)
-                if getattr(self.local_output, "stop_failed", False):
-                    stopped_cleanly = False
-                    log.error("A local MP4 output did not finalize during camera shutdown")
-            except Exception:
-                stopped_cleanly = False
-                log.exception("Could not finalize Picamera2 encoder")
-            try:
-                self.picam2.close()
-            except Exception:
-                stopped_cleanly = False
-                log.exception("Could not close Picamera2 instance")
-        if stopped_cleanly and self._current_marker:
-            # Removing the marker makes a complete, finalized MP4 eligible for
-            # retry upload. If close failed, keep it so startup discards it.
-            self._current_marker.unlink(missing_ok=True)
 
-        self.picam2 = None
-        self.encoder = None
-        self.local_output = None
-        self.live_output = None
-        if self.camera_backend == "opencv":
+        # Serialize shutdown with manual pause/resume and periodic segment
+        # rotation. Otherwise a late keyframe callback can swap an MP4 writer
+        # while the camera is being torn down.
+        with self._recording_lock:
+            if self.live_output:
+                try:
+                    self.live_output.stop()
+                except Exception:
+                    log.exception("Could not stop RTSPS output cleanly")
+
+            if self._opencv_capture is not None:
+                try:
+                    self._opencv_capture.release()
+                except Exception:
+                    log.exception("Could not release OpenCV camera capture")
+                self._opencv_capture = None
+
+            stopped_cleanly = True
+            if self.picam2:
+                try:
+                    self.picam2.stop()
+                except Exception:
+                    stopped_cleanly = False
+                    log.exception("Could not stop Picamera2 camera")
+                try:
+                    if self.encoder is not None:
+                        self.picam2.stop_encoder(self.encoder)
+                except Exception:
+                    stopped_cleanly = False
+                    log.exception("Could not finalize Picamera2 encoder")
+
+                # Explicitly stop the switchable output even when start_encoder
+                # failed before returning. Its stop method is idempotent, so
+                # this is also a safe fallback after stop_encoder().
+                if self.local_output is not None:
+                    try:
+                        self.local_output.stop()
+                    except Exception:
+                        stopped_cleanly = False
+                        log.exception("Could not close local MP4 output")
+                    if getattr(self.local_output, "stop_failed", False):
+                        stopped_cleanly = False
+                        log.error("A local MP4 output did not finalize during camera shutdown")
+
+                try:
+                    self.picam2.close()
+                except Exception:
+                    stopped_cleanly = False
+                    log.exception("Could not close Picamera2 instance")
+
+            if stopped_cleanly and self._current_marker:
+                # Removing the marker makes a complete, finalized MP4 eligible
+                # for retry upload. If any writer cleanup failed, retain it.
+                try:
+                    self._current_marker.unlink(missing_ok=True)
+                except OSError:
+                    stopped_cleanly = False
+                    log.exception("Could not release finalized MP4 marker")
+
+            self.picam2 = None
+            self.encoder = None
+            self.local_output = None
+            self.live_output = None
             self.recording_enabled = False
-        self.bridge.set_tracking(False, self._tracking_seconds)
-        self.bridge.model_loaded = False
-        self.inference_fps = 0.0
-        self.inference_latency_ms = 0.0
-        self._current_segment = None
-        self._current_marker = None
-        self._local_recording_attached = False
-        self.recording_enabled = False
-        self.bridge.set_recording_supported(False)
-        self._publish_recording_state()
-        with self._frames_lock:
-            self.latest_jpeg = None
-            self.latest_frame_at = 0.0
-            self._latest_bgr = None
-            self._last_detections = []
-            self._last_detection_at = 0.0
+            self._current_segment = None
+            self._current_marker = None
+            self._local_recording_attached = False
+            self.bridge.set_tracking(False, self._tracking_seconds)
+            self.bridge.model_loaded = False
+            self.inference_fps = 0.0
+            self.inference_latency_ms = 0.0
+            self.bridge.set_recording_supported(False)
+            self._publish_recording_state()
+            with self._frames_lock:
+                self.latest_jpeg = None
+                self.latest_frame_at = 0.0
+                self._latest_bgr = None
+                self._last_detections = []
+                self._last_detection_at = 0.0

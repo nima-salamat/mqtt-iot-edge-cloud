@@ -916,7 +916,7 @@ class DashboardVideoRangeTests(TestCase):
             "last_video_upload_error": ["unsafe"],
             "system": {
                 "path": "/etc/shadow",
-                "temperature_c": float("nan"),
+                "temperature_c": "NaN",
                 "cpu_percent": True,
                 "memory": {"used_percent": "Infinity"},
             },

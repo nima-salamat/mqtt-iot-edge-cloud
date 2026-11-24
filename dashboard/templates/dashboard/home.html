@@ -206,13 +206,28 @@ function bindDisconnectButton(button){
 document.querySelectorAll('[data-disconnect-device]').forEach(bindDisconnectButton);
 document.getElementById('retention-form').addEventListener('submit',async event=>{
   event.preventDefault();
-  const data={server_video_minutes:Number(document.getElementById('ret-video').value),alarm_image_days:Number(document.getElementById('ret-images').value),device_log_days:Number(document.getElementById('ret-logs').value)};
-  const response=await fetchWithTimeout('/settings/retention/',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':csrf},
-    body:JSON.stringify(data)
-  },10000);
-  const result=await response.json();if(!response.ok)alert(result.error||'ذخیره ناموفق بود');else alert('سیاست نگهداری ذخیره شد.');
+  const form=event.currentTarget;
+  const button=form.querySelector('button[type="submit"]');
+  const data={
+    server_video_minutes:Number(document.getElementById('ret-video').value),
+    alarm_image_days:Number(document.getElementById('ret-images').value),
+    device_log_days:Number(document.getElementById('ret-logs').value)
+  };
+  if(button)button.disabled=true;
+  try{
+    const response=await fetchWithTimeout('/settings/retention/',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':csrf},
+      body:JSON.stringify(data)
+    },10000);
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.error||'ذخیره ناموفق بود');
+    alert('سیاست نگهداری ذخیره شد.');
+  }catch(error){
+    alert(error.message||'ارتباط با سرور ناموفق بود.');
+  }finally{
+    if(button)button.disabled=false;
+  }
 });
 
 let overviewRefreshInFlight=false;

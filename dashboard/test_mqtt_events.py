@@ -162,6 +162,28 @@ class RemoteDeviceCommandApiTests(TestCase):
         )
 
     @patch("dashboard.views.publish_mqtt_command", return_value=True)
+    def test_fresh_heartbeat_overrides_stale_cached_offline_flag(self, publish):
+        self.device.is_online = False
+        self.device.save(update_fields=["is_online"])
+        self.client.force_login(self.owner)
+
+        overview = self.client.get(reverse("dashboard-overview"))
+        self.assertEqual(overview.status_code, 200)
+        device_state = next(
+            item for item in overview.json()["devices"]
+            if item["device_id"] == self.device.device_id
+        )
+        self.assertTrue(device_state["is_online"])
+
+        response = self.client.post(
+            reverse("dashboard:device-command", args=[self.device.device_id]),
+            data=json.dumps({"command_type": "recording.set", "payload": {"enabled": False}}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(publish.called)
+
+    @patch("dashboard.views.publish_mqtt_command", return_value=True)
     def test_owner_can_publish_a_short_lived_signed_recording_command(self, publish):
         self.client.force_login(self.owner)
         response = self.client.post(

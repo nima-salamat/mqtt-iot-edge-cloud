@@ -85,6 +85,8 @@ services:
       PANEL_PASSWORD: ${PANEL_PASSWORD:?Set PANEL_PASSWORD in .env}
       MQTT_BROKER_HOST: broker
       MQTT_BROKER_PORT: "1883"
+    volumes:
+      - iot_media:/app/data/media
     expose: ["8501"]
     depends_on:
       api:

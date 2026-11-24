@@ -21,8 +21,34 @@
     <video id="live-video" autoplay playsinline muted></video>
     <p id="live-status" class="muted">برای ایجاد دسترسی موقت و مشاهده زنده روی اتصال کلیک کن.</p>
   </section>
-  <section class="panel">
-    <span class="eyebrow">EDGE HEALTH</span><h2>وضعیت پردازش روی Pi</h2>
+  <section class="panel edge-health-panel">
+    <span class="eyebrow">EDGE HEALTH</span><h2>سلامت سخت‌افزار و پردازش Pi</h2>
+    <div class="edge-health-grid">
+      <article class="edge-health-card" data-system-metric="temperature">
+        <div><span class="health-icon">°C</span><small>دمای پردازنده</small></div>
+        <strong id="system-temperature">{% if device.current_state.system.temperature_c != None %}{{ device.current_state.system.temperature_c }}°C{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="temperature-progress" style="width:{% if device.current_state.system.temperature_c != None %}{{ device.current_state.system.temperature_c|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <small id="temperature-note">دمای SoC Raspberry Pi</small>
+      </article>
+      <article class="edge-health-card" data-system-metric="cpu">
+        <div><span class="health-icon">CPU</span><small>مصرف پردازنده</small></div>
+        <strong id="system-cpu">{% if device.current_state.system.cpu_percent != None %}{{ device.current_state.system.cpu_percent }}٪{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="cpu-progress" style="width:{% if device.current_state.system.cpu_percent != None %}{{ device.current_state.system.cpu_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <small>مصرف لحظه‌ای پردازنده</small>
+      </article>
+      <article class="edge-health-card" data-system-metric="memory">
+        <div><span class="health-icon">RAM</span><small>حافظه اصلی</small></div>
+        <strong id="memory-usage">{% if device.current_state.system.memory.used_percent != None %}{{ device.current_state.system.memory.used_percent }}٪{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="memory-progress" style="width:{% if device.current_state.system.memory.used_percent != None %}{{ device.current_state.system.memory.used_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <small id="memory-note">{% if device.current_state.system.memory.total_bytes %}{{ device.current_state.system.memory.used_bytes|filesizeformat }} / {{ device.current_state.system.memory.total_bytes|filesizeformat }}{% else %}در انتظار داده سیستم{% endif %}</small>
+      </article>
+      <article class="edge-health-card" data-system-metric="storage">
+        <div><span class="health-icon">SSD</span><small>فضای ذخیره‌سازی Pi</small></div>
+        <strong id="storage-usage">{% if device.current_state.system.storage.used_percent != None %}{{ device.current_state.system.storage.used_percent }}٪{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="storage-progress" style="width:{% if device.current_state.system.storage.used_percent != None %}{{ device.current_state.system.storage.used_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <small id="storage-note">{% if device.current_state.system.storage.free_bytes %}{{ device.current_state.system.storage.free_bytes|filesizeformat }} آزاد{% else %}فضای آزاد دیسک{% endif %}</small>
+      </article>
+    </div>
     <div class="health-list">
       <div><span>وضعیت مدل</span><b>{% if device.model_loaded %}YOLOv5n NCNN فعال{% else %}مدل بارگذاری نشده{% endif %}</b></div>
       <div><span>ارسال زنده RTSPS</span><b>{% if device.current_state.rtsp_connected %}متصل{% else %}در حال اتصال مجدد{% endif %}</b></div>
@@ -76,33 +102,38 @@
 
 <section class="section">
   <div class="section-heading">
-    <div><span class="eyebrow">RECORDED VIDEO</span><h2>آرشیو و پخش ویدئوهای گذشته</h2><p class="muted">قطعه‌ها پس از تکمیل و آپلود خودکار در این فهرست ظاهر می‌شوند؛ فهرست هر ۵ ثانیه بدون رفرش صفحه تازه‌سازی می‌شود.</p></div>
+    <div><span class="eyebrow">CONTINUOUS VIDEO ARCHIVE</span><h2>پلیر پیوسته آرشیو دوربین</h2><p class="muted">فایل‌های MP4 مجاور در سرور به یک جریان پیوسته تبدیل می‌شوند. پخش‌کننده فقط چانک بعدی را هنگام نیاز دریافت می‌کند و جابه‌جایی روی تایم‌لاین از هر قطعه‌ای شروع می‌شود.</p></div>
     <button class="btn danger" type="button" data-cleanup-kind="videos" data-device-id="{{ device.device_id }}" data-cleanup-url="{% url 'dashboard:cleanup-data' %}">پاک‌سازی ویدئوهای این دوربین</button>
   </div>
-  <div class="video-history-panel" id="video-history-panel" data-videos-url="{% url 'dashboard:device-videos' device.device_id %}">
-    <video id="recorded-video-player" controls playsinline preload="metadata"></video>
-    <div class="video-history-controls">
-      <button class="btn primary" id="play-video-history" type="button" {% if not segments %}disabled{% endif %}>پخش پشت‌سرهم آرشیو</button>
-      <button class="btn secondary" id="previous-video-segment" type="button" disabled>قطعه قبلی</button>
-      <button class="btn secondary" id="next-video-segment" type="button" disabled>قطعه بعدی</button>
-      <span id="recorded-video-label" class="muted" aria-live="polite">یک قطعه ویدئو انتخاب کن.</span>
-      <span id="video-history-status" class="muted" aria-live="polite">در انتظار همگام‌سازی آرشیو…</span>
+  <div class="video-history-panel continuous-video-panel" id="video-history-panel"
+       data-videos-url="{% url 'dashboard:device-videos' device.device_id %}"
+       data-chunk-url="{% url 'dashboard:device-video-chunk' device.device_id %}">
+    <video id="recorded-video-player" controls playsinline preload="none"></video>
+    <div class="archive-player-toolbar">
+      <button class="btn primary" id="play-video-history" type="button" disabled>شروع پخش آرشیو</button>
+      <span id="video-history-status" class="muted" aria-live="polite">در انتظار فهرست قطعه‌های ذخیره‌شده…</span>
     </div>
-    <div class="video-segment-list" id="video-segment-list">
-      {% for segment in segments %}
-        <button class="video-segment-option" type="button"
-          data-video-url="{% url 'dashboard:segment-file' segment.pk %}"
-          data-segment-id="{{ segment.pk }}"
-          data-started-at="{{ segment.started_at|date:'c' }}"
-          data-duration="{{ segment.duration_seconds }}"
-          data-label="{{ segment.started_at|date:'Y-m-d H:i:s' }}">
-          <span>{{ segment.started_at|date:"Y-m-d H:i:s" }}</span>
-          <small>{{ segment.duration_seconds }} ثانیه · {{ segment.size_bytes|filesizeformat }}</small>
-        </button>
-      {% empty %}
-        <div class="empty-card" data-video-empty>در حال بررسی وضعیت ضبط و آرشیو دوربین…</div>
-      {% endfor %}
+    <div class="archive-timeline">
+      <div class="archive-timeline-heading">
+        <b>خط زمان ضبط‌شده</b>
+        <strong id="archive-current-time">—</strong>
+        <small id="archive-chunk-status">بافر: خودکار</small>
+      </div>
+      <div class="archive-timeline-track" id="archive-timeline-track">
+        <div class="archive-timeline-segments" id="archive-timeline-segments"></div>
+        <input id="archive-timeline" type="range" min="0" max="1" step="0.1" value="0" disabled aria-label="جابه‌جایی در خط زمان آرشیو">
+      </div>
+      <div class="archive-timeline-labels">
+        <span id="archive-start-label">—</span>
+        <span id="archive-duration-label">۰ ثانیه</span>
+        <span id="archive-end-label">—</span>
+      </div>
     </div>
+    <div class="archive-player-footer">
+      <span id="recorded-video-label" class="muted">برای شروع، پخش را بزن یا روی نوار زمان جابه‌جا شو.</span>
+      <span id="archive-buffer-label" class="muted">هنوز چانکی دریافت نشده است.</span>
+    </div>
+    <div id="archive-empty" class="empty-card">هنوز ویدئویی در سرور دریافت نشده است. پس از فعال بودن ضبط MP4 روی Pi، قطعه‌های پیوسته اینجا ظاهر می‌شوند.</div>
   </div>
 </section>
 
@@ -286,5 +317,5 @@
   }));
 })();
 </script>
-<script src="{% static 'dashboard/video_history.js' %}?v=20261124-live-archive-1" defer></script>
+<script src="{% static 'dashboard/video_history.js' %}?v=20261124-continuous-mse-1" defer></script>
 {% endblock %}

@@ -588,3 +588,9 @@ button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{
   .metric-card-heading>span:last-child{min-height:32px}
   .queue-card-icon{width:36px!important;height:36px!important;min-width:36px;min-height:36px}
 }
+
+
+/* Long diagnostic messages must scroll inside their cards, not stretch the console. */
+.diagnostic-grid>div{min-width:0;min-height:0;align-content:start}
+.diagnostic-grid b{max-height:86px;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere;word-break:break-word}
+.camera-errors{max-height:120px;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}

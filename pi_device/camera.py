@@ -416,8 +416,9 @@ class CameraPipeline:
         if any(thread.is_alive() for thread in getattr(self, "_threads", [])):
             return True
         pool = self.inference_pool
-        if pool is not None and any(
-            process.is_alive() for process in getattr(pool, "processes", [])
+        if pool is not None and (
+            bool(getattr(pool, "started", False))
+            or any(process.is_alive() for process in getattr(pool, "processes", []))
         ):
             return True
         rtsp_thread = getattr(self.live_output, "_thread", None)

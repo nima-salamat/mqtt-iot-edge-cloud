@@ -34,10 +34,15 @@ class SensorModeSelectionTests(unittest.TestCase):
         self.assertEqual(mode["size"], (1296, 972))
         self.assertEqual(fps, 30)
 
-    def test_manual_clamps_to_fastest_supported_mode(self):
+    def test_manual_selects_lower_resolution_when_that_is_the_only_fast_mode(self):
         mode, fps = select_sensor_mode(self.MODES, 1280, 720, 90, auto=False)
-        self.assertEqual(mode["size"], (1296, 972))
-        self.assertEqual(fps, 58.92)
+        self.assertEqual(mode["size"], (640, 480))
+        self.assertEqual(fps, 90)
+
+    def test_manual_uses_fastest_mode_when_request_exceeds_all_sensor_modes(self):
+        mode, fps = select_sensor_mode(self.MODES, 1280, 720, 150, auto=False)
+        self.assertEqual(mode["size"], (640, 480))
+        self.assertEqual(fps, 120)
 
     def test_empty_modes_returns_fallback(self):
         mode, fps = select_sensor_mode([], 1280, 720, 30, auto=True)

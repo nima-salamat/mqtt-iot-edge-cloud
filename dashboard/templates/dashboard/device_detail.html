@@ -99,11 +99,6 @@
       {% endfor %}
     </div>
   </div>
-  <div class="table-wrap"><table><thead><tr><th>زمان شروع</th><th>مدت</th><th>حجم</th><th>فایل</th></tr></thead><tbody>
-    {% for segment in segments %}
-      <tr><td>{{ segment.started_at|date:"Y-m-d H:i:s" }}</td><td>{{ segment.duration_seconds }} ثانیه</td><td>{{ segment.size_bytes|filesizeformat }}</td><td><button class="table-link-button" type="button" data-play-video-url="{% url 'dashboard:segment-file' segment.pk %}">انتخاب برای پخش</button></td></tr>
-    {% empty %}<tr><td colspan="4" class="empty">هنوز قطعه ویدئویی دریافت نشده است.</td></tr>{% endfor %}
-  </tbody></table></div>
 </section>
 
 <section class="section">

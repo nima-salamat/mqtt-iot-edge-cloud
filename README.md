@@ -43,8 +43,9 @@ Django is the application backend and owns users, device ownership, QR pairing, 
 
 ## Camera, recording and live video
 
-1. Picamera2 configures a 1280x720 main stream and a 640x360 low-resolution stream.
-2. The Pi 4 H.264 hardware encoder targets 30 FPS and feeds both outputs from one encoded camera stream.
+1. Picamera2 configures the selected output resolution (factory default 1280x720) and a separate 640x360 low-resolution stream for YOLO.
+2. The camera portal enumerates the actual Picamera2 sensor modes or V4L2 webcam modes and shows the supported output resolutions with the maximum compatible sensor cadence for each.
+3. The H.264 encoder uses the requested video FPS, bounded by the fastest sensor mode compatible with the selected resolution; the selected output resolution is never silently changed to satisfy an FPS request.
 3. The local output rotates into short MP4 segments (5 seconds by default). Completed segments form the Pi's upload spool.
 4. A separate RTSPS output publishes the live H.264 stream to MediaMTX over TLS/TCP on port 8322.
 5. MediaMTX exposes browser playback through WebRTC/WHEP. Django first issues a short-lived grant to a signed-in device owner.
@@ -53,12 +54,12 @@ Django is the application backend and owns users, device ownership, QR pairing, 
 
 Live video and local recording are independent. If the Internet or RTSPS connection drops, the Pi continues recording locally and retries the live connection with exponential backoff. Completed video segments remain in the durable HTTPS outbox and upload after connectivity returns. The system cannot stream frames live while the network is down; the saved segments provide delayed evidence after reconnection.
 
-The 30 FPS value is a target, not a performance guarantee. Actual capture FPS is reported by the camera encoder and shown separately from the AI inference FPS.
+The factory 30 FPS value is a target, not a performance guarantee. The FPS selector is no longer limited to a fixed 30 FPS ceiling: its available rates and maximum are derived from the active camera's reported modes at the selected resolution. A mode that can reach a higher cadence only at a smaller resolution is offered as a separate resolution choice. Actual encoded capture FPS is measured and reported separately; sensor capability, encoder throughput, system load and the selected mode can all make the measured rate lower than the requested target.
 
 ## Edge AI and alarms
 
 - YOLOv5n NCNN runs on the Raspberry Pi, not on the VPS.
-- The default inference target is 5 FPS, independently adjustable from the 30 FPS video target.
+- The default inference target is 10 FPS, independently adjustable from the video target. The requested inference rate is bounded by camera cadence and actual worker capacity; it is not a promise that YOLO can process that many frames per second on a Pi 4.
 - The detector evaluates the COCO person class only.
 - An alarm is confirmed when person detection is present in at least 2 of the last 3 inference frames.
 - An alert cooldown prevents one person remaining in view from producing a continuous sequence of duplicate alerts.
@@ -135,9 +136,10 @@ These settings are stored on the Pi and are independent from the retention polic
 | Maximum pending video queue size | 8 GB | 1–64 GB |
 | Local uploaded alarm snapshots | 7 days | 1–90 days |
 | Local uploaded device logs | 7 days | 1–90 days |
-| Video target | 30 FPS | 5–30 FPS |
+| Output resolution | 1280×720 | Detected sensor/V4L2 modes; options are populated from the active camera |
+| Video target | 30 FPS | 1 FPS to the maximum mode compatible with the selected resolution |
 | H.264 video bitrate | 1,000,000 bit/s | 500,000–8,000,000 bit/s |
-| AI inference target | 10 FPS | 1–10 FPS |
+| AI inference target | 10 FPS | 1 FPS up to the selected camera cadence; real rate is limited by NCNN worker throughput |
 | YOLO inference workers | 2 processes | 1–3 processes |
 | Person confidence threshold | 0.45 | 0.10–0.95 |
 | Alert cooldown | 15 seconds | 1–300 seconds |
@@ -146,7 +148,7 @@ These settings are stored on the Pi and are independent from the retention polic
 
 Unsent recordings are not removed by the normal local rolling-retention timer. They remain queued until upload succeeds, their retry age expires or the configured size cap is reached. When the queue cap is exceeded, the oldest pending video segments are removed first. Alarm evidence has a reserved portion of the configured queue quota. A prolonged outage can still exhaust storage; use a suitable SD card or external SSD and monitor the local page.
 
-Changing the video FPS, bitrate, segment duration or YOLO worker count requires a service restart. AI FPS, confidence, alert cooldown/clear time and retention settings are read dynamically.
+Changing the camera output resolution, video FPS mode/target, bitrate, segment duration, camera backend/source or YOLO worker count requires a camera service restart. Resolution changes are validated against the active sensor/driver modes before saving. After changing camera backend/source, restart once and reload the local page so its supported resolution/FPS list is read from the new camera. AI FPS, confidence, alert cooldown/clear time and retention settings are read dynamically.
 
 The local camera portal groups these settings by purpose and shows measured YOLO FPS, worker readiness/latency, Raspberry Pi temperature, available RAM and data-volume usage. The temperature and resource indicators are diagnostic readings, not controls. Increasing the worker count can increase memory and CPU pressure; compare the measured FPS and temperature on the actual Pi before keeping a higher value.
 
@@ -330,9 +332,9 @@ The app's backend services are not published on public interfaces. Do not expose
 - Django Admin: https://server.echonode.website/admin/
 - Operator diagnostics: https://server.echonode.website/ops/
 
-The Django user dashboard includes registered camera cards, live status, recent alarms, per-device health, live WebRTC view, alarm snapshots and bounding boxes, uploaded MP4 segments, device logs and per-user retention settings.
+The Django user dashboard includes registered camera cards, live status, recent alarms with image thumbnails, per-device health, live WebRTC view, a chronological MP4 archive player with sequential playback, device logs, per-device cleanup actions and per-user retention settings. The account dashboard also supports cleanup of server-side alarms/images, archived videos and logs; these actions never delete the Pi's local files.
 
-The Streamlit /ops page is a separate operator diagnostics view for device heartbeats, alarms, uploaded video segments, device logs, Mosquitto and database health. It uses a separate PANEL_USERNAME / PANEL_PASSWORD; it is not the user-facing IoT panel and does not control devices.
+The Streamlit /ops page is a separate operator diagnostics view for device heartbeats, selectable alarm-image previews, archived MP4 playback, device logs, Mosquitto and database health. Its archive page also supports owner/operator-wide or per-camera evidence cleanup. It uses a separate PANEL_USERNAME / PANEL_PASSWORD; it is not the user-facing IoT panel and does not control devices. The Streamlit web container mounts the shared media volume read/write so it can display and clean up the same Django evidence files.
 
 ## Server retention
 

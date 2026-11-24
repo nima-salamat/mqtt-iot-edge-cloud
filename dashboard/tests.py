@@ -766,6 +766,46 @@ class UserDeviceIsolationTests(TestCase):
         self.assertFalse(self.device_a.stream_path)
         self.assertIsNotNone(StreamGrant.objects.get(device=self.device_a).revoked_at)
 
+    def test_disconnect_clears_remote_recording_state_and_fails_queued_commands(self):
+        self.device_a.api_token_hash = "hashed-token"
+        self.device_a.stream_path = self.device_a.device_id
+        self.device_a.is_online = True
+        self.device_a.model_loaded = True
+        self.device_a.current_state = {
+            "mqtt_connected": True,
+            "mqtt_command_subscription_ready": True,
+            "recording_supported": True,
+            "recording_enabled": True,
+            "camera_ready": True,
+            "rtsp_connected": True,
+        }
+        self.device_a.save()
+        command = DeviceCommand.objects.create(
+            command_id="c" * 32,
+            device=self.device_a,
+            command_type="recording.set",
+            payload={"enabled": False},
+            status="published",
+            expires_at=timezone.now() + timedelta(minutes=1),
+        )
+        self.client.force_login(self.owner_a)
+
+        response = self.client.post(
+            reverse("dashboard:device-disconnect", args=[self.device_a.device_id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.device_a.refresh_from_db()
+        command.refresh_from_db()
+        for field in (
+            "mqtt_connected", "mqtt_command_subscription_ready",
+            "recording_supported", "camera_ready", "rtsp_connected",
+        ):
+            self.assertFalse(self.device_a.current_state[field])
+        self.assertFalse(self.device_a.current_state["recording_enabled"])
+        self.assertEqual(command.status, "failed")
+        self.assertEqual(command.result["error"], "device_pairing_revoked")
+
     def test_each_user_gets_an_independent_retention_policy(self):
         policy_a, _ = RetentionPolicy.objects.get_or_create(user=self.owner_a)
         policy_b, _ = RetentionPolicy.objects.get_or_create(user=self.owner_b)

@@ -88,6 +88,8 @@ def normalize_settings(value: dict[str, Any]) -> dict[str, Any]:
             source = str(raw or "").strip().replace(chr(0), "")[:2048]
             result[key] = source or "0"
             continue
+        if isinstance(raw, bool):
+            continue
         low, high = RANGES.get(key, (None, None))
         try:
             number = float(raw) if key == "alert_confidence" else int(raw)

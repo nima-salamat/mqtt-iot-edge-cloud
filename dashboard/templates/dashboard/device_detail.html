@@ -26,26 +26,26 @@
     <div class="edge-health-grid">
       <article class="edge-health-card" data-system-metric="temperature">
         <div><span class="health-icon">°C</span><small>دمای پردازنده</small></div>
-        <strong id="system-temperature">{% if device.current_state.system.temperature_c != None %}{{ device.current_state.system.temperature_c }}°C{% else %}—{% endif %}</strong>
-        <div class="edge-health-track"><span id="temperature-progress" style="width:{% if device.current_state.system.temperature_c != None %}{{ device.current_state.system.temperature_c|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <strong id="system-temperature">{% if device.current_state.system.temperature_c or device.current_state.system.temperature_c == 0 %}{{ device.current_state.system.temperature_c }}°C{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="temperature-progress" style="width:{% if device.current_state.system.temperature_c or device.current_state.system.temperature_c == 0 %}{{ device.current_state.system.temperature_c|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
         <small id="temperature-note">دمای SoC Raspberry Pi</small>
       </article>
       <article class="edge-health-card" data-system-metric="cpu">
         <div><span class="health-icon">CPU</span><small>مصرف پردازنده</small></div>
-        <strong id="system-cpu">{% if device.current_state.system.cpu_percent != None %}{{ device.current_state.system.cpu_percent }}٪{% else %}—{% endif %}</strong>
-        <div class="edge-health-track"><span id="cpu-progress" style="width:{% if device.current_state.system.cpu_percent != None %}{{ device.current_state.system.cpu_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <strong id="system-cpu">{% if device.current_state.system.cpu_percent or device.current_state.system.cpu_percent == 0 %}{{ device.current_state.system.cpu_percent }}٪{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="cpu-progress" style="width:{% if device.current_state.system.cpu_percent or device.current_state.system.cpu_percent == 0 %}{{ device.current_state.system.cpu_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
         <small>مصرف لحظه‌ای پردازنده</small>
       </article>
       <article class="edge-health-card" data-system-metric="memory">
         <div><span class="health-icon">RAM</span><small>حافظه اصلی</small></div>
-        <strong id="memory-usage">{% if device.current_state.system.memory.used_percent != None %}{{ device.current_state.system.memory.used_percent }}٪{% else %}—{% endif %}</strong>
-        <div class="edge-health-track"><span id="memory-progress" style="width:{% if device.current_state.system.memory.used_percent != None %}{{ device.current_state.system.memory.used_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <strong id="memory-usage">{% if device.current_state.system.memory.used_percent or device.current_state.system.memory.used_percent == 0 %}{{ device.current_state.system.memory.used_percent }}٪{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="memory-progress" style="width:{% if device.current_state.system.memory.used_percent or device.current_state.system.memory.used_percent == 0 %}{{ device.current_state.system.memory.used_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
         <small id="memory-note">{% if device.current_state.system.memory.total_bytes %}{{ device.current_state.system.memory.used_bytes|filesizeformat }} / {{ device.current_state.system.memory.total_bytes|filesizeformat }}{% else %}در انتظار داده سیستم{% endif %}</small>
       </article>
       <article class="edge-health-card" data-system-metric="storage">
         <div><span class="health-icon">SSD</span><small>فضای ذخیره‌سازی Pi</small></div>
-        <strong id="storage-usage">{% if device.current_state.system.storage.used_percent != None %}{{ device.current_state.system.storage.used_percent }}٪{% else %}—{% endif %}</strong>
-        <div class="edge-health-track"><span id="storage-progress" style="width:{% if device.current_state.system.storage.used_percent != None %}{{ device.current_state.system.storage.used_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
+        <strong id="storage-usage">{% if device.current_state.system.storage.used_percent or device.current_state.system.storage.used_percent == 0 %}{{ device.current_state.system.storage.used_percent }}٪{% else %}—{% endif %}</strong>
+        <div class="edge-health-track"><span id="storage-progress" style="width:{% if device.current_state.system.storage.used_percent or device.current_state.system.storage.used_percent == 0 %}{{ device.current_state.system.storage.used_percent|floatformat:0 }}{% else %}0{% endif %}%"></span></div>
         <small id="storage-note">{% if device.current_state.system.storage.free_bytes %}{{ device.current_state.system.storage.free_bytes|filesizeformat }} آزاد{% else %}فضای آزاد دیسک{% endif %}</small>
       </article>
     </div>

@@ -69,9 +69,11 @@ def _load_local_flask_secret() -> str:
         return configured
 
     data_dir = Path(os.getenv("PI_DATA_DIR", "/var/lib/mqttiot")).expanduser()
-    secret_path = Path(
-        os.getenv("LOCAL_WEB_SECRET_PATH", str(data_dir / "local-web-secret"))
-    ).expanduser()
+    configured_secret_path = os.getenv("LOCAL_WEB_SECRET_PATH", "").strip()
+    secret_path = (
+        Path(configured_secret_path).expanduser()
+        if configured_secret_path else data_dir / "local-web-secret"
+    )
     if secret_path.is_symlink():
         raise RuntimeError("Refusing to use a symlink as the local Flask session secret.")
     try:

@@ -426,18 +426,18 @@ class RaspberryPiMqttBridge:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             now = self._server_now()
             if expires_at <= issued_at or expires_at - issued_at > timedelta(minutes=2):
-                self._send_command_ack(command_id, "failed", {"error": "invalid_command_expiry"})
+                self._send_command_ack_async(command_id, "failed", {"error": "invalid_command_expiry"})
                 return
             if issued_at > now + timedelta(seconds=30):
-                self._send_command_ack(command_id, "failed", {"error": "command_not_yet_valid"})
+                self._send_command_ack_async(command_id, "failed", {"error": "command_not_yet_valid"})
                 return
             if expires_at <= now:
-                self._send_command_ack(command_id, "failed", {"error": "command_expired"})
+                self._send_command_ack_async(command_id, "failed", {"error": "command_expired"})
                 return
             command_type = str(payload.get("command_type", ""))
             command_payload = payload.get("payload")
             if not isinstance(command_payload, dict):
-                self._send_command_ack(command_id, "failed", {"error": "invalid_payload"})
+                self._send_command_ack_async(command_id, "failed", {"error": "invalid_payload"})
                 return
             threading.Thread(
                 target=self._execute_command,
@@ -459,6 +459,16 @@ class RaspberryPiMqttBridge:
         except Exception as exc:
             log.exception("Remote MQTT command %s failed", command_id)
             self._send_command_ack(command_id, "failed", {"error": str(exc)[:300]})
+
+    def _send_command_ack_async(self, command_id, status, result):
+        """Publish a rejection outside Paho's network callback thread."""
+        thread = threading.Thread(
+            target=self._send_command_ack,
+            args=(command_id, status, result),
+            name=f"mqtt-command-ack-{command_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
 
     def _send_command_ack(self, command_id, status, result):
         self._publish_signed(

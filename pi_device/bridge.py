@@ -42,6 +42,7 @@ class RaspberryPiMqttBridge:
         self.inference_fps = 0.0
         self.model_loaded = False
         self.recording_enabled = False
+        self.recording_supported = False
         self.rtsp_connected = False
         self.camera_ready = False
         self.pending_alert_count = 0
@@ -515,6 +516,10 @@ class RaspberryPiMqttBridge:
         with self._lock:
             self.recording_enabled = bool(enabled)
 
+    def set_recording_supported(self, supported):
+        with self._lock:
+            self.recording_supported = bool(supported)
+
     def set_tracking(self, active, duration_seconds):
         with self._lock:
             self.tracking_active = bool(active)
@@ -535,6 +540,7 @@ class RaspberryPiMqttBridge:
                 "inference_fps": self.inference_fps,
                 "model_loaded": self.model_loaded,
                 "recording_enabled": self.recording_enabled,
+                "recording_supported": self.recording_supported,
                 "rtsp_connected": self.rtsp_connected,
                 "camera_ready": self.camera_ready,
                 "pending_alerts": self.pending_alert_count,

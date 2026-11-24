@@ -348,6 +348,17 @@ class DeviceApiTests(TestCase):
             self.assertFalse(retry.json()["created"])
             self.assertEqual(VideoSegment.objects.filter(device=self.device, segment_id=segment_id).count(), 1)
 
+    def test_mediamtx_auth_denies_malformed_or_non_object_json(self):
+        for body in (json.dumps([]), b"\\xff"):
+            with self.subTest(body=body):
+                response = self.client.post(
+                    reverse("mediamtx-auth"),
+                    data=body,
+                    content_type="application/json",
+                    HTTP_HOST="api:8000",
+                )
+                self.assertEqual(response.status_code, 403)
+
     def test_mediamtx_publish_auth_accepts_internal_compose_service_host(self):
         response = self.client.post(
             reverse("mediamtx-auth"),

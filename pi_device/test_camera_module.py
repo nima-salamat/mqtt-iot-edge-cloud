@@ -316,6 +316,45 @@ class CameraPipelineStructureTests(unittest.TestCase):
             self.assertTrue(replacement.started)
             self.assertIs(switchable._output, replacement)
 
+    def test_manual_pause_keeps_marker_when_mp4_finalize_fails(self):
+        module = self._load_camera_module()
+        package = types.ModuleType("picamera2")
+        package.__path__ = []
+        outputs_module = types.ModuleType("picamera2.outputs")
+        outputs_module.PyavOutput = MagicMock()
+        camera = object.__new__(module.CameraPipeline)
+        camera.camera_backend = "picamera2"
+        camera._recording_lock = threading.RLock()
+        camera.picam2 = object()
+        camera.local_output = SimpleNamespace(switch_output=MagicMock(return_value=False))
+        camera.recording_enabled = True
+        camera._local_recording_attached = True
+        camera.settings_store = SimpleNamespace(update=MagicMock())
+        camera.uploader = SimpleNamespace(_queue_lock=threading.RLock())
+        camera.bridge = SimpleNamespace(set_recording_enabled=MagicMock())
+        camera._publish_recording_state = lambda: camera.bridge.set_recording_enabled(
+            bool(camera.picam2 is not None and camera._local_recording_attached and camera.recording_enabled)
+        )
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, {
+            "picamera2": package,
+            "picamera2.outputs": outputs_module,
+        }):
+            segment = Path(directory) / "partial.mp4"
+            marker_path = segment.with_suffix(".open")
+            segment.write_bytes(b"partial-mp4")
+            marker_path.touch()
+            camera._current_segment = segment
+            camera._current_marker = marker_path
+
+            result = module.CameraPipeline.set_recording_enabled(camera, False)
+
+            self.assertFalse(result["recording_enabled"])
+            self.assertTrue(segment.exists())
+            self.assertTrue(marker_path.exists())
+            camera.local_output.switch_output.assert_called_once_with(None)
+            camera.bridge.set_recording_enabled.assert_called_once_with(False)
+
     def test_switchable_output_reports_child_finalize_failures_on_shutdown(self):
         module = self._load_camera_module()
         package = types.ModuleType("picamera2")

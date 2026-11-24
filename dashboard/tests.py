@@ -1173,6 +1173,37 @@ class DashboardVideoRangeTests(TestCase):
             )
         self.assertEqual(response.status_code, 503)
 
+    def test_missing_media_storage_objects_return_not_found_instead_of_server_error(self):
+        alarm = Alarm.objects.create(
+            device=self.device,
+            alert_id="ab" * 16,
+            confidence=0.9,
+            bbox=[],
+        )
+        alarm.snapshot.save("missing-alarm.jpg", ContentFile(b"jpeg"), save=True)
+        alarm_name = alarm.snapshot.name
+        alarm.snapshot.storage.delete(alarm_name)
+
+        segment = VideoSegment.objects.create(
+            device=self.device,
+            segment_id="missing-segment-file",
+            duration_seconds=5,
+        )
+        segment.file.save("missing-segment-file.mp4", ContentFile(b"video"), save=True)
+        segment_name = segment.file.name
+        segment.file.storage.delete(segment_name)
+
+        self.client.force_login(self.owner)
+        image_response = self.client.get(
+            reverse("dashboard:alarm-image", args=[alarm.pk])
+        )
+        video_response = self.client.get(
+            reverse("dashboard:segment-file", args=[segment.pk])
+        )
+
+        self.assertEqual(image_response.status_code, 404)
+        self.assertEqual(video_response.status_code, 404)
+
     def test_archived_video_supports_browser_byte_ranges(self):
         segment = VideoSegment.objects.create(
             device=self.device, segment_id="range-segment", duration_seconds=5

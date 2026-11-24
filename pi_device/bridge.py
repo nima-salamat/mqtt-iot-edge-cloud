@@ -50,6 +50,7 @@ class RaspberryPiMqttBridge:
         self._lock = threading.RLock()
         self._reconnect_lock = threading.Lock()
         self._signing_key = ""
+        self._server_time_offset_seconds = None
         self._command_handler = None
         self._started = False
         self._command_subscription_ready = False
@@ -66,7 +67,7 @@ class RaspberryPiMqttBridge:
         self.client = mqtt.Client(
             callback_api_version=CallbackAPIVersion.VERSION2,
             client_id=f"camera-{device_id}",
-            clean_session=False,
+            clean_session=True,
             protocol=mqtt.MQTTv311,
             transport="websockets",
         )
@@ -102,6 +103,25 @@ class RaspberryPiMqttBridge:
                     daemon=True,
                 ).start()
         return True
+
+    def set_server_time_offset(self, offset_seconds):
+        """Use the HTTPS server clock for command expiry when the Pi RTC drifts."""
+        try:
+            offset = float(offset_seconds)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not (-24 * 60 * 60 <= offset <= 24 * 60 * 60):
+            return False
+        with self._lock:
+            self._server_time_offset_seconds = offset
+        log.info("Calibrated MQTT command clock against HTTPS server (offset=%+.1fs)", offset)
+        return True
+
+    def _server_now(self):
+        with self._lock:
+            offset = self._server_time_offset_seconds
+        now = datetime.now(timezone.utc)
+        return now + timedelta(seconds=offset or 0.0)
 
     def _signed(self, payload):
         with self._lock:
@@ -396,14 +416,18 @@ class RaspberryPiMqttBridge:
             expires_at = datetime.fromisoformat(
                 str(payload.get("expires_at", "")).replace("Z", "+00:00")
             )
-            now = datetime.now(timezone.utc)
             if issued_at.tzinfo is None:
                 issued_at = issued_at.replace(tzinfo=timezone.utc)
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
-            if issued_at > now + timedelta(seconds=30):
+            now = self._server_now()
+            if expires_at <= issued_at or expires_at - issued_at > timedelta(minutes=2):
+                self._send_command_ack(command_id, "failed", {"error": "invalid_command_expiry"})
                 return
-            if expires_at <= now or expires_at - issued_at > timedelta(minutes=2):
+            if issued_at > now + timedelta(seconds=30):
+                self._send_command_ack(command_id, "failed", {"error": "command_not_yet_valid"})
+                return
+            if expires_at <= now:
                 self._send_command_ack(command_id, "failed", {"error": "command_expired"})
                 return
             command_type = str(payload.get("command_type", ""))
@@ -484,6 +508,7 @@ class RaspberryPiMqttBridge:
                 "device_id": self.device_id,
                 "mqtt_connected": self.connected,
                 "mqtt_signing_key_loaded": bool(self._signing_key),
+                "mqtt_server_time_offset_seconds": self._server_time_offset_seconds,
                 "mqtt_command_subscription_ready": self._command_subscription_ready,
                 "mqtt_host": self.host,
                 "mqtt_last_publish_at": self.last_publish_at,

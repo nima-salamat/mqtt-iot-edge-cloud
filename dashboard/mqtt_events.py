@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone as datetime_timezone
 from django.conf import settings
 from django.utils import timezone
 
-from .api import _sanitize_system_metrics
+from .api import _merge_system_metrics, _sanitize_system_metrics
 from .models import Alarm, Device, DeviceCommand
 from .mqtt_security import device_mqtt_signing_key, verify_mqtt_payload
 
@@ -139,8 +139,10 @@ def _apply_telemetry(device, payload, now):
     if "last_video_upload_error" in payload:
         state["last_video_upload_error"] = str(payload.get("last_video_upload_error") or "")[:500]
     system = _sanitize_system_metrics(payload.get("system"))
-    if system:
-        state["system"] = system
+    if system is not None:
+        merged_system = _merge_system_metrics(state.get("system"), system)
+        if merged_system is not None:
+            state["system"] = merged_system
 
     device.current_state = state
     device.save(update_fields=[

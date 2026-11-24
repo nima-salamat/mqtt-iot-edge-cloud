@@ -443,6 +443,11 @@ def dashboard_overview(request):
                 "pending_video_segments": int(device.current_state.get("pending_video_segments", 0) or 0),
                 "system": (
                     device.current_state.get("system", {})
+                    if isinstance(device.current_state, dict)
+                    and isinstance(device.current_state.get("system"), dict) else {}
+                ),
+                "system": (
+                    device.current_state.get("system", {})
                     if isinstance(device.current_state.get("system"), dict) else {}
                 ),
             }

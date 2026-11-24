@@ -69,6 +69,17 @@ class VideoBitrateMigrationTests(unittest.TestCase):
                 updated, _ = settings.update({"alert_confidence": invalid})
                 self.assertEqual(updated["alert_confidence"], original)
 
+    def test_boolean_values_are_not_coerced_into_numeric_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = SettingsStore(str(Path(directory) / "settings.json"))
+            original = settings.get()
+            updated, _ = settings.update({
+                "video_width": True,
+                "alert_confidence": False,
+            })
+            self.assertEqual(updated["video_width"], original["video_width"])
+            self.assertEqual(updated["alert_confidence"], original["alert_confidence"])
+
     def test_camera_resolution_is_persisted_and_requires_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"

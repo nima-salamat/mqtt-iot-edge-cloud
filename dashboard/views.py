@@ -543,7 +543,12 @@ def cleanup_data(request):
     try:
         result = cleanup_iot_data(kind, devices)
     except OSError:
-        return JsonResponse({"error": "حذف فایل‌های ذخیره‌شده کامل نشد؛ لاگ سرور را بررسی کن."}, status=500)
+        # The cleanup service already removed successful items and retained
+        # failed rows for retry. 503 communicates a storage outage, not a
+        # malformed request or an internal programming error.
+        return JsonResponse({
+            "error": "بخشی از فایل‌ها به دلیل خطای فضای ذخیره‌سازی حذف نشدند؛ موارد ناموفق برای تلاش دوباره باقی مانده‌اند."
+        }, status=503)
     return JsonResponse({"status": "cleaned", "kind": kind, **result})
 
 

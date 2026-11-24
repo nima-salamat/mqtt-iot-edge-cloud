@@ -397,9 +397,9 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
             str(clean.get("camera_backend", current["camera_backend"])) != current["camera_backend"]
             or str(clean.get("camera_source", current["camera_source"])) != current["camera_source"]
         )
-        if not source_changed and camera.available_video_modes and (
-            "video_width" in clean or "video_height" in clean
-        ):
+        width = current["video_width"]
+        height = current["video_height"]
+        if "video_width" in clean or "video_height" in clean:
             try:
                 raw_width = clean.get("video_width", current["video_width"])
                 raw_height = clean.get("video_height", current["video_height"])
@@ -407,8 +407,15 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
                     raise ValueError("Boolean is not a resolution")
                 width = int(raw_width)
                 height = int(raw_height)
+                if float(raw_width) != width or float(raw_height) != height:
+                    raise ValueError("Resolution must use integer dimensions")
+                if width <= 0 or height <= 0:
+                    raise ValueError("Resolution must be positive")
             except (TypeError, ValueError, OverflowError):
                 return jsonify({"error": "وضوح تصویر باید با دو عدد صحیح معتبر مشخص شود."}), 400
+        if not source_changed and camera.available_video_modes and (
+            "video_width" in clean or "video_height" in clean
+        ):
             compatible_modes = [
                 mode for mode in camera.available_video_modes
                 if int(mode.get("size", (0, 0))[0]) >= width

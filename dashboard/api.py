@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import math
 import json
 import re
 import secrets
@@ -30,6 +31,51 @@ def _json_body(request):
         return value if isinstance(value, dict) else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
+
+
+def _finite_number(value, minimum=0, maximum=1_000_000_000_000):
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number) or number < minimum or number > maximum:
+        return None
+    return number
+
+
+def _sanitize_system_metrics(raw):
+    """Allowlist and bound telemetry so JSON state never stores NaN or host paths."""
+    if not isinstance(raw, dict):
+        return None
+
+    result = {}
+    cpu = _finite_number(raw.get("cpu_percent"), 0, 100)
+    temperature = _finite_number(raw.get("temperature_c"), -10, 150)
+    if cpu is not None:
+        result["cpu_percent"] = round(cpu, 1)
+    if temperature is not None:
+        result["temperature_c"] = round(temperature, 1)
+
+    for key in ("memory", "storage"):
+        values = raw.get(key)
+        if not isinstance(values, dict):
+            continue
+        clean = {}
+        for source, target in (
+            ("total_bytes", "total_bytes"),
+            ("used_bytes", "used_bytes"),
+            ("available_bytes" if key == "memory" else "free_bytes",
+             "available_bytes" if key == "memory" else "free_bytes"),
+        ):
+            number = _finite_number(values.get(source), 0, 1 << 50)
+            if number is not None:
+                clean[target] = int(number)
+        used_percent = _finite_number(values.get("used_percent"), 0, 100)
+        if used_percent is not None:
+            clean["used_percent"] = round(used_percent, 1)
+        if clean:
+            result[key] = clean
+    return result
 
 
 @login_required
@@ -164,6 +210,9 @@ def heartbeat(request):
             state["last_video_upload_at"] = last_video_upload_at
     if "last_video_upload_error" in payload:
         state["last_video_upload_error"] = str(payload.get("last_video_upload_error") or "").strip()[:500]
+    system_metrics = _sanitize_system_metrics(payload.get("system"))
+    if system_metrics is not None:
+        state["system"] = system_metrics
     device.current_state = state
     device.save(update_fields=[
         "is_online", "last_seen", "last_heartbeat", "reported_video_fps",

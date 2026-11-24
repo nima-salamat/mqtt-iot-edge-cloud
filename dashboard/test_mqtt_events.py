@@ -174,6 +174,18 @@ class DeviceMqttEventTests(TestCase):
         self.device.refresh_from_db()
         self.assertEqual(self.device.current_state["system"]["cpu_percent"], 12.0)
 
+    def test_oversized_mqtt_event_is_rejected_before_json_parsing(self):
+        oversized = (
+            '{"device_id":"' + self.device.device_id + '","padding":"'
+            + ("x" * (256 * 1024)) + '"}'
+        ).encode("utf-8")
+        self.assertFalse(process_mqtt_message(
+            f"{self.topic}/telemetry", oversized, qos=1
+        ))
+        self.device.refresh_from_db()
+        self.assertFalse(self.device.is_online)
+        self.assertIsNone(self.device.last_heartbeat)
+
     def test_invalid_hmac_is_ignored(self):
         payload = self.signed({
             "device_id": self.device.device_id,

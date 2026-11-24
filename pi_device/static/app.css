@@ -424,3 +424,67 @@ button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{
   .metric-icon svg{width:17px;height:17px}
   .detection-toolbar{width:100%;justify-content:space-between}
 }
+
+
+/* Pixel-consistent icon alignment across the local CCTV console. */
+.metric-card-heading{
+  display:grid;
+  grid-template-columns:34px minmax(0,1fr);
+  align-items:center;
+  column-gap:10px;
+  min-height:38px;
+}
+.metric-card-heading>span:last-child{
+  min-width:0;
+  line-height:1.65;
+}
+.metric-icon{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  box-sizing:border-box;
+  padding:0;
+  line-height:0;
+  vertical-align:middle;
+  overflow:hidden;
+}
+.metric-icon svg{
+  display:block;
+  flex:0 0 20px;
+  width:20px;
+  height:20px;
+  margin:0;
+}
+.queue-card-icon{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  box-sizing:border-box;
+  line-height:1;
+  padding:0;
+}
+.console-nav a{
+  line-height:1.5;
+}
+.console-nav a span{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:0 0 20px;
+  width:20px;
+  height:20px;
+  line-height:1;
+  margin:0;
+}
+@media(max-width:700px){
+  .metric-card-heading{
+    grid-template-columns:30px minmax(0,1fr);
+    column-gap:7px;
+    min-height:34px;
+  }
+  .metric-icon svg{
+    flex-basis:18px;
+    width:18px;
+    height:18px;
+  }
+}

@@ -194,6 +194,7 @@ class DurableUploader:
             )
 
         moved = []
+        primary_destination = None
         for source in sources:
             if source.is_symlink() or not source.is_file():
                 continue
@@ -203,18 +204,20 @@ class DurableUploader:
             try:
                 source.replace(destination)
                 moved.append(destination.name)
+                if source == path:
+                    primary_destination = destination
             except OSError:
                 log.exception("Could not quarantine queue file %s", source)
 
-        if path.name in moved:
-            reason_path = target_dir / f"{path.name}.reason.txt"
+        if primary_destination is not None:
+            reason_path = target_dir / f"{primary_destination.name}.reason.txt"
             if reason_path.exists():
-                reason_path = target_dir / f"{path.stem}.{time.time_ns()}.reason.txt"
+                reason_path = target_dir / f"{primary_destination.stem}.{time.time_ns()}.reason.txt"
             try:
                 atomic_write_text(
                     reason_path,
-                    f"Quarantined at {datetime.now(timezone.utc).isoformat()}\\n"
-                    f"Reason: {type(reason).__name__}\\n",
+                    f"Quarantined at {datetime.now(timezone.utc).isoformat()}\n"
+                    f"Reason: {type(reason).__name__}\n",
                 )
             except OSError:
                 log.exception("Could not write quarantine reason for %s", path.name)

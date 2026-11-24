@@ -2,6 +2,7 @@ import hashlib
 import json
 import tempfile
 from datetime import timedelta
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 from django.contrib.auth import get_user_model

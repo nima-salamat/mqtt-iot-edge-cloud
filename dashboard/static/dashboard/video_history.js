@@ -235,8 +235,14 @@
     playButton.textContent = player.paused ? 'ادامه پخش آرشیو' : 'توقف پخش';
   }
 
-  function waitForEvent(target, eventName, errorName = 'error') {
+  function waitForEvent(target, eventName, errorName = 'error', timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
+      let timer = null;
+      const cleanup = () => {
+        if (timer !== null) window.clearTimeout(timer);
+        target.removeEventListener(eventName, onSuccess);
+        target.removeEventListener(errorName, onError);
+      };
       const onSuccess = () => {
         cleanup();
         resolve();
@@ -245,16 +251,27 @@
         cleanup();
         reject(new Error('مرورگر نتوانست داده ویدئو را پردازش کند.'));
       };
-      const cleanup = () => {
-        target.removeEventListener(eventName, onSuccess);
-        target.removeEventListener(errorName, onError);
-      };
-      target.addEventListener(eventName, onSuccess, {once: true});
-      target.addEventListener(errorName, onError, {once: true});
+
+      target.addEventListener(eventName, onSuccess);
+      target.addEventListener(errorName, onError);
+      // Attach listeners before checking readiness so updateend/sourceopen
+      // cannot be lost in the gap between a state check and listener setup.
+      const alreadyReady = (
+        (eventName === 'sourceopen' && target.readyState === 'open') ||
+        (eventName === 'updateend' && target.updating === false)
+      );
+      if (alreadyReady) {
+        onSuccess();
+      } else {
+        timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('مرورگر برای آماده‌سازی بافر ویدئو بیش از حد منتظر ماند.'));
+        }, timeoutMs);
+      }
     });
   }
 
-  async function openMediaSource(codec) {
+  async function openMediaSource(codec, generation) {
     if (!('MediaSource' in window) || !MediaSource.isTypeSupported('video/mp4; codecs="' + codec + '"')) {
       throw new Error('مرورگر از پخش پیوسته H.264/MP4 با Media Source Extensions پشتیبانی نمی‌کند.');
     }
@@ -265,28 +282,47 @@
     player.removeAttribute('src');
     player.load();
 
-    mediaSource = new MediaSource();
-    objectUrl = URL.createObjectURL(mediaSource);
+    const nextMediaSource = new MediaSource();
+    mediaSource = nextMediaSource;
+    objectUrl = URL.createObjectURL(nextMediaSource);
     player.src = objectUrl;
-    await waitForEvent(mediaSource, 'sourceopen');
-    sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="' + codec + '"');
-    sourceBuffer.mode = 'sequence';
+    await waitForEvent(nextMediaSource, 'sourceopen');
+    if (generation !== seekGeneration || mediaSource !== nextMediaSource) return false;
+
+    const nextSourceBuffer = nextMediaSource.addSourceBuffer('video/mp4; codecs="' + codec + '"');
+    nextSourceBuffer.mode = 'sequence';
+    if (generation !== seekGeneration || mediaSource !== nextMediaSource) return false;
+    sourceBuffer = nextSourceBuffer;
     sourceCodec = codec;
+    return true;
   }
 
-  async function appendToSourceBuffer(bytes) {
-    if (!sourceBuffer || !mediaSource || mediaSource.readyState !== 'open') {
+  async function appendToSourceBuffer(bytes, generation) {
+    const buffer = sourceBuffer;
+    const source = mediaSource;
+    if (!buffer || !source || source.readyState !== 'open') {
       throw new Error('بافر ویدئو هنوز آماده نیست.');
     }
-    if (sourceBuffer.updating) await waitForEvent(sourceBuffer, 'updateend');
-    const update = waitForEvent(sourceBuffer, 'updateend');
+    if (buffer.updating) await waitForEvent(buffer, 'updateend');
+    // A seek can replace the MediaSource while the previous append waits for
+    // updateend. Never append an old chunk into the newly-selected timeline.
+    if (
+      generation !== seekGeneration
+      || buffer !== sourceBuffer
+      || source !== mediaSource
+      || source.readyState !== 'open'
+    ) return false;
+
+    const update = waitForEvent(buffer, 'updateend');
     try {
-      sourceBuffer.appendBuffer(bytes);
+      buffer.appendBuffer(bytes);
     } catch (error) {
       throw new Error('افزودن چانک به پلیر ناموفق بود: ' + error.message);
     }
     await update;
+    if (generation !== seekGeneration || buffer !== sourceBuffer) return false;
     updateSourceDuration();
+    return true;
   }
 
   function updateSourceDuration() {
@@ -317,6 +353,11 @@
     const generation = seekGeneration;
     const controller = new AbortController();
     activeChunkController = controller;
+    let requestTimedOut = false;
+    const requestTimer = window.setTimeout(() => {
+      requestTimedOut = true;
+      controller.abort();
+    }, 75000);
     try {
       const url = new URL(chunkUrl, window.location.origin);
       url.searchParams.set('start_id', String(segments[startIndex].id));
@@ -348,10 +389,11 @@
       if (!bytes.byteLength) throw new Error('سرور چانک خالی برگرداند.');
 
       if (reset || !sourceBuffer || sourceCodec !== codec) {
-        await openMediaSource(codec);
+        const opened = await openMediaSource(codec, generation);
+        if (!opened) return;
       }
-      await appendToSourceBuffer(bytes);
-      if (generation !== seekGeneration) return;
+      const appended = await appendToSourceBuffer(bytes, generation);
+      if (!appended || generation !== seekGeneration) return;
 
       lastChunkBytes = bytes.byteLength;
       lastChunkCount = count;
@@ -378,11 +420,15 @@
       }
       setStatus('پخش پیوسته آماده است · ' + numberFa(count, 0) + ' قطعه در یک چانک به هم متصل شد.');
     } catch (error) {
-      if (generation === seekGeneration && error.name !== 'AbortError') {
-        setStatus('خطا در دریافت یا پخش آرشیو: ' + error.message);
-        if (selectedLabel) selectedLabel.textContent = error.message;
+      if (generation === seekGeneration && (error.name !== 'AbortError' || requestTimedOut)) {
+        const message = requestTimedOut
+          ? 'دریافت چانک آرشیو بیش از ۷۵ ثانیه طول کشید و لغو شد.'
+          : error.message;
+        setStatus('خطا در دریافت یا پخش آرشیو: ' + message);
+        if (selectedLabel) selectedLabel.textContent = message;
       }
     } finally {
+      window.clearTimeout(requestTimer);
       if (activeChunkController === controller) activeChunkController = null;
       if (generation === seekGeneration) chunkLoading = false;
     }
@@ -394,10 +440,19 @@
     const generation = seekGeneration;
     activeChunkController?.abort();
     activeChunkController = null;
+    chunkLoading = false;
     const oldBuffer = sourceBuffer;
     if (oldBuffer?.updating) {
-      try { await waitForEvent(oldBuffer, 'updateend'); } catch (_) {}
+      try {
+        await waitForEvent(oldBuffer, 'updateend');
+      } catch (error) {
+        if (generation === seekGeneration) {
+          setStatus('بافر قبلی آرشیو آزاد نشد؛ جابه‌جایی زمان لغو شد: ' + error.message);
+        }
+        return;
+      }
     }
+    if (generation !== seekGeneration) return;
     const located = segmentAtOffset(offset);
     if (!located.segment) return;
     seekInProgress = true;
@@ -559,17 +614,29 @@
   async function refreshArchive() {
     if (!feedUrl || feedLoading || document.hidden) return;
     feedLoading = true;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 8000);
     try {
       const response = await fetch(feedUrl, {
         credentials: 'same-origin',
         cache: 'no-store',
-        headers: {'Accept': 'application/json'}
+        headers: {'Accept': 'application/json'},
+        signal: controller.signal
       });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       applyFeed(await response.json());
     } catch (error) {
-      setStatus('دریافت وضعیت آرشیو ناموفق بود: ' + error.message);
+      if (error.name !== 'AbortError' || timedOut) {
+        setStatus(timedOut
+          ? 'دریافت وضعیت آرشیو بیش از ۸ ثانیه طول کشید.'
+          : 'دریافت وضعیت آرشیو ناموفق بود: ' + error.message);
+      }
     } finally {
+      window.clearTimeout(timer);
       feedLoading = false;
     }
   }

@@ -290,6 +290,7 @@ def heartbeat(request):
         "mqtt_command_subscription_ready": (
             payload.get("mqtt_command_subscription_ready") is True
         ),
+        "recording_supported": payload.get("recording_supported") is True,
         "telemetry_transport": "https",
         "last_https_heartbeat_at": now.isoformat(),
         "rtsp_connected": bool(payload.get("rtsp_connected", False)),

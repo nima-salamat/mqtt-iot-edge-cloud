@@ -49,6 +49,7 @@ class DeviceMqttEventTests(TestCase):
             "inference_fps": 5.0,
             "model_loaded": True,
             "mqtt_connected": True,
+            "mqtt_command_subscription_ready": True,
             "rtsp_connected": True,
             "camera_ready": True,
             "pending_alerts": 1,
@@ -70,6 +71,7 @@ class DeviceMqttEventTests(TestCase):
         self.assertTrue(self.device.model_loaded)
         self.assertAlmostEqual(self.device.reported_video_fps, 24.5)
         self.assertEqual(self.device.current_state["telemetry_transport"], "mqtt")
+        self.assertTrue(self.device.current_state["mqtt_command_subscription_ready"])
         self.assertEqual(self.device.current_state["system"]["temperature_c"], 52.0)
         self.assertEqual(self.device.current_state["system"]["cpu_percent"], 30.0)
         self.assertEqual(self.device.current_state["system"]["memory"]["used_percent"], 40.0)

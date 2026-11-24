@@ -38,6 +38,7 @@ def select_sensor_mode(
         if item[1] >= int(width) and item[2] >= int(height)
     ] or usable
 
+    target = max(1.0, float(requested_fps))
     if auto:
         selected = max(
             compatible,
@@ -47,9 +48,10 @@ def select_sensor_mode(
                 2 if item[0].get("fourcc") in {"MJPG", "H264", "AVC1"} else 1,
             ),
         )
-        return selected[0], selected[3]
+        # Auto mode may use the sensor's fastest compatible readout mode,
+        # but it must not silently raise the requested stream/encoder cadence.
+        return selected[0], min(target, selected[3])
 
-    target = max(1.0, float(requested_fps))
     supporting = [item for item in compatible if item[3] >= target]
     if supporting:
         selected = min(

@@ -101,20 +101,22 @@ class RaspberryPiMqttBridge:
             if should_restart:
                 self._restart_after_pair = False
         if changed and self._signing_key:
-            self._configure_will()
             if should_restart:
                 # A revoked credential session was fully stopped. A new,
-                # validated pairing starts that same client exactly once.
+                # validated pairing starts that same client exactly once;
+                # start() configures the Will before its next CONNECT.
                 self.start()
             elif connected and self._started:
-                # The Will is transmitted as part of CONNECT. Reconnect once
-                # after key bootstrap so an already-paired Pi receives a
-                # signed Last Will without creating a second Paho loop.
+                # The Will is transmitted as part of CONNECT. Reconfigure and
+                # reconnect once after key bootstrap so an already-paired Pi
+                # receives a signed Last Will without a second Paho loop.
+                self._configure_will()
                 threading.Thread(
                     target=self._reconnect_for_will,
                     name="mqtt-will-refresh",
                     daemon=True,
                 ).start()
+            # On the initial startup, start() below will configure the Will.
         return True
 
     def revoke_credentials(self):

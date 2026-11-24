@@ -37,6 +37,27 @@ class CameraPipelineStructureTests(unittest.TestCase):
         self.assertTrue(callable(module.CameraPipeline.is_running))
         self.assertTrue(callable(module.CameraPipeline._capture_opencv_loop))
 
+    def test_bridge_queue_and_worker_metrics_are_throttled_to_once_per_second(self):
+        module = self._load_camera_module()
+        camera = object.__new__(module.CameraPipeline)
+        camera._last_metrics_update_at = 0.0
+        camera.inference_pool = None
+        camera.video_fps = 29.0
+        camera.inference_fps = 9.5
+        camera.live_output = None
+        camera.bridge = MagicMock()
+        camera._pending_alarm_count = MagicMock(return_value=0)
+        camera._pending_video_count = MagicMock(return_value=4)
+        camera._is_camera_ready = MagicMock(return_value=True)
+
+        camera._publish_bridge_metrics(100.0)
+        camera._publish_bridge_metrics(100.5)
+        camera._publish_bridge_metrics(101.1)
+
+        self.assertEqual(camera.bridge.set_metrics.call_count, 2)
+        self.assertEqual(camera._pending_alarm_count.call_count, 2)
+        self.assertEqual(camera._pending_video_count.call_count, 2)
+
     def test_tracking_duration_is_finalized_after_detection_grace_period(self):
         module = self._load_camera_module()
         camera = object.__new__(module.CameraPipeline)

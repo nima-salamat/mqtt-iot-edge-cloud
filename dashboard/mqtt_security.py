@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
 import os
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from django.conf import settings
@@ -114,6 +116,51 @@ def encrypt_mqtt_command(command: dict, signing_key: str) -> dict:
     envelope["nonce"] = base64.urlsafe_b64encode(nonce).decode("ascii").rstrip("=")
     envelope["ciphertext"] = base64.urlsafe_b64encode(ciphertext).decode("ascii").rstrip("=")
     return sign_mqtt_payload(envelope, signing_key)
+
+
+def decrypt_mqtt_command(envelope: dict, signing_key: str) -> dict:
+    """Verify and decrypt a command envelope for testing and controlled tooling."""
+    if not verify_mqtt_payload(envelope, signing_key):
+        raise ValueError("invalid_encrypted_command_signature")
+    if not isinstance(envelope, dict) or envelope.get("encryption") != "aes-256-gcm-v1":
+        raise ValueError("unencrypted_or_unsupported_command")
+    required = ("device_id", "command_id", "issued_at", "expires_at", "nonce", "ciphertext")
+    if any(not isinstance(envelope.get(key), str) or not envelope[key] for key in required):
+        raise ValueError("invalid_encrypted_command")
+
+    try:
+        nonce_value = envelope["nonce"]
+        ciphertext_value = envelope["ciphertext"]
+        if len(nonce_value) > 32 or len(ciphertext_value) > 8192:
+            raise ValueError("encrypted_command_too_large")
+
+        def decode(value):
+            return base64.b64decode(
+                value + ("=" * (-len(value) % 4)),
+                altchars=b"-_",
+                validate=True,
+            )
+
+        nonce = decode(nonce_value)
+        ciphertext = decode(ciphertext_value)
+        if len(nonce) != 12 or len(ciphertext) < 16:
+            raise ValueError("invalid_encrypted_command")
+        cleartext = AESGCM(_command_encryption_key(signing_key)).decrypt(
+            nonce, ciphertext, _command_aad(envelope)
+        )
+        command = json.loads(cleartext.decode("utf-8"))
+    except (InvalidTag, binascii.Error, UnicodeDecodeError, json.JSONDecodeError,
+            TypeError, KeyError, ValueError) as exc:
+        raise ValueError("command_decryption_failed") from exc
+
+    if (
+        not isinstance(command, dict)
+        or not isinstance(command.get("command_type"), str)
+        or not command.get("command_type")
+        or not isinstance(command.get("payload"), dict)
+    ):
+        raise ValueError("invalid_decrypted_command")
+    return command
 
 
 def verify_mqtt_payload(payload: dict, signing_key: str) -> bool:

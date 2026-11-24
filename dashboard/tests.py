@@ -566,6 +566,34 @@ class DeviceApiTests(TestCase):
             self.assertEqual(len(stored_files), 1)
             self.assertEqual(stored_files[0].read_bytes(), video_bytes)
 
+    def test_manual_cleanup_retains_database_row_when_storage_delete_fails(self):
+        from django.core.files.storage import FileSystemStorage
+        from dashboard.services import cleanup_iot_data
+
+        good = VideoSegment.objects.create(
+            device=self.device, segment_id="cleanup-good", started_at=timezone.now()
+        )
+        good.file.save("cleanup-good.mp4", ContentFile(b"good-video"), save=True)
+        bad = VideoSegment.objects.create(
+            device=self.device, segment_id="cleanup-bad", started_at=timezone.now()
+        )
+        bad.file.save("cleanup-bad.mp4", ContentFile(b"bad-video"), save=True)
+        bad_name = bad.file.name
+        original_delete = FileSystemStorage.delete
+
+        def fail_one_file(storage, name):
+            if name == bad_name:
+                raise OSError("simulated storage outage")
+            return original_delete(storage, name)
+
+        with patch.object(FileSystemStorage, "delete", fail_one_file):
+            with self.assertRaises(OSError):
+                cleanup_iot_data("videos", Device.objects.filter(pk=self.device.pk))
+
+        self.assertFalse(VideoSegment.objects.filter(pk=good.pk).exists())
+        self.assertTrue(VideoSegment.objects.filter(pk=bad.pk).exists())
+        self.assertTrue(Path(bad.file.path).exists())
+
     def test_video_segment_id_cannot_be_reused_for_different_content(self):
         original = b"original-segment"
         segment_id = "1795533000000-conflict"

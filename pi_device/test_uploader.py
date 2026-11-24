@@ -386,6 +386,39 @@ class QueueManagementTests(unittest.TestCase):
 
         self.uploader._session.post.assert_called_once()
 
+    def test_https_heartbeat_calibrates_the_pi_clock_from_server_time(self):
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        snapshot = {
+            "video_fps": 25.0,
+            "inference_fps": 5.0,
+            "model_loaded": True,
+            "mqtt_connected": False,
+            "rtsp_connected": True,
+            "camera_ready": True,
+            "pending_alerts": 0,
+            "pending_video_segments": 0,
+            "tracking_active": False,
+            "tracking_seconds": 0.0,
+        }
+        calibrate = Mock(return_value=True)
+        self.uploader.bridge = SimpleNamespace(
+            snapshot=lambda: snapshot,
+            set_server_time_offset=calibrate,
+        )
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "server_time": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        }
+        self.uploader._session.post = Mock(return_value=response)
+
+        self.uploader._send_heartbeat()
+
+        calibrate.assert_called_once()
+        self.assertAlmostEqual(calibrate.call_args.args[0], 300, delta=2)
+
     def test_https_heartbeat_bootstraps_and_persists_mqtt_signing_key(self):
         from types import SimpleNamespace
         from unittest.mock import Mock

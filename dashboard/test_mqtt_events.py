@@ -13,7 +13,9 @@ from django.utils import timezone
 
 from dashboard.models import Device, DeviceCommand
 from dashboard.mqtt_events import process_mqtt_message
-from dashboard.mqtt_security import device_mqtt_signing_key, sign_mqtt_payload
+from dashboard.mqtt_security import (
+    decrypt_mqtt_command, device_mqtt_signing_key, sign_mqtt_payload,
+)
 
 User = get_user_model()
 
@@ -449,11 +451,46 @@ class RemoteDeviceCommandApiTests(TestCase):
         self.assertEqual(command.status, "published")
         self.assertEqual(command.payload, {"enabled": False})
         self.assertTrue(publish.called)
-        signed_payload = publish.call_args.args[1]
-        self.assertEqual(signed_payload["device_id"], self.device.device_id)
-        self.assertIn("signature", signed_payload)
+        encrypted_payload = publish.call_args.args[1]
+        self.assertEqual(encrypted_payload["device_id"], self.device.device_id)
+        self.assertEqual(encrypted_payload["encryption"], "aes-256-gcm-v1")
+        self.assertIn("nonce", encrypted_payload)
+        self.assertIn("ciphertext", encrypted_payload)
+        self.assertIn("signature", encrypted_payload)
+        self.assertNotIn("command_type", encrypted_payload)
+        self.assertNotIn("payload", encrypted_payload)
+        self.assertEqual(
+            decrypt_mqtt_command(encrypted_payload, device_mqtt_signing_key(self.device)),
+            {"command_type": "recording.set", "payload": {"enabled": False}},
+        )
+        with self.assertRaises(ValueError):
+            decrypt_mqtt_command(encrypted_payload, device_mqtt_signing_key(
+                Device.objects.create(
+                    device_id="cam-other-key-01",
+                    owner=self.owner,
+                    name="Other Camera",
+                    api_token_hash=make_password("other-camera-token"),
+                )
+            ))
 
 
+
+    @patch("dashboard.views.publish_mqtt_command", return_value=True)
+    def test_encrypted_command_ciphertext_is_unique_for_each_publication(self, publish):
+        self.client.force_login(self.owner)
+        url = reverse("dashboard:device-command", args=[self.device.device_id])
+        body = json.dumps({
+            "command_type": "recording.set",
+            "payload": {"enabled": False},
+        })
+        first = self.client.post(url, data=body, content_type="application/json")
+        second = self.client.post(url, data=body, content_type="application/json")
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        first_envelope = publish.call_args_list[0].args[1]
+        second_envelope = publish.call_args_list[1].args[1]
+        self.assertNotEqual(first_envelope["nonce"], second_envelope["nonce"])
+        self.assertNotEqual(first_envelope["ciphertext"], second_envelope["ciphertext"])
 
     @patch("dashboard.views.publish_mqtt_command")
     def test_fast_device_ack_is_not_overwritten_by_publish_return(self, publish):

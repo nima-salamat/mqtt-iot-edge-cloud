@@ -15,9 +15,30 @@
   let canControl = false;
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
 
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    try {
+      return await fetch(url, {...options, signal: controller.signal});
+    } catch (error) {
+      if (timedOut) {
+        throw new Error('سرور در مهلت تعیین‌شده پاسخ نداد؛ وضعیت اتصال را دوباره بررسی کن.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
   async function refreshConnectivity() {
     try {
-      const response = await fetch('/api/dashboard/overview/', {cache: 'no-store'});
+      const response = await fetchWithTimeout(
+        '/api/dashboard/overview/', {cache: 'no-store'}, 6000
+      );
       if (!response.ok) return;
       const overview = await response.json();
       const device = (overview.devices || []).find(item => item.device_id === deviceId);
@@ -53,15 +74,23 @@
         status.textContent = 'backend فعلی دوربین از ضبط MP4 پشتیبانی نمی‌کند؛ Picamera2 لازم است.';
       }
     } catch (_) {
-      // The local command state remains visible if the status endpoint is temporarily unavailable.
+      canControl = false;
+      if (!busy) {
+        button.disabled = true;
+        status.textContent = 'وضعیت دوربین از سرور دریافت نشد؛ برای جلوگیری از ارسال فرمان روی وضعیت قدیمی، کنترل موقتاً غیرفعال شد.';
+      }
     }
   }
 
   async function readCommand(commandId) {
-    const response = await fetch(baseUrl + encodeURIComponent(commandId) + '/', {
-      cache: 'no-store',
-      headers: {'Accept': 'application/json'}
-    });
+    const response = await fetchWithTimeout(
+      baseUrl + encodeURIComponent(commandId) + '/',
+      {
+        cache: 'no-store',
+        headers: {'Accept': 'application/json'}
+      },
+      6000
+    );
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'وضعیت فرمان قابل دریافت نیست.');
     return payload;
@@ -82,7 +111,7 @@
     button.disabled = true;
     status.textContent = 'در حال ارسال فرمان امضاشده به Broker…';
     try {
-      const response = await fetch(baseUrl, {
+      const response = await fetchWithTimeout(baseUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -93,7 +122,7 @@
           command_type: 'recording.set',
           payload: {enabled}
         })
-      });
+      }, 15000);
       const accepted = await response.json();
       if (!response.ok) throw new Error(accepted.error || 'ارسال فرمان ناموفق بود.');
       status.textContent = 'فرمان به Broker تحویل شد؛ منتظر تأیید اجرای Raspberry Pi هستیم…';

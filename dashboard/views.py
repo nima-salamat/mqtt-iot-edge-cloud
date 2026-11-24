@@ -49,8 +49,9 @@ def _safe_device_state(device):
     raw = device.current_state if isinstance(device.current_state, dict) else {}
     state = {}
 
-    for key in ("mqtt_connected", "rtsp_connected", "camera_ready",
-                "tracking_active", "recording_enabled"):
+    for key in ("mqtt_connected", "mqtt_command_subscription_ready",
+                "rtsp_connected", "camera_ready", "tracking_active",
+                "recording_enabled"):
         if isinstance(raw.get(key), bool):
             state[key] = raw[key]
 
@@ -528,6 +529,9 @@ def dashboard_overview(request):
             "inference_fps": _safe_state_number(device.reported_inference_fps, maximum=60),
             "model_loaded": bool(device.model_loaded),
             "mqtt_connected": bool(state.get("mqtt_connected", False)),
+            "mqtt_command_subscription_ready": bool(
+                state.get("mqtt_command_subscription_ready", False)
+            ),
             "camera_ready": bool(state.get("camera_ready", False)),
             "rtsp_connected": bool(state.get("rtsp_connected", False)),
             "tracking_active": bool(state.get("tracking_active", False)),
@@ -621,6 +625,10 @@ def send_device_command(request, device_id):
     state = device.current_state if isinstance(device.current_state, dict) else {}
     if not state.get("mqtt_connected"):
         return JsonResponse({"error": "کانال MQTT دوربین متصل نیست."}, status=503)
+    if state.get("mqtt_command_subscription_ready") is not True:
+        return JsonResponse({
+            "error": "دوربین هنوز اشتراک موضوع فرمان MQTT را تأیید نکرده است."
+        }, status=503)
 
     command_id = uuid.uuid4().hex
     expires_at = now + timedelta(seconds=60)

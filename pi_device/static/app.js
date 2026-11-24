@@ -618,7 +618,7 @@
   const inferenceFpsInput = settingsForm.elements.namedItem('inference_fps');
   let latestVideoModes = [];
   function parseResolution(value) {
-    const match = /^(\\d+)x(\\d+)$/.exec(String(value || ''));
+    const match = /^(\d+)x(\d+)$/.exec(String(value || ''));
     return match ? {width: Number(match[1]), height: Number(match[2])} : null;
   }
 

@@ -80,6 +80,22 @@ class VideoBitrateMigrationTests(unittest.TestCase):
             self.assertEqual(updated["video_width"], original["video_width"])
             self.assertEqual(updated["alert_confidence"], original["alert_confidence"])
 
+    def test_settings_write_refuses_symlink_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real_file = root / "real-settings.json"
+            real_file.write_text(json.dumps({"video_width": 1280}), encoding="utf-8")
+            settings_path = root / "settings.json"
+            settings_path.symlink_to(real_file)
+
+            settings = SettingsStore(str(settings_path))
+            with self.assertRaises(OSError):
+                settings.update({"video_width": 1920})
+
+            stored = json.loads(real_file.read_text(encoding="utf-8"))
+            self.assertEqual(stored["video_width"], 1280)
+            self.assertTrue(settings_path.is_symlink())
+
     def test_camera_resolution_is_persisted_and_requires_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"

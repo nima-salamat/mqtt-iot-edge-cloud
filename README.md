@@ -171,6 +171,7 @@ Then run:
 After updating the checkout to the desired Git branch/commit, deploy only the Pi source code (without replacing the Python virtualenv, NCNN model weights, credentials or recordings):
 
     git pull --ff-only origin main
+    chmod +x scripts/update_pi.sh
     sudo ./scripts/update_pi.sh
 
 The updater synchronizes `pi_device/` from this checkout into `/opt/mqtt-iot-edge-cloud/pi_device/`, compiles the deployed Python modules, and restarts `mqtt-iot-pi`. It preserves `/etc/mqtt-iot-pi.env`, `/var/lib/mqttiot`, the installed virtualenv and model weight files. Review the printed startup logs for the effective credential path, signing-key availability, MQTT command SUBACK and online-status PUBACK.

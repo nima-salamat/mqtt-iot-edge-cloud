@@ -84,7 +84,8 @@ sudo -u "$SERVICE_USER" env PYTHONPATH="$INSTALL_DIR" MODEL_DIR="$INSTALL_DIR/pi
 if [[ ! -f /etc/mqtt-iot-pi.env ]]; then
   sudo install -m 600 "$PROJECT_DIR/pi_device/.env.pi.example" /etc/mqtt-iot-pi.env
   echo "Created /etc/mqtt-iot-pi.env."
-  echo "Set MQTT_PASSWORD, LOCAL_WEB_PASSWORD and FLASK_SECRET_KEY before starting."
+  echo "Set MQTT_PASSWORD and a strong LOCAL_WEB_PASSWORD before starting."
+  echo "A private FLASK_SECRET_KEY is generated automatically if the example placeholder is left unchanged."
 else
   echo "Keeping existing /etc/mqtt-iot-pi.env. Review it for the current camera settings."
 fi

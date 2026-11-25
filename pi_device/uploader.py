@@ -430,6 +430,23 @@ class DurableUploader:
 
     def _send_heartbeat(self):
         now_monotonic = time.monotonic()
+        publish_telemetry = getattr(self.bridge, "publish_telemetry", None)
+        mqtt_due = (
+            callable(publish_telemetry)
+            and now_monotonic - self._last_mqtt_heartbeat_monotonic
+            >= self.MQTT_HEARTBEAT_INTERVAL_SECONDS
+        )
+        https_due = (
+            self._last_https_heartbeat_monotonic <= 0
+            or now_monotonic - self._last_https_heartbeat_monotonic
+            >= self.HTTPS_HEARTBEAT_INTERVAL_SECONDS
+        )
+        # The loop wakes frequently for fast retries, but do not collect
+        # expensive CPU/RAM/storage metrics or inspect camera state between
+        # actual MQTT/HTTPS heartbeat intervals.
+        if not mqtt_due and not https_due:
+            return
+
         state = self.bridge.snapshot()
         payload = {
             "reported_at": datetime.now(timezone.utc).isoformat(),
@@ -469,12 +486,7 @@ class DurableUploader:
         # Keep MQTT telemetry as the low-latency event transport, but schedule
         # it independently from the authenticated HTTPS state snapshot. Broker
         # PUBACK only proves broker receipt, not processing by Django's listener.
-        publish_telemetry = getattr(self.bridge, "publish_telemetry", None)
-        if (
-            callable(publish_telemetry)
-            and now_monotonic - self._last_mqtt_heartbeat_monotonic
-            >= self.MQTT_HEARTBEAT_INTERVAL_SECONDS
-        ):
+        if mqtt_due:
             # Advance the attempt timestamp even on failure to avoid hammering
             # an unavailable broker on every heartbeat-loop tick.
             self._last_mqtt_heartbeat_monotonic = now_monotonic
@@ -495,11 +507,7 @@ class DurableUploader:
         # HTTPS is the authoritative liveness/state snapshot. Send it on its
         # own cadence even when MQTT gets a PUBACK, so broker/listener outages
         # cannot leave the dashboard showing stale device state.
-        if (
-            self._last_https_heartbeat_monotonic > 0
-            and now_monotonic - self._last_https_heartbeat_monotonic
-            < self.HTTPS_HEARTBEAT_INTERVAL_SECONDS
-        ):
+        if not https_due:
             return
 
         request_started_at = datetime.now(timezone.utc)

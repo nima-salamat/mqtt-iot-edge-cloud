@@ -8,7 +8,7 @@
   <div><span class="eyebrow">CAMERA DEVICE</span><h1>{{ device.name }}</h1><p><code>{{ device.device_id }}</code></p></div>
   <div class="hero-actions">
     <span class="state {% if device.api_token_hash and device.is_online_now %}online{% else %}offline{% endif %}" id="device-connection-state"><i></i>{% if device.api_token_hash and device.is_online_now %}آنلاین{% elif device.api_token_hash %}آفلاین{% else %}اتصال لغو شده{% endif %}</span>
-    <span class="muted">آخرین Heartbeat: {{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"—" }}</span>
+    <span class="muted" id="device-last-heartbeat">آخرین Heartbeat: {{ device.last_heartbeat|date:"Y-m-d H:i:s"|default:"—" }}</span>
     {% if device.api_token_hash %}<button class="btn danger" id="disconnect-camera" type="button" data-url="{% url 'dashboard:device-disconnect' device.device_id %}">قطع اتصال دوربین</button>{% endif %}
   </div>
 </section>
@@ -79,19 +79,20 @@
       </article>
     </div>
     <div class="health-list">
-      <div><span>وضعیت مدل</span><b>{% if device.model_loaded %}YOLOv5n NCNN فعال{% else %}مدل بارگذاری نشده{% endif %}</b></div>
-      <div><span>ارسال زنده RTSPS</span><b>{% if device.current_state.rtsp_connected %}متصل{% else %}در حال اتصال مجدد{% endif %}</b></div>
-      <div><span>دوربین Pi</span><b>{% if device.current_state.camera_ready %}آماده{% else %}نامشخص{% endif %}</b></div>
-      <div><span>Video FPS</span><b>{{ device.reported_video_fps|floatformat:1 }}</b></div>
-      <div><span>Inference FPS</span><b>{{ device.reported_inference_fps|floatformat:1 }}</b></div>
+      <div><span>وضعیت مدل</span><b id="health-model">{% if device.model_loaded %}YOLOv5n NCNN فعال{% else %}مدل بارگذاری نشده{% endif %}</b></div>
+      <div><span>ارسال زنده RTSPS</span><b id="health-rtsp">{% if device.current_state.rtsp_connected %}متصل{% else %}در حال اتصال مجدد{% endif %}</b></div>
+      <div><span>دوربین Pi</span><b id="health-camera">{% if device.current_state.camera_ready %}آماده{% else %}نامشخص{% endif %}</b></div>
+      <div><span>Video FPS</span><b id="health-video-fps">{{ device.reported_video_fps|floatformat:1 }}</b></div>
+      <div><span>Inference FPS</span><b id="health-inference-fps">{{ device.reported_inference_fps|floatformat:1 }}</b></div>
       <div><span>مدت تشخیص پیوسته</span><b id="tracking-duration">{% if device.current_state.tracking_active %}در حال تشخیص · {{ device.current_state.tracking_seconds|default:0|floatformat:1 }} ثانیه{% else %}آخرین رهگیری · {{ device.current_state.tracking_seconds|default:0|floatformat:1 }} ثانیه{% endif %}</b></div>
-      <div><span>هشدارهای ارسال‌نشده</span><b>{{ device.current_state.pending_alerts|default:0 }}</b></div>
-      <div><span>ویدئوهای ارسال‌نشده</span><b>{{ device.current_state.pending_video_segments|default:0 }}</b></div>
+      <div><span>هشدارهای ارسال‌نشده</span><b id="health-pending-alerts">{{ device.current_state.pending_alerts|default:0 }}</b></div>
+      <div><span>ویدئوهای ارسال‌نشده</span><b id="health-pending-videos">{{ device.current_state.pending_video_segments|default:0 }}</b></div>
       <div><span>ضبط MP4 روی Pi</span><b id="recording-state">{% if device.current_state.recording_enabled == True %}فعال{% elif device.current_state.recording_enabled == False %}متوقف{% else %}در انتظار گزارش{% endif %}</b></div>
       <div><span>آخرین قطعه ذخیره‌شده</span><b id="last-video-upload">{{ device.current_state.last_video_upload_at|default:"—" }}</b></div>
       <div><span>خطای آخرین آپلود ویدئو</span><b id="video-upload-error">{{ device.current_state.last_video_upload_error|default:"—" }}</b></div>
-      <div><span>اتصال MQTT</span><b>{% if device.current_state.mqtt_connected %}متصل{% else %}قطع{% endif %}</b></div>
-      <div><span>آخرین ارتباط</span><b>{{ device.last_seen|date:"Y-m-d H:i:s"|default:"—" }}</b></div>
+      <div><span>اتصال MQTT</span><b id="health-mqtt">{% if device.current_state.mqtt_connected %}متصل{% else %}قطع{% endif %}</b></div>
+      <div><span>مسیر همگام‌سازی</span><b id="health-telemetry-transport">—</b></div>
+      <div><span>آخرین ارتباط</span><b id="device-last-seen">{{ device.last_seen|date:"Y-m-d H:i:s"|default:"—" }}</b></div>
     </div>
   </section>
 </div>

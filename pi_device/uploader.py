@@ -52,6 +52,8 @@ class DurableUploader:
         # Serialize queue item uploads, retention and user-requested queue clearing.
         self._queue_lock = threading.RLock()
         self._session = requests.Session()
+        # The heartbeat must not wait behind long-running multipart uploads.
+        self._heartbeat_session = requests.Session()
         self.last_upload_at = ""
         self.last_upload_error = ""
         self.last_video_upload_at = ""
@@ -97,6 +99,7 @@ class DurableUploader:
                 )
                 return
         self._session.close()
+        self._heartbeat_session.close()
 
     def _token(self):
         return self.state_provider().get("api_token", "")
@@ -500,7 +503,7 @@ class DurableUploader:
             return
 
         request_started_at = datetime.now(timezone.utc)
-        response = self._session.post(
+        response = self._heartbeat_session.post(
             f"{self.api_base}/api/device/heartbeat/",
             headers=self._headers(),
             json=payload,

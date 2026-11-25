@@ -62,7 +62,12 @@
         && device.camera_ready
         && device.recording_supported
       );
-      if (!busy) button.disabled = !canControl;
+      if (!busy) {
+        if (typeof device.recording_enabled === 'boolean') {
+          updateRecordingState(device.recording_enabled);
+        }
+        button.disabled = !canControl;
+      }
 
       if (mqttBadge) {
         mqttBadge.classList.toggle('online', !!device.mqtt_connected);

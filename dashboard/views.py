@@ -71,6 +71,7 @@ def _safe_device_state(device):
         ("model", 64), ("software_version", 64),
         ("last_video_upload_at", 64), ("last_video_upload_error", 500),
         ("telemetry_transport", 16), ("connection_state", 32),
+        ("last_mqtt_telemetry_at", 64), ("last_https_heartbeat_at", 64),
     ):
         if isinstance(raw.get(key), str):
             state[key] = raw[key][:limit]

@@ -91,7 +91,10 @@
       <div><span>آخرین قطعه ذخیره‌شده</span><b id="last-video-upload">{{ device.current_state.last_video_upload_at|default:"—" }}</b></div>
       <div><span>خطای آخرین آپلود ویدئو</span><b id="video-upload-error">{{ device.current_state.last_video_upload_error|default:"—" }}</b></div>
       <div><span>اتصال MQTT</span><b id="health-mqtt">{% if device.current_state.mqtt_connected %}متصل{% else %}قطع{% endif %}</b></div>
+      <div><span>اشتراک دریافت فرمان (SUBACK)</span><b id="health-mqtt-subscription">{% if device.current_state.mqtt_command_subscription_ready %}آماده{% else %}تأیید نشده{% endif %}</b></div>
       <div><span>مسیر همگام‌سازی</span><b id="health-telemetry-transport">—</b></div>
+      <div><span>آخرین Telemetry از MQTT</span><b id="health-last-mqtt-telemetry">—</b></div>
+      <div><span>آخرین Heartbeat از HTTPS</span><b id="health-last-https-heartbeat">—</b></div>
       <div><span>آخرین ارتباط</span><b id="device-last-seen">{{ device.last_seen|date:"Y-m-d H:i:s"|default:"—" }}</b></div>
     </div>
   </section>
@@ -412,6 +415,11 @@
       setText('last-video-upload',formatTimestamp(device.last_video_upload_at));
       setText('video-upload-error',device.last_video_upload_error||'—');
       setText('health-mqtt',device.mqtt_connected?'متصل':'قطع');
+      setText('health-mqtt-subscription',device.mqtt_command_subscription_ready
+        ? 'آماده · SUBACK تأیید شد'
+        : (device.mqtt_connected?'متصل، اما SUBACK تأیید نشده':'MQTT قطع'));
+      setText('health-last-mqtt-telemetry',formatTimestamp(device.last_mqtt_telemetry_at));
+      setText('health-last-https-heartbeat',formatTimestamp(device.last_https_heartbeat_at));
       setText('health-telemetry-transport',
         device.telemetry_transport==='mqtt'?'MQTT':
         (device.telemetry_transport==='https'?'HTTPS':'نامشخص'));

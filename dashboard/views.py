@@ -598,9 +598,14 @@ def dashboard_overview(request):
             "is_online": device.is_online_now,
             "is_paired": bool(device.api_token_hash),
             "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
+            "last_seen": device.last_seen.isoformat() if device.last_seen else None,
             "video_fps": _safe_state_number(device.reported_video_fps, maximum=120),
             "inference_fps": _safe_state_number(device.reported_inference_fps, maximum=60),
             "model_loaded": bool(device.model_loaded),
+            "recording_enabled": (
+                state.get("recording_enabled")
+                if isinstance(state.get("recording_enabled"), bool) else None
+            ),
             "mqtt_connected": bool(state.get("mqtt_connected", False)),
             "mqtt_command_subscription_ready": bool(
                 state.get("mqtt_command_subscription_ready", False)
@@ -614,6 +619,26 @@ def dashboard_overview(request):
             ), 1),
             "pending_alerts": _safe_state_count(state.get("pending_alerts")),
             "pending_video_segments": _safe_state_count(state.get("pending_video_segments")),
+            "last_video_upload_at": (
+                state.get("last_video_upload_at", "")
+                if isinstance(state.get("last_video_upload_at"), str) else ""
+            ),
+            "last_video_upload_error": (
+                state.get("last_video_upload_error", "")
+                if isinstance(state.get("last_video_upload_error"), str) else ""
+            ),
+            "telemetry_transport": (
+                state.get("telemetry_transport", "")
+                if isinstance(state.get("telemetry_transport"), str) else ""
+            ),
+            "last_mqtt_telemetry_at": (
+                state.get("last_mqtt_telemetry_at", "")
+                if isinstance(state.get("last_mqtt_telemetry_at"), str) else ""
+            ),
+            "last_https_heartbeat_at": (
+                state.get("last_https_heartbeat_at", "")
+                if isinstance(state.get("last_https_heartbeat_at"), str) else ""
+            ),
             "system": system if isinstance(system, dict) else {},
         })
     return JsonResponse({"devices": payload_devices})

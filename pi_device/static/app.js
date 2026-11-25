@@ -425,6 +425,9 @@
         ? 'پیش‌نمایش محلی حداکثر ۱۵ FPS تازه‌سازی می‌شود تا پردازش تصویر اصلی به نرخ ضبط فشار نیاورد. ضبط و RTSPS از انکودر H.264 و نرخ هدف مستقل استفاده می‌کنند؛ وضوح انتخابی ثابت می‌ماند و FPS فقط تا سقف modeهای سازگار با همان وضوح قابل تنظیم است.'
         : 'OpenCV: پیش‌نمایش محلی محدود به ۱۵ FPS است و YOLO از جریان دریافتی استفاده می‌کند؛ برای FPS بالاتر فقط modeهای اعلام‌شده توسط درایور قابل استفاده‌اند. ضبط MP4 و RTSPS سخت‌افزاری در این backend پشتیبانی نمی‌شود.';
       text('mqtt-status', boolLabel(mqtt.mqtt_connected));
+      text('mqtt-command-status', mqtt.mqtt_command_subscription_ready
+        ? 'آماده دریافت فرمان (SUBACK تأیید شد)'
+        : (mqtt.mqtt_connected ? 'متصل، اما تأیید SUBACK دریافت نشده' : 'MQTT قطع'));
       text('heartbeat-status', state.heartbeat_recent
         ? 'فعال'
         : (state.last_heartbeat_at ? 'قدیمی' : 'در انتظار'));

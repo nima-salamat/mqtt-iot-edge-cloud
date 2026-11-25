@@ -25,9 +25,12 @@ def sha256_file(path):
     return digest.hexdigest()
 
 class DurableUploader:
-    # MQTT PUBACK confirms broker receipt, not Django processing. Keep a
-    # periodic authenticated HTTPS heartbeat as an application-level fallback.
-    HTTPS_HEARTBEAT_INTERVAL_SECONDS = 30
+    # MQTT PUBACK confirms broker receipt, not Django processing. Keep an
+    # authenticated HTTPS heartbeat on its own worker and at a cadence shorter
+    # than the server's 50-second liveness window.
+    HTTPS_HEARTBEAT_INTERVAL_SECONDS = 15
+    MQTT_HEARTBEAT_INTERVAL_SECONDS = 15
+    HEARTBEAT_LOOP_INTERVAL_SECONDS = 5
 
     def __init__(self, device_id, settings_store, bridge, state_provider):
         self.device_id = device_id
@@ -45,6 +48,7 @@ class DurableUploader:
             folder.mkdir(parents=True, exist_ok=True)
         self._stop = threading.Event()
         self._thread = None
+        self._heartbeat_thread = None
         # Serialize queue item uploads, retention and user-requested queue clearing.
         self._queue_lock = threading.RLock()
         self._session = requests.Session()
@@ -56,25 +60,40 @@ class DurableUploader:
         self.last_mqtt_telemetry_at = ""
         self.uploaded_segments = 0
         self._last_heartbeat_monotonic = 0.0
+        self._last_mqtt_heartbeat_monotonic = 0.0
         self._last_https_heartbeat_monotonic = 0.0
         self.credentials_revoked = False
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, name="durable-uploader", daemon=True)
-        self._thread.start()
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(
+                target=self._run, name="durable-uploader", daemon=True
+            )
+            self._thread.start()
+        if self._heartbeat_thread is None or not self._heartbeat_thread.is_alive():
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop, name="device-heartbeat", daemon=True
+            )
+            self._heartbeat_thread.start()
 
     def stop(self):
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=6)
-            if self._thread.is_alive():
-                # requests cannot safely cancel an in-flight multipart upload.
+        for label, thread in (
+            ("heartbeat", self._heartbeat_thread),
+            ("outbox", self._thread),
+        ):
+            if thread is None:
+                continue
+            thread.join(timeout=6)
+            if thread.is_alive():
+                # requests cannot safely cancel an in-flight HTTP request.
                 # Closing the shared Session here races that request; keep the
-                # session alive until process exit so an interrupted upload can
-                # leave its queue file unmarked and retry after the next boot.
+                # session alive until process exit so an interrupted request
+                # can retry safely after the next boot.
                 log.warning(
-                    "Uploader is still finishing an HTTP request during shutdown; "
-                    "leaving the session open and keeping queue items retryable"
+                    "Device %s worker is still finishing an HTTP request; "
+                    "leaving the shared session open",
+                    label,
                 )
                 return
         self._session.close()
@@ -109,7 +128,23 @@ class DurableUploader:
         self.last_heartbeat_at = ""
         self.last_mqtt_telemetry_at = ""
         self._last_heartbeat_monotonic = 0.0
+        self._last_mqtt_heartbeat_monotonic = 0.0
         self._last_https_heartbeat_monotonic = 0.0
+
+    def heartbeat_is_recent(self, max_age_seconds=45):
+        """Whether an authenticated HTTPS heartbeat reached Django recently."""
+        if not self.last_heartbeat_at:
+            return False
+        try:
+            reported = datetime.fromisoformat(
+                self.last_heartbeat_at.replace("Z", "+00:00")
+            )
+            if reported.tzinfo is None:
+                reported = reported.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - reported).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return -30 <= age <= max_age_seconds
 
     def _check_response(self, response):
         if response.status_code in {401, 403}:
@@ -339,10 +374,11 @@ class DurableUploader:
                 continue
 
             failures = []
-            # Keep queues independent: a failed heartbeat must not prevent an
-            # alert snapshot or an already-recorded video segment from uploading.
+            # Heartbeats use their own worker; a slow multipart upload must
+            # never starve device liveness or remote-command readiness updates.
+            # Keep the durable queues independent so one failing queue item
+            # cannot prevent the others from making progress.
             for task in (
-                self._send_heartbeat,
                 self._upload_alarms,
                 self._upload_logs,
                 self._upload_segments,
@@ -369,10 +405,28 @@ class DurableUploader:
                 backoff = 2
                 self._stop.wait(2)
 
+    def _heartbeat_loop(self):
+        """Send device health independently from potentially slow media uploads."""
+        backoff = 2.0
+        while not self._stop.is_set():
+            if not self._token():
+                self._stop.wait(self.HEARTBEAT_LOOP_INTERVAL_SECONDS)
+                continue
+            try:
+                self._send_heartbeat()
+                backoff = 2.0
+            except Exception as exc:
+                log.warning(
+                    "Authenticated device heartbeat failed; retrying independently: %s",
+                    exc,
+                )
+                self._stop.wait(backoff)
+                backoff = min(30.0, backoff * 2)
+                continue
+            self._stop.wait(self.HEARTBEAT_LOOP_INTERVAL_SECONDS)
+
     def _send_heartbeat(self):
         now_monotonic = time.monotonic()
-        if now_monotonic - self._last_heartbeat_monotonic < 15:
-            return
         state = self.bridge.snapshot()
         payload = {
             "reported_at": datetime.now(timezone.utc).isoformat(),
@@ -409,19 +463,20 @@ class DurableUploader:
         if self.last_video_upload_at:
             payload["last_video_upload_at"] = self.last_video_upload_at
 
-        # Publish frequent telemetry over MQTT, but do not confuse a broker
-        # PUBACK with successful processing by the Django listener.
+        # Keep MQTT telemetry as the low-latency event transport, but schedule
+        # it independently from the authenticated HTTPS state snapshot. Broker
+        # PUBACK only proves broker receipt, not processing by Django's listener.
         publish_telemetry = getattr(self.bridge, "publish_telemetry", None)
-        if callable(publish_telemetry):
+        if (
+            callable(publish_telemetry)
+            and now_monotonic - self._last_mqtt_heartbeat_monotonic
+            >= self.MQTT_HEARTBEAT_INTERVAL_SECONDS
+        ):
+            # Advance the attempt timestamp even on failure to avoid hammering
+            # an unavailable broker on every heartbeat-loop tick.
+            self._last_mqtt_heartbeat_monotonic = now_monotonic
             if publish_telemetry(payload):
-                self._last_heartbeat_monotonic = time.monotonic()
                 self.last_mqtt_telemetry_at = datetime.now(timezone.utc).isoformat()
-                if (
-                    self._last_https_heartbeat_monotonic > 0
-                    and time.monotonic() - self._last_https_heartbeat_monotonic
-                    < self.HTTPS_HEARTBEAT_INTERVAL_SECONDS
-                ):
-                    return
             else:
                 bridge_state = self.bridge.snapshot() if self.bridge is not None else {}
                 mqtt_reason = (
@@ -429,14 +484,21 @@ class DurableUploader:
                     if isinstance(bridge_state, dict) else ""
                 )
                 log.warning(
-                    "Signed MQTT heartbeat was not acknowledged; using authenticated HTTPS fallback. "
-                    "Reason: %s",
+                    "Signed MQTT heartbeat was not acknowledged; authenticated HTTPS "
+                    "state update will still be sent. Reason: %s",
                     mqtt_reason or "MQTT publisher is unavailable or not connected.",
                 )
 
-        # This endpoint applies metrics directly in Django and is the recovery
-        # path when an MQTT message is broker-acknowledged but rejected by the
-        # application (for example because of device clock skew).
+        # HTTPS is the authoritative liveness/state snapshot. Send it on its
+        # own cadence even when MQTT gets a PUBACK, so broker/listener outages
+        # cannot leave the dashboard showing stale device state.
+        if (
+            self._last_https_heartbeat_monotonic > 0
+            and now_monotonic - self._last_https_heartbeat_monotonic
+            < self.HTTPS_HEARTBEAT_INTERVAL_SECONDS
+        ):
+            return
+
         request_started_at = datetime.now(timezone.utc)
         response = self._session.post(
             f"{self.api_base}/api/device/heartbeat/",

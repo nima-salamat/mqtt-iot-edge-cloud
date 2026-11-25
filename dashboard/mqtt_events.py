@@ -214,7 +214,13 @@ def _apply_status(device, payload, now):
     if status == "offline" and source == "last-will":
         last_telemetry = _parse_datetime(state.get("last_mqtt_telemetry_at"))
         last_status = _parse_datetime(state.get("last_mqtt_status_at"))
-        if (
+        last_https = _parse_datetime(state.get("last_https_heartbeat_at"))
+        fresh_https_mqtt = (
+            state.get("mqtt_connected") is True
+            and last_https is not None
+            and last_https >= now - timedelta(seconds=30)
+        )
+        if fresh_https_mqtt or (
             last_telemetry is not None
             and last_telemetry >= now - timedelta(seconds=15)
         ) or (

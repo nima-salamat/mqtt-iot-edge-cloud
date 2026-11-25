@@ -224,6 +224,25 @@ class DeviceMqttEventTests(TestCase):
         self.assertTrue(self.device.current_state["mqtt_connected"])
         self.assertTrue(self.device.current_state["mqtt_command_subscription_ready"])
 
+    def test_delayed_last_will_cannot_override_fresh_https_confirmed_mqtt(self):
+        self.device.current_state = {
+            "mqtt_connected": True,
+            "mqtt_command_subscription_ready": True,
+            "last_https_heartbeat_at": (
+                timezone.now() - timedelta(seconds=5)
+            ).isoformat(),
+        }
+        self.device.save(update_fields=["current_state"])
+
+        self.assertFalse(self.send("status", {
+            "device_id": self.device.device_id,
+            "status": "offline",
+            "source": "last-will",
+        }))
+        self.device.refresh_from_db()
+        self.assertTrue(self.device.current_state["mqtt_connected"])
+        self.assertTrue(self.device.current_state["mqtt_command_subscription_ready"])
+
     def test_mqtt_telemetry_rejects_string_booleans_and_fractional_queue_counters(self):
         invalid_updates = (
             {"mqtt_connected": "false"},

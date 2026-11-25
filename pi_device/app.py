@@ -305,6 +305,8 @@ def create_local_app(camera, settings_store, bridge, uploader) -> Flask:
         state["last_video_upload_at"] = uploader.last_video_upload_at
         state["last_video_upload_error"] = uploader.last_video_upload_error
         state["last_heartbeat_at"] = uploader.last_heartbeat_at
+        state["heartbeat_recent"] = uploader.heartbeat_is_recent()
+        state["last_mqtt_telemetry_at"] = uploader.last_mqtt_telemetry_at
         state["last_upload_error"] = uploader.last_upload_error
         state["uploaded_segments"] = uploader.uploaded_segments
         state["settings"] = settings_store.get()

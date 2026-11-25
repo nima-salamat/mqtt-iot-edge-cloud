@@ -26,6 +26,7 @@ class QueueManagementTests(unittest.TestCase):
             state_provider=lambda: {},
         )
         self.addCleanup(self.uploader._session.close)
+        self.addCleanup(self.uploader._heartbeat_session.close)
 
     def _alarm(self, alert_id: str, *, published: bool):
         meta = self.uploader.alarm_dir / f"{alert_id}.json"
@@ -373,6 +374,29 @@ class QueueManagementTests(unittest.TestCase):
             self.uploader.clear_pending_queue("everything")
 
 
+    def test_heartbeat_worker_is_separate_from_durable_upload_worker(self):
+        self.uploader._run = Mock(side_effect=self.uploader._stop.set)
+        self.uploader._heartbeat_loop = Mock(side_effect=self.uploader._stop.set)
+
+        self.uploader.start()
+        self.uploader._thread.join(timeout=1)
+        self.uploader._heartbeat_thread.join(timeout=1)
+
+        self.assertIsNot(self.uploader._thread, self.uploader._heartbeat_thread)
+        self.uploader._run.assert_called_once()
+        self.uploader._heartbeat_loop.assert_called_once()
+
+    def test_local_heartbeat_status_expires_when_server_updates_stop(self):
+        from datetime import timedelta
+
+        self.uploader.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
+        self.assertTrue(self.uploader.heartbeat_is_recent())
+
+        self.uploader.last_heartbeat_at = (
+            datetime.now(timezone.utc) - timedelta(minutes=2)
+        ).isoformat()
+        self.assertFalse(self.uploader.heartbeat_is_recent())
+
     def test_heartbeat_uses_signed_mqtt_as_primary_path_when_connected(self):
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -394,7 +418,7 @@ class QueueManagementTests(unittest.TestCase):
             snapshot=lambda: snapshot,
             publish_telemetry=publisher,
         )
-        self.uploader._session.post = Mock()
+        self.uploader._heartbeat_session.post = Mock()
         # A recent HTTPS heartbeat is still within the application-level
         # fallback window, so MQTT remains the frequent transport in between.
         import time
@@ -403,7 +427,7 @@ class QueueManagementTests(unittest.TestCase):
         self.uploader._send_heartbeat()
 
         publisher.assert_called_once()
-        self.uploader._session.post.assert_not_called()
+        self.uploader._heartbeat_session.post.assert_not_called()
 
     def test_successful_mqtt_publish_still_gets_initial_https_heartbeat(self):
         from types import SimpleNamespace
@@ -427,7 +451,7 @@ class QueueManagementTests(unittest.TestCase):
         )
         response = Mock(status_code=200)
         response.json.return_value = {}
-        self.uploader._session.post = Mock(return_value=response)
+        self.uploader._heartbeat_session.post = Mock(return_value=response)
         system = {
             "cpu_percent": 38.2,
             "temperature_c": 50.1,
@@ -451,8 +475,8 @@ class QueueManagementTests(unittest.TestCase):
         ):
             self.uploader._send_heartbeat()
 
-        self.uploader._session.post.assert_called_once()
-        payload = self.uploader._session.post.call_args.kwargs["json"]
+        self.uploader._heartbeat_session.post.assert_called_once()
+        payload = self.uploader._heartbeat_session.post.call_args.kwargs["json"]
         self.assertEqual(payload["system"]["cpu_percent"], 38.2)
         self.assertEqual(payload["system"]["memory"]["used_percent"], 37.5)
         self.assertTrue(self.uploader.last_heartbeat_at)
@@ -483,11 +507,11 @@ class QueueManagementTests(unittest.TestCase):
         )
         response = Mock(status_code=200)
         response.json.return_value = {}
-        self.uploader._session.post = Mock(return_value=response)
+        self.uploader._heartbeat_session.post = Mock(return_value=response)
 
         self.uploader._send_heartbeat()
 
-        self.uploader._session.post.assert_called_once()
+        self.uploader._heartbeat_session.post.assert_called_once()
 
     def test_heartbeat_reports_actual_recording_state_over_saved_preference(self):
         from types import SimpleNamespace
@@ -515,11 +539,11 @@ class QueueManagementTests(unittest.TestCase):
         )
         response = Mock(status_code=200)
         response.json.return_value = {}
-        self.uploader._session.post = Mock(return_value=response)
+        self.uploader._heartbeat_session.post = Mock(return_value=response)
 
         self.uploader._send_heartbeat()
 
-        payload = self.uploader._session.post.call_args.kwargs["json"]
+        payload = self.uploader._heartbeat_session.post.call_args.kwargs["json"]
         self.assertFalse(payload["recording_enabled"])
 
     def test_https_heartbeat_calibrates_the_pi_clock_from_server_time(self):
@@ -548,7 +572,7 @@ class QueueManagementTests(unittest.TestCase):
         response.json.return_value = {
             "server_time": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
         }
-        self.uploader._session.post = Mock(return_value=response)
+        self.uploader._heartbeat_session.post = Mock(return_value=response)
 
         self.uploader._send_heartbeat()
 
@@ -582,7 +606,7 @@ class QueueManagementTests(unittest.TestCase):
         response = Mock(status_code=200)
         signing_key = "c" * 64
         response.json.return_value = {"mqtt_signing_key": signing_key}
-        self.uploader._session.post = Mock(return_value=response)
+        self.uploader._heartbeat_session.post = Mock(return_value=response)
         credentials_path = Path(self.temp_dir.name) / "device.json"
 
         with patch.dict(os.environ, {"DEVICE_CREDENTIALS_PATH": str(credentials_path)}):

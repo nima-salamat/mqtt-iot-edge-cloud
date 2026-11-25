@@ -294,7 +294,7 @@ class QueueManagementTests(unittest.TestCase):
             "tracking_seconds": 0.0,
         })
         response = Mock(status_code=200)
-        self.uploader._session.post = Mock(return_value=response)
+        self.uploader._heartbeat_session.post = Mock(return_value=response)
         system = {
             "cpu_percent": 20.0,
             "temperature_c": 49.5,
@@ -304,7 +304,7 @@ class QueueManagementTests(unittest.TestCase):
         with patch("pi_device.uploader.collect_system_stats", return_value=system):
             self.uploader._send_heartbeat()
 
-        payload = self.uploader._session.post.call_args.kwargs["json"]
+        payload = self.uploader._heartbeat_session.post.call_args.kwargs["json"]
         self.assertEqual(payload["system"]["temperature_c"], 49.5)
         self.assertEqual(payload["system"]["memory"]["used_percent"], 40.0)
 

@@ -397,6 +397,30 @@ class QueueManagementTests(unittest.TestCase):
         ).isoformat()
         self.assertFalse(self.uploader.heartbeat_is_recent())
 
+    def test_heartbeat_skips_state_collection_between_publish_intervals(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import time
+
+        now = time.monotonic()
+        snapshot = Mock(return_value={})
+        publisher = Mock()
+        self.uploader.bridge = SimpleNamespace(
+            snapshot=snapshot,
+            publish_telemetry=publisher,
+        )
+        self.uploader._last_mqtt_heartbeat_monotonic = now
+        self.uploader._last_https_heartbeat_monotonic = now
+
+        with patch("pi_device.uploader.time.monotonic", return_value=now), patch(
+            "pi_device.uploader.collect_system_stats"
+        ) as collect:
+            self.uploader._send_heartbeat()
+
+        snapshot.assert_not_called()
+        publisher.assert_not_called()
+        collect.assert_not_called()
+
     def test_heartbeat_uses_signed_mqtt_as_primary_path_when_connected(self):
         from types import SimpleNamespace
         from unittest.mock import Mock

@@ -331,6 +331,51 @@ class DeviceApiTests(TestCase):
         self.device.refresh_from_db()
         self.assertEqual(self.device.current_state["system"], system)
 
+    def test_dashboard_overview_exposes_all_live_control_and_health_fields(self):
+        now = timezone.now()
+        self.device.last_heartbeat = now
+        self.device.last_seen = now
+        self.device.reported_video_fps = 44.8
+        self.device.reported_inference_fps = 13.2
+        self.device.model_loaded = True
+        self.device.current_state = {
+            "mqtt_connected": True,
+            "mqtt_command_subscription_ready": True,
+            "camera_ready": True,
+            "recording_supported": True,
+            "recording_enabled": False,
+            "rtsp_connected": True,
+            "pending_alerts": 0,
+            "pending_video_segments": 1,
+            "last_video_upload_at": now.isoformat(),
+            "last_video_upload_error": "",
+            "telemetry_transport": "https",
+            "last_mqtt_telemetry_at": now.isoformat(),
+            "last_https_heartbeat_at": now.isoformat(),
+            "system": {"cpu_percent": 83.2, "temperature_c": 54.0},
+        }
+        self.device.save()
+        self.client.force_login(self.owner)
+
+        response = self.client.get(reverse("dashboard-overview"))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["devices"][0]
+        self.assertTrue(payload["is_online"])
+        self.assertEqual(payload["last_heartbeat"], now.isoformat())
+        self.assertEqual(payload["video_fps"], 44.8)
+        self.assertEqual(payload["inference_fps"], 13.2)
+        self.assertTrue(payload["model_loaded"])
+        self.assertTrue(payload["mqtt_connected"])
+        self.assertTrue(payload["mqtt_command_subscription_ready"])
+        self.assertTrue(payload["camera_ready"])
+        self.assertTrue(payload["recording_supported"])
+        self.assertFalse(payload["recording_enabled"])
+        self.assertTrue(payload["rtsp_connected"])
+        self.assertEqual(payload["pending_video_segments"], 1)
+        self.assertEqual(payload["telemetry_transport"], "https")
+        self.assertEqual(payload["system"]["temperature_c"], 54.0)
+
     def test_dashboard_overview_is_resilient_to_malformed_cached_device_state(self):
         self.device.current_state = ["invalid", "legacy", "state"]
         self.device.reported_video_fps = 500

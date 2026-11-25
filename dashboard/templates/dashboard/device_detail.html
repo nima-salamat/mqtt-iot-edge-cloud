@@ -389,6 +389,32 @@
         while(amount>=1024&&index<units.length-1){amount/=1024;index++;}
         return amount.toLocaleString('fa-IR',{maximumFractionDigits:1})+' '+units[index];
       };
+      const formatTimestamp=value=>{
+        if(!value)return '—';
+        const date=new Date(value);
+        if(Number.isNaN(date.getTime()))return '—';
+        return new Intl.DateTimeFormat('sv-SE',{
+          year:'numeric',month:'2-digit',day:'2-digit',
+          hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'
+        }).format(date);
+      };
+      setText('device-last-heartbeat','آخرین Heartbeat: '+formatTimestamp(device.last_heartbeat));
+      setText('device-last-seen',formatTimestamp(device.last_seen||device.last_heartbeat));
+      setText('health-model',device.model_loaded?'YOLOv5n NCNN فعال':'مدل بارگذاری نشده');
+      setText('health-rtsp',device.rtsp_connected?'متصل':'در حال اتصال مجدد');
+      setText('health-camera',device.camera_ready?'آماده':'نامشخص');
+      setText('health-video-fps',Number(device.video_fps||0).toFixed(1));
+      setText('health-inference-fps',Number(device.inference_fps||0).toFixed(1));
+      setText('health-pending-alerts',Number(device.pending_alerts||0).toLocaleString('fa-IR'));
+      setText('health-pending-videos',Number(device.pending_video_segments||0).toLocaleString('fa-IR'));
+      setText('recording-state',typeof device.recording_enabled==='boolean'
+        ? (device.recording_enabled?'فعال':'متوقف'):'در انتظار گزارش');
+      setText('last-video-upload',formatTimestamp(device.last_video_upload_at));
+      setText('video-upload-error',device.last_video_upload_error||'—');
+      setText('health-mqtt',device.mqtt_connected?'متصل':'قطع');
+      setText('health-telemetry-transport',
+        device.telemetry_transport==='mqtt'?'MQTT':
+        (device.telemetry_transport==='https'?'HTTPS':'نامشخص'));
       setText('system-temperature',numeric(system.temperature_c)
         ? system.temperature_c.toLocaleString('fa-IR',{maximumFractionDigits:1})+'°C':'—');
       setText('system-cpu',displayPercent(system.cpu_percent));
